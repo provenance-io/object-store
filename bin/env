@@ -1,0 +1,9 @@
+export OS_URL=http://localhost
+export OS_PORT=5004
+export DB_CONNECTION_POOL_SIZE=3
+export DB_HOST=localhost
+export DB_PORT=5432
+export DB_USER=postgres
+export DB_PASSWORD=password1
+export DB_DATABASE=object-store
+export DB_SCHEMA=object-store

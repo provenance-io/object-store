@@ -1,0 +1,25 @@
+[package]
+name = "object-store"
+version = "0.1.0"
+authors = ["Stephen Cirner <scirner@figure.com>"]
+edition = "2018"
+
+[dependencies]
+bytes = "1.0"
+chrono = "0.4"
+hex = "0.4"
+prost = "0.7"
+prost-types = "0.7"
+quick-error = "2.0"
+sqlx = { version = "0.5", features = ["runtime-tokio-rustls", "postgres", "macros", "uuid", "chrono"] }
+tonic = "0.4"
+# TODO can we upgrade this?
+tokio = { version = "1.0", features = ["macros", "rt-multi-thread"] }
+url = "2.2"
+uuid = { version = "0.8", features = ["serde", "v4"] }
+
+[build-dependencies]
+tonic-build = "0.4"
+
+[dev-dependencies]
+testcontainers = "0.12"

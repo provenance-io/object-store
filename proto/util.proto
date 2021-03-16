@@ -1,0 +1,13 @@
+syntax = "proto3";
+
+package objectstore;
+
+message UUID {
+    string value = 1;
+}
+
+message PublicKey {
+  oneof key {
+    bytes secp256k1 = 1;
+  }
+}
