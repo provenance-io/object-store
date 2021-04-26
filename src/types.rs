@@ -18,6 +18,15 @@ quick_error! {
         TonicTransportError(err: tonic::transport::Error) {
             from()
         }
+        DimeInputError(err: crate::dime::DimeInputError) {
+            from()
+        }
+        Utf8Error(err: std::string::FromUtf8Error) {
+            from()
+        }
+        NotFound(err: String) {
+            from()
+        }
     }
 }
 
@@ -32,6 +41,9 @@ impl From<OsError> for tonic::Status {
             OsError::SqlError(_) => tonic::Code::Internal,
             OsError::SqlMigrateError(_) => tonic::Code::Internal,
             OsError::TonicTransportError(_) => tonic::Code::Internal,
+            OsError::DimeInputError(_) => tonic::Code::InvalidArgument,
+            OsError::Utf8Error(_) => tonic::Code::InvalidArgument,
+            OsError::NotFound(_) => tonic::Code::NotFound,
         };
 
         tonic::Status::new(code, format!("{:?}", error))

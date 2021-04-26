@@ -7,7 +7,7 @@ pub use dime::*;
 
 quick_error! {
     #[derive(Debug, PartialEq)]
-    pub enum DimeError {
+    pub enum DimeInputError {
         BufferSizeError(message: String) { }
         InvalidMagicBytesError(message: String) { }
         InvalidVersionError(version: u16) { }
@@ -24,4 +24,4 @@ quick_error! {
     }
 }
 
-pub type Result<T> = std::result::Result<T, DimeError>;
+pub type Result<T> = std::result::Result<T, DimeInputError>;

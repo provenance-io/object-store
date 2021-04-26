@@ -1,6 +1,6 @@
 CREATE TYPE key_type AS ENUM ('secp256k1');
 
-CREATE TABLE public_keys
+CREATE TABLE public_key
 (
     uuid UUID NOT NULL PRIMARY KEY,
     public_key TEXT NOT NULL,
@@ -11,4 +11,4 @@ CREATE TABLE public_keys
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE UNIQUE INDEX public_keys_key_unq_idx ON public_keys (public_key);
+CREATE UNIQUE INDEX public_key_key_unq_idx ON public_key (public_key);
