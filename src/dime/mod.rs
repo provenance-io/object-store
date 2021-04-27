@@ -18,10 +18,22 @@ quick_error! {
         ProstDecodeError(err: prost::DecodeError) {
             from()
         }
+        // serde_json::Error is converted to a String because it does not implement PartialEq
         SerdeDecodeError(message: String) {
             from()
         }
     }
 }
 
-pub type Result<T> = std::result::Result<T, DimeInputError>;
+quick_error! {
+    #[derive(Debug, PartialEq)]
+    pub enum DimeOutputError {
+        ProstEncodeError(err: prost::EncodeError) {
+            from()
+        }
+        // serde_json::Error is converted to a String because it does not implement PartialEq
+        SerdeEncodeError(message: String) {
+            from()
+        }
+    }
+}

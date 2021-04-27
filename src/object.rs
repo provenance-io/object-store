@@ -1,4 +1,4 @@
-use crate::dime::Dime;
+use crate::dime::{Dime, Signature as DimeSignature, format_dime_bytes};
 use crate::types::{GrpcResult, Result, OsError};
 use crate::pb::chunk_bidi::Impl::{Chunk as ChunkEnum, MultiStreamHeader as MultiStreamHeaderEnum};
 use crate::pb::MultiStreamHeader;
@@ -7,7 +7,7 @@ use crate::pb::chunk::Impl::{End, Data, Value};
 use crate::pb::{Chunk, ChunkBidi, ChunkEnd, Item, Object as ObjectInner, ObjectMetadata, ObjectResponse, Sha512Request, Signature, StreamHeader, Uuid};
 use crate::pb::object_service_server::ObjectService;
 
-use bytes::{BufMut, Bytes, BytesMut};
+use bytes::{Buf, BufMut, Bytes, BytesMut};
 use chrono::prelude::*;
 use futures_util::{StreamExt, TryStreamExt};
 use tokio::{fs::metadata, sync::mpsc};
@@ -16,6 +16,7 @@ use sqlx::{FromRow, Row};
 use sqlx::postgres::{PgConnection, PgPool, PgQueryResult};
 use tonic::{Request, Response, Status, Streaming};
 
+// TODO set encryption and signing key pair to something different locally and try this again
 // TODO time slow requests
 // TODO multistream header created by
 // TODO tests
@@ -137,9 +138,9 @@ impl ObjectGrpc {
 
     // TODO add index to hash or (hash, public_key)
     // TODO write test to make sure this gets key with signature first
-    async fn get_public_key_object_uuid(&self, hash: &str, public_key: &str) -> Result<uuid::Uuid> {
+    async fn get_public_key_object_uuid(&self, hash: &str, public_key: &str) -> Result<(uuid::Uuid, Option<(String, String)>)> {
         let query_str = r#"
-SELECT object_uuid FROM object_public_key
+SELECT object_uuid, signature_public_key, signature FROM object_public_key
   WHERE hash = $1 AND public_key = $2
   ORDER BY signature_public_key NULLS LAST
         "#;
@@ -149,8 +150,21 @@ SELECT object_uuid FROM object_public_key
             .fetch_optional(self.db_pool.as_ref())
             .await?;
 
+        // TODO limit query to 1?
+
         if let Some(row) = result {
-            Ok(row.try_get("object_uuid")?)
+            let object_uuid = row.try_get("object_uuid")?;
+            let signature_public_key: Option<String> = row.try_get("signature_public_key")?;
+            let signature: Option<String> = row.try_get("signature")?;
+            let pair = if signature_public_key.is_some() && signature.is_some() {
+                Some((signature_public_key.unwrap(), signature.unwrap()))
+            } else if signature_public_key.is_none() && signature.is_none() {
+                None
+            } else {
+                return Err(OsError::InvalidSignatureState("Signature_public_key and signature must be both null or non null.".to_owned()))
+            };
+
+            Ok((object_uuid, pair))
         } else {
             Err(OsError::NotFound(format!("Unable to find object with public key {} and hash {}", public_key, hash)))
         }
@@ -312,7 +326,9 @@ impl ObjectService for ObjectGrpc {
         // TODO remove
         use prost::Message;
         while let Some(chunk) = stream.next().await {
-            println!("received chunk! {}", chunk.clone()?.encoded_len());
+            let mut buffer = BytesMut::with_capacity(chunk.clone()?.encoded_len());
+            chunk.clone()?.encode(&mut buffer).unwrap();
+            println!("received chunk! {} base64 = {}", chunk.clone()?.encoded_len(), base64::encode(&buffer));
             chunk_buffer.push(chunk?);
         }
 
@@ -401,6 +417,7 @@ impl ObjectService for ObjectGrpc {
         let dime_properties = DimeProperties {
             hash,
             content_length: header_chunk_header.content_length,
+            // TODO can remove the base64 wording?
             owner_signature_base64: signature,
             owner_public_key_base64: signature_public_key,
         };
@@ -412,7 +429,8 @@ impl ObjectService for ObjectGrpc {
         let dime: Dime = byte_buffer.try_into()
             .map_err(|err| Into::<OsError>::into(err))?;
 
-        println!("before put object");
+        println!("before put object dime base64 = {}", base64::encode(&raw_dime));
+        // TODO none here when raw_dime threshold is met
         let response = self.put_object(&dime, &dime_properties, Some(&raw_dime)).await?;
         // TODO remove
         let temp = response.into();
@@ -429,15 +447,25 @@ impl ObjectService for ObjectGrpc {
     ) -> GrpcResult<Response<Self::GetStream>> {
         let request = request.into_inner();
         let hash = base64::encode(request.hash);
-        // TODO fix unwrap
-        // let public_key = std::str::from_utf8(&request.public_key).unwrap();
         let public_key = base64::encode(&request.public_key);
 
         println!("hash {}\n public_key {}", &hash, &public_key);
 
-        let object_uuid = self.get_public_key_object_uuid(hash.as_str(), public_key.as_str()).await?;
+        let (object_uuid, signature) = self.get_public_key_object_uuid(hash.as_str(), public_key.as_str()).await?;
+        // TODO fix later
+        let signature = signature.unwrap();
         let object = self.get_object_by_uuid(&object_uuid).await?;
-        // TODO might need public keys here to inject signatures
+        // TODO how to get self owner and fallback to any owner
+        let owner_signature = DimeSignature { signature: signature.1, public_key: signature.0 };
+        println!("owner signature {:?}", &owner_signature);
+        // TODO fix this?
+        let payload = object.payload.clone().unwrap_or_default();
+        // TODO remove println
+        println!("before get object dime base64 = {}", base64::encode(&payload));
+        let mut payload = Bytes::copy_from_slice(payload.as_slice());
+        let payload = format_dime_bytes(&mut payload, owner_signature)
+            .map_err(Into::<OsError>::into)?;
+        println!("after get object dime base64 = {}", base64::encode(&payload.as_ref()));
 
         let (tx, rx) = mpsc::channel(4);
 
@@ -450,7 +478,7 @@ impl ObjectService for ObjectGrpc {
             tx.send(Ok(msg)).await.unwrap(); // TODO remove unwrap
 
             // send data chunks
-            for (idx, chunk) in object.payload.unwrap_or_default().as_slice().chunks(CHUNK_SIZE).enumerate() {
+            for (idx, chunk) in payload.chunks(CHUNK_SIZE).enumerate() {
                 let header = if idx == 0 {
                     Some(StreamHeader { name: DIME_FIELD_NAME.to_owned(), content_length: object.content_length })
                 } else {

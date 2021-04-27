@@ -21,12 +21,14 @@ quick_error! {
         DimeInputError(err: crate::dime::DimeInputError) {
             from()
         }
+        DimeOutputError(err: crate::dime::DimeOutputError) {
+            from()
+        }
         Utf8Error(err: std::string::FromUtf8Error) {
             from()
         }
-        NotFound(err: String) {
-            from()
-        }
+        NotFound(err: String) { }
+        InvalidSignatureState(err: String) { }
     }
 }
 
@@ -42,8 +44,10 @@ impl From<OsError> for tonic::Status {
             OsError::SqlMigrateError(_) => tonic::Code::Internal,
             OsError::TonicTransportError(_) => tonic::Code::Internal,
             OsError::DimeInputError(_) => tonic::Code::InvalidArgument,
+            OsError::DimeOutputError(_) => tonic::Code::Internal,
             OsError::Utf8Error(_) => tonic::Code::InvalidArgument,
             OsError::NotFound(_) => tonic::Code::NotFound,
+            OsError::InvalidSignatureState(_) => tonic::Code::Internal,
         };
 
         tonic::Status::new(code, format!("{:?}", error))
