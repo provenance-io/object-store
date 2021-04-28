@@ -10,8 +10,9 @@ use crate::pb::object_service_server::ObjectService;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use chrono::prelude::*;
 use futures_util::{StreamExt, TryStreamExt};
+use prost::Message;
 use tokio::{fs::metadata, sync::mpsc};
-use std::{collections::HashMap, convert::TryInto, sync::Arc, time::SystemTime};
+use std::{collections::HashMap, convert::{TryFrom, TryInto}, sync::Arc, time::SystemTime};
 use sqlx::{FromRow, Row};
 use sqlx::postgres::{PgConnection, PgPool, PgQueryResult};
 use tonic::{Request, Response, Status, Streaming};
@@ -49,8 +50,8 @@ impl From<PgQueryResult> for UpsertOutcome {
 struct DimeProperties {
     hash: String,
     content_length: i64,
-    owner_signature_base64: String,
-    owner_public_key_base64: String,
+    owner_signature: String,
+    owner_public_key: String,
 }
 
 #[derive(sqlx::FromRow, Debug)]
@@ -79,11 +80,13 @@ struct ObjectPublicKey {
 struct ObjectWithPublicKeys {
     object: Object,
     public_keys: Vec<ObjectPublicKey>,
+    uri_host: String,
 }
 
-impl From<ObjectWithPublicKeys> for ObjectResponse {
+impl TryFrom<ObjectWithPublicKeys> for ObjectResponse {
+    type Error = OsError;
 
-    fn from(opk: ObjectWithPublicKeys) -> Self {
+    fn try_from(opk: ObjectWithPublicKeys) -> Result<Self> {
         let uuid = opk.object.uuid.to_hyphenated().to_string();
         let mut signatures = Vec::new();
 
@@ -99,13 +102,12 @@ impl From<ObjectWithPublicKeys> for ObjectResponse {
             }
         }
 
-        ObjectResponse {
+        Ok(ObjectResponse {
             object: Some(ObjectInner {
                 uuid: Some(Uuid { value: uuid }),
-                hash: base64::decode(&opk.object.hash).unwrap(), // TODO remove unwrap
-                signatures, // TODO fix
-                // TODO make this config variable
-                uri: format!("object://object-store.provenance.io/{}", &opk.object.hash),
+                hash: base64::decode(&opk.object.hash)?,
+                signatures,
+                uri: format!("object://{}/{}", &opk.uri_host, &opk.object.hash),
                 bucket: opk.object.bucket.clone(),
                 name: opk.object.name.clone(),
                 metadata: Some(ObjectMetadata {
@@ -122,21 +124,21 @@ impl From<ObjectWithPublicKeys> for ObjectResponse {
                 // TODO only "x-content-length" in legacy, but that's not really needed
                 metadata: HashMap::new(),
             }),
-        }
+        })
     }
 }
 
 pub struct ObjectGrpc {
     db_pool: Arc<PgPool>,
+    uri_host: String,
 }
 
 impl ObjectGrpc {
 
-    pub fn new(pool: Arc<PgPool>) -> Self {
-        Self { db_pool: pool }
+    pub fn new(db_pool: Arc<PgPool>, uri_host: String) -> Self {
+        Self { db_pool, uri_host }
     }
 
-    // TODO add index to hash or (hash, public_key)
     // TODO write test to make sure this gets key with signature first
     async fn get_public_key_object_uuid(&self, hash: &str, public_key: &str) -> Result<(uuid::Uuid, Option<(String, String)>)> {
         let query_str = r#"
@@ -210,15 +212,15 @@ SELECT object_uuid, signature_public_key, signature FROM object_public_key
         let mut public_keys: Vec<String> = Vec::new();
         let mut signatures: Vec<Option<&str>> = Vec::new();
         let mut signature_public_keys: Vec<Option<&str>> = Vec::new();
-        let dime_owner_public_key_base64 = dime.owner_public_key_base64();
+        let dime_owner_public_key_base64 = dime.owner_public_key_base64()?;
 
-        for party in dime.unique_audience_base64() {
+        for party in dime.unique_audience_base64()? {
             object_uuids.push(dime.uuid);
             hashes.push(&properties.hash);
 
             if party == dime_owner_public_key_base64 {
-                signatures.push(Some(properties.owner_signature_base64.as_str()));
-                signature_public_keys.push(Some(properties.owner_public_key_base64.as_str()));
+                signatures.push(Some(properties.owner_signature.as_str()));
+                signature_public_keys.push(Some(properties.owner_public_key.as_str()));
             } else {
                 signatures.push(None);
                 signature_public_keys.push(None);
@@ -227,12 +229,11 @@ SELECT object_uuid, signature_public_key, signature FROM object_public_key
             public_keys.push(party);
         }
 
-        // TODO assert object has exactly one signer
-
-        println!("object_uuids {:?}", &object_uuids);
-        println!("hashes {:?}", &hashes);
-        println!("public_keys {:?}", &public_keys);
-        println!("signatures {:?}", &signatures);
+        if signatures.len() != 1 || signature_public_keys.len() != 1 {
+            return Err(OsError::InvalidSignatureState(
+                format!("dime {} has no signers that match audience list", &dime.uuid)
+            ))
+        }
 
         let query_str = r#"
 INSERT INTO object_public_key (object_uuid, hash, public_key, signature, signature_public_key)
@@ -252,12 +253,11 @@ SELECT * FROM UNNEST($1, $2, $3, $4, $5)
     }
 
     async fn put_object(&self, dime: &Dime, properties: &DimeProperties, raw_dime: Option<&Bytes>) -> Result<ObjectWithPublicKeys> {
-        let mut unique_hash = dime.unique_audience_base64();
+        let mut unique_hash = dime.unique_audience_base64()?;
         unique_hash.sort_unstable();
         unique_hash.insert(0, String::from(&properties.hash));
         let unique_hash = unique_hash.join(";");
 
-        // TODO can we have one path here and insert None for payload?
         let query_str = if raw_dime.is_some() {
             r#"
 INSERT INTO object (uuid, hash, unique_hash, content_length, bucket, name, payload)
@@ -284,7 +284,6 @@ DO NOTHING
                 .bind(NOT_STORAGE_BACKED)
                 .bind(raw_dime.to_vec())
         } else {
-            // TODO implement
             unimplemented!("raw dime was None")
         };
 
@@ -298,14 +297,11 @@ DO NOTHING
             UpsertOutcome::Noop => Ok(()),
         }?;
         tx.commit().await?;
-        println!("in here 3!");
 
         let object = self.get_object_by_unique_hash(unique_hash.as_str()).await?;
-        println!("in here 4!");
         let object_public_keys = self.get_public_keys_by_object(&object.uuid).await?;
-        println!("in here 5!");
 
-        Ok(ObjectWithPublicKeys { object, public_keys: object_public_keys })
+        Ok(ObjectWithPublicKeys { object, public_keys: object_public_keys, uri_host: self.uri_host.clone() })
     }
 }
 
@@ -318,17 +314,13 @@ impl ObjectService for ObjectGrpc {
     ) -> GrpcResult<Response<ObjectResponse>> {
         let mut stream = request.into_inner();
         let mut chunk_buffer = Vec::new();
-        // TODO allocate exact size later?
         let mut byte_buffer = BytesMut::new();
         let mut end = false;
         let mut properties: HashMap<String, Vec<u8>> = HashMap::new();
 
-        // TODO remove
-        use prost::Message;
         while let Some(chunk) = stream.next().await {
             let mut buffer = BytesMut::with_capacity(chunk.clone()?.encoded_len());
             chunk.clone()?.encode(&mut buffer).unwrap();
-            println!("received chunk! {} base64 = {}", chunk.clone()?.encoded_len(), base64::encode(&buffer));
             chunk_buffer.push(chunk?);
         }
 
@@ -369,7 +361,6 @@ impl ObjectService for ObjectGrpc {
         };
 
         byte_buffer.put(header_chunk_data.as_ref());
-        println!("header chunk of size = {} content length = {}", &header_chunk_data.len(), &header_chunk_header.content_length);
 
         // TODO refactor a lot of this fetching
         for chunk in &chunk_buffer[2..] {
@@ -380,7 +371,6 @@ impl ObjectService for ObjectGrpc {
                             if end {
                                 return Err(Status::invalid_argument("Received data chunk after an end of data chunk"))
                             } else {
-                                println!("received chunk of size = {}", data.len());
                                 byte_buffer.put(data.as_ref())
                             }
                         },
@@ -390,7 +380,6 @@ impl ObjectService for ObjectGrpc {
                                 .ok_or(Status::invalid_argument("Must have stream header when impl is value"))?
                                 .name
                                 .clone();
-                            println!("inserting property of {}:{:?}", key, &value);
                             properties.insert(key, value.to_vec());
                         },
                         Some(End(_)) => end = true,
@@ -404,26 +393,20 @@ impl ObjectService for ObjectGrpc {
         let hash = properties.get(HASH_FIELD_NAME)
             .map(base64::encode)
             .ok_or(Status::invalid_argument("Properties must contain \"HASH\""))?;
-        let signature = properties.get(SIGNATURE_FIELD_NAME)
+        let owner_signature = properties.get(SIGNATURE_FIELD_NAME)
             .map(base64::encode)
             .ok_or(Status::invalid_argument("Properties must contain \"SIGNATURE_FIELD_NAME\""))?;
-        let signature_public_key = properties.get(SIGNATURE_PUBLIC_KEY_FIELD_NAME)
+        let owner_public_key = properties.get(SIGNATURE_PUBLIC_KEY_FIELD_NAME)
             .map(base64::encode)
             .ok_or(Status::invalid_argument("Properties must contain \"SIGNATURE_PUBLIC_KEY_FIELD_NAME\""))?;
-        println!("done!");
-        println!("hash = {}", &hash);
-        println!("signature = {}", &signature);
-        println!("signature public key = {}", &signature_public_key);
         let dime_properties = DimeProperties {
             hash,
             content_length: header_chunk_header.content_length,
-            // TODO can remove the base64 wording?
-            owner_signature_base64: signature,
-            owner_public_key_base64: signature_public_key,
+            owner_signature,
+            owner_public_key,
         };
 
         let byte_buffer: Bytes = byte_buffer.into();
-        println!("dime length {}", byte_buffer.len());
         // Bytes clones are cheap
         let raw_dime = byte_buffer.clone();
         let dime: Dime = byte_buffer.try_into()
@@ -431,12 +414,11 @@ impl ObjectService for ObjectGrpc {
 
         println!("before put object dime base64 = {}", base64::encode(&raw_dime));
         // TODO none here when raw_dime threshold is met
-        let response = self.put_object(&dime, &dime_properties, Some(&raw_dime)).await?;
-        // TODO remove
-        let temp = response.into();
-        println!("after put object {:?}", temp);
+        let response = self.put_object(&dime, &dime_properties, Some(&raw_dime))
+            .await?
+            .try_into()?;
 
-        Ok(Response::new(temp))
+        Ok(Response::new(response))
     }
 
     type GetStream = tokio_stream::wrappers::ReceiverStream<GrpcResult<ChunkBidi>>;
@@ -475,7 +457,10 @@ impl ObjectService for ObjectGrpc {
             metadata.insert(CREATED_BY_HEADER.to_owned(), uuid::Uuid::nil().to_hyphenated().to_string());
             let header = MultiStreamHeader { stream_count: 1, metadata };
             let msg = ChunkBidi { r#impl: Some(MultiStreamHeaderEnum(header)) };
-            tx.send(Ok(msg)).await.unwrap(); // TODO remove unwrap
+            if let Err(_) = tx.send(Ok(msg)).await {
+                log::debug!("stream closed early");
+                return;
+            }
 
             // send data chunks
             for (idx, chunk) in payload.chunks(CHUNK_SIZE).enumerate() {
@@ -486,26 +471,22 @@ impl ObjectService for ObjectGrpc {
                 };
                 let data_chunk = Chunk { header, r#impl: Some(Data(chunk.to_vec())) };
                 let msg = ChunkBidi { r#impl: Some(ChunkEnum(data_chunk)) };
-                tx.send(Ok(msg)).await.unwrap(); // TODO remove unwrap
+                if let Err(_) = tx.send(Ok(msg)).await {
+                    log::debug!("stream closed early");
+                    return;
+                }
             }
 
             // send end chunk
             let end = Chunk { header: None, r#impl: Some(End(ChunkEnd::default())) };
             let msg = ChunkBidi { r#impl: Some(ChunkEnum(end)) };
-            tx.send(Ok(msg)).await.unwrap(); // TODO remove unwrap
+            if let Err(_) = tx.send(Ok(msg)).await {
+                log::debug!("stream closed early");
+                return;
+            }
         });
 
         Ok(Response::new(tokio_stream::wrappers::ReceiverStream::new(rx)))
-    }
-
-    type GetByUuidStream = tokio_stream::wrappers::ReceiverStream<GrpcResult<ChunkBidi>>;
-
-    // TODO this function might not be needed
-    async fn get_by_uuid(
-        &self,
-        request: Request<Uuid>,
-    ) -> GrpcResult<Response<Self::GetByUuidStream>> {
-        unimplemented!();
     }
 }
 

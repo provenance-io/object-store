@@ -45,10 +45,9 @@ async fn main() -> Result<()> {
     MIGRATOR.run(&*pool).await?;
 
     let public_key_service = PublicKeyGrpc::new(Arc::clone(&pool));
-    let object_service = ObjectGrpc::new(Arc::clone(&pool));
+    let object_service = ObjectGrpc::new(Arc::clone(&pool), config.uri_host.clone());
 
-    // TODO change to logging framework
-    println!("Starting server on {:?}", &config.url);
+    log::info!("Starting server on {:?}", &config.url);
 
     Server::builder()
         .add_service(PublicKeyServiceServer::new(public_key_service))

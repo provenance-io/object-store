@@ -10,7 +10,7 @@ service ObjectService {
 
     rpc Get(Sha512Request) returns (stream ChunkBidi) {};
 
-    rpc GetByUuid(UUID) returns (stream ChunkBidi) {};
+    // rpc GetByUuid(UUID) returns (stream ChunkBidi) {};
 }
 
 message ChunkBidi {

@@ -4,6 +4,7 @@ use std::net::SocketAddr;
 #[derive(Debug)]
 pub struct Config {
     pub url: SocketAddr,
+    pub uri_host: String,
     pub db_connection_pool_size: u32,
     pub db_host: String,
     pub db_port: u16,
@@ -16,6 +17,7 @@ pub struct Config {
 impl Config {
     pub fn new() -> Self {
         let url = env::var("OS_URL").expect("OS_URL not set");
+        let uri_host = env::var("URI_HOST").expect("URI_HOST not set");
         let port: u16 = env::var("OS_PORT")
             .expect("OS_PORT not set")
             .parse()
@@ -35,7 +37,7 @@ impl Config {
         let db_database = env::var("DB_DATABASE").expect("DB_DATABASE not set");
         let db_schema = env::var("DB_SCHEMA").expect("DB_SCHEMA not set");
 
-        Self { url, db_connection_pool_size, db_host, db_port, db_user, db_password, db_database, db_schema }
+        Self { url, uri_host, db_connection_pool_size, db_host, db_port, db_user, db_password, db_database, db_schema }
     }
 
     pub fn db_connection_string(&self) -> String {

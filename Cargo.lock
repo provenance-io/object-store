@@ -837,6 +837,7 @@ dependencies = [
  "chrono",
  "futures-util",
  "hex",
+ "log",
  "prost",
  "prost-types",
  "quick-error",

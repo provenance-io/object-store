@@ -7,7 +7,7 @@ pub use dime::*;
 
 quick_error! {
     #[derive(Debug, PartialEq)]
-    pub enum DimeInputError {
+    pub enum DimeError {
         BufferSizeError(message: String) { }
         InvalidMagicBytesError(message: String) { }
         InvalidVersionError(version: u16) { }
@@ -19,21 +19,11 @@ quick_error! {
             from()
         }
         // serde_json::Error is converted to a String because it does not implement PartialEq
-        SerdeDecodeError(message: String) {
-            from()
-        }
+        SerdeDecodeError(message: String) { }
+        // serde_json::Error is converted to a String because it does not implement PartialEq
+        SerdeEncodeError(message: String) { }
+        InternalInvalidState(message: String) { }
     }
 }
 
-quick_error! {
-    #[derive(Debug, PartialEq)]
-    pub enum DimeOutputError {
-        ProstEncodeError(err: prost::EncodeError) {
-            from()
-        }
-        // serde_json::Error is converted to a String because it does not implement PartialEq
-        SerdeEncodeError(message: String) {
-            from()
-        }
-    }
-}
+pub type Result<T> = std::result::Result<T, DimeError>;

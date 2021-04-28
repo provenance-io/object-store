@@ -1,4 +1,4 @@
-use crate::dime::{DimeInputError, DimeOutputError};
+use crate::dime::{DimeError, Result};
 use crate::pb::Dime as DimeProto;
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
@@ -30,30 +30,37 @@ pub struct Dime {
 
 impl Dime {
 
-    // TODO add FK in object_public_key to object
-    // TODO node that input is already base64 encoded
-    pub fn unique_audience_base64(&self) -> Vec<String> {
+    pub fn unique_audience_base64(&self) -> Result<Vec<String>> {
         let mut res: HashSet<String> = HashSet::new();
         for party in &self.proto.audience {
-            // TODO fix unwrap
-            res.insert(std::str::from_utf8(&party.public_key).unwrap().to_owned());
+            res.insert(
+                std::str::from_utf8(&party.public_key)
+                    .map_err(|e| DimeError::InternalInvalidState(format!("{:?}", e)))?
+                    .to_owned()
+            );
         }
 
-        return res.drain().collect()
+        return Ok(res.drain().collect())
     }
 
-    pub fn owner_public_key_base64(&self) -> String {
-        // TODO fix and unwrap
-        let owner_test = &self.proto.owner.clone().unwrap().public_key;
-
-        return std::str::from_utf8(&owner_test).unwrap().to_owned()
+    pub fn owner_public_key_base64(&self) -> Result<String> {
+        if let Some(owner) = &self.proto.owner {
+            let key = std::str::from_utf8(&owner.public_key)
+                .map_err(|e| DimeError::InternalInvalidState(format!("{:?}", e)))?
+                .to_owned();
+            Ok(key)
+        } else {
+            Err(DimeError::InternalInvalidState(
+                format!("dime uuid: {} is missing an owner", &self.proto.uuid.as_ref().map_or("", |v| &v.value))
+            ))
+        }
     }
 }
 
-pub fn format_dime_bytes(input: &mut Bytes, owner_signature: Signature) -> Result<Bytes, DimeOutputError> {
+pub fn format_dime_bytes(input: &mut Bytes, owner_signature: Signature) -> Result<Bytes> {
     let signatures = vec![owner_signature];
     let signature_bytes = serde_json::to_vec(&signatures)
-        .map_err(|err| DimeOutputError::SerdeEncodeError(format!("{:?}", err)))?;
+        .map_err(|err| DimeError::SerdeEncodeError(format!("{:?}", err)))?;
 
     let mut buffer = BytesMut::with_capacity(input.remaining() + 4 + signature_bytes.len());
 
@@ -105,28 +112,28 @@ pub fn format_dime_bytes(input: &mut Bytes, owner_signature: Signature) -> Resul
 }
 
 impl TryFrom<Bytes> for Dime {
-    type Error = DimeInputError;
+    type Error = DimeError;
 
-    fn try_from(buffer: Bytes) -> Result<Self, DimeInputError> {
+    fn try_from(buffer: Bytes) -> Result<Self> {
         let mut buffer = buffer;
-        let size_err = Err(DimeInputError::BufferSizeError("Not enough bytes in buffer to parse Dime".to_owned()));
+        let size_err = Err(DimeError::BufferSizeError("Not enough bytes in buffer to parse Dime".to_owned()));
 
         if buffer.remaining() < 4 { return size_err }
         let magic_bytes = buffer.get_u32();
         if magic_bytes != MAGIC_BYTES {
-            return Err(DimeInputError::InvalidMagicBytesError(format!("Invalid magic bytes of {}", magic_bytes)));
+            return Err(DimeError::InvalidMagicBytesError(format!("Invalid magic bytes of {}", magic_bytes)));
         }
 
         if buffer.remaining() < 2 { return size_err }
         let version = buffer.get_u16();
         if version != VERSION {
-            return Err(DimeInputError::InvalidVersionError(version));
+            return Err(DimeError::InvalidVersionError(version));
         }
 
         if buffer.remaining() < 4 { return size_err }
         let uuid_len = buffer.get_u32();
         if uuid_len != 16_u32 {
-            return Err(DimeInputError::InvalidUuidSizeError(uuid_len));
+            return Err(DimeError::InvalidUuidSizeError(uuid_len));
         }
         if buffer.remaining() < uuid_len as usize { return size_err }
         let uuid: Uuid = Uuid::from_u128(buffer.get_u128());
@@ -137,7 +144,7 @@ impl TryFrom<Bytes> for Dime {
         let mut metadata = vec![0; metadata_len as usize];
         buffer.copy_to_slice(metadata.as_mut_slice());
         let metadata = serde_json::from_slice(metadata.as_slice())
-            .map_err(|err| DimeInputError::SerdeDecodeError(format!("{:?}", err)))?;
+            .map_err(|err| DimeError::SerdeDecodeError(format!("{:?}", err)))?;
 
         if buffer.remaining() < 4 { return size_err }
         let uri_len = buffer.get_u32();
@@ -153,7 +160,7 @@ impl TryFrom<Bytes> for Dime {
             let mut signature = vec![0; signature_len as usize];
             buffer.copy_to_slice(signature.as_mut_slice());
             serde_json::from_slice(signature.as_slice())
-                .map_err(|err| DimeInputError::SerdeDecodeError(format!("{:?}", err)))?
+                .map_err(|err| DimeError::SerdeDecodeError(format!("{:?}", err)))?
         } else {
             Vec::new()
         };
@@ -182,18 +189,18 @@ mod tests {
     fn empty() {
         let buffer = Vec::default();
         let buffer = Bytes::copy_from_slice(buffer.as_ref());
-        let actual: Result<Dime, DimeInputError> = buffer.try_into();
+        let actual: Result<Dime> = buffer.try_into();
 
-        assert_eq!(actual, Err(DimeInputError::BufferSizeError("Not enough bytes in buffer to parse Dime".to_owned())));
+        assert_eq!(actual, Err(DimeError::BufferSizeError("Not enough bytes in buffer to parse Dime".to_owned())));
     }
 
     #[test]
     fn magic_bytes() {
         let buffer = vec![0, 0, 1, 1];
         let buffer = Bytes::copy_from_slice(buffer.as_ref());
-        let actual: Result<Dime, DimeInputError> = buffer.try_into();
+        let actual: Result<Dime> = buffer.try_into();
 
-        assert_eq!(actual, Err(DimeInputError::InvalidMagicBytesError(format!("Invalid magic bytes of {}", 257))));
+        assert_eq!(actual, Err(DimeError::InvalidMagicBytesError(format!("Invalid magic bytes of {}", 257))));
     }
 
     #[test]
@@ -202,9 +209,9 @@ mod tests {
         buffer.put_u32(MAGIC_BYTES);
         buffer.put_u16(5);
         let buffer: Bytes = buffer.into();
-        let actual: Result<Dime, DimeInputError> = buffer.try_into();
+        let actual: Result<Dime> = buffer.try_into();
 
-        assert_eq!(actual, Err(DimeInputError::InvalidVersionError(5)));
+        assert_eq!(actual, Err(DimeError::InvalidVersionError(5)));
     }
 
     #[test]
@@ -214,9 +221,9 @@ mod tests {
         buffer.put_u16(1);
         buffer.put_u32(10);
         let buffer: Bytes = buffer.into();
-        let actual: Result<Dime, DimeInputError> = buffer.try_into();
+        let actual: Result<Dime> = buffer.try_into();
 
-        assert_eq!(actual, Err(DimeInputError::InvalidUuidSizeError(10)));
+        assert_eq!(actual, Err(DimeError::InvalidUuidSizeError(10)));
     }
 
     #[test]
@@ -261,7 +268,7 @@ mod tests {
         buffer.put_u32(proto_len.try_into().unwrap());
         buffer.put_slice(proto_buffer.as_ref());
         let buffer: Bytes = buffer.into();
-        let actual: Result<Dime, DimeInputError> = buffer.try_into();
+        let actual: Result<Dime> = buffer.try_into();
 
         let expected = Dime {
             uuid: Uuid::from_u128(300),
@@ -325,7 +332,7 @@ mod tests {
         buffer.put_u32(proto_len.try_into().unwrap());
         buffer.put_slice(proto_buffer.as_ref());
         let buffer: Bytes = buffer.into();
-        let actual: Result<Dime, DimeInputError> = buffer.try_into();
+        let actual: Result<Dime> = buffer.try_into();
 
         let expected = Dime {
             uuid: Uuid::from_u128(300),
@@ -395,7 +402,7 @@ mod tests {
 
         let actual = format_dime_bytes(&mut buffer, signature.clone());
         assert!(actual.is_ok());
-        let actual: Result<Dime, DimeInputError> = actual.unwrap().try_into();
+        let actual: Result<Dime> = actual.unwrap().try_into();
         assert!(actual.is_ok());
         expected.signatures = vec![signature];
         assert_eq!(actual.unwrap(), expected);
