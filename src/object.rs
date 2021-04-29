@@ -1,4 +1,4 @@
-use crate::dime::{Dime, Signature as DimeSignature, format_dime_bytes};
+use crate::{config::Config, dime::{Dime, Signature as DimeSignature, format_dime_bytes}};
 use crate::types::{GrpcResult, Result, OsError};
 use crate::pb::chunk_bidi::Impl::{Chunk as ChunkEnum, MultiStreamHeader as MultiStreamHeaderEnum};
 use crate::pb::MultiStreamHeader;
@@ -7,11 +7,11 @@ use crate::pb::chunk::Impl::{End, Data, Value};
 use crate::pb::{Chunk, ChunkBidi, ChunkEnd, Item, Object as ObjectInner, ObjectMetadata, ObjectResponse, Sha512Request, Signature, StreamHeader, Uuid};
 use crate::pb::object_service_server::ObjectService;
 
-use bytes::{Buf, BufMut, Bytes, BytesMut};
+use bytes::{BufMut, Bytes, BytesMut};
 use chrono::prelude::*;
 use futures_util::{StreamExt, TryStreamExt};
 use prost::Message;
-use tokio::{fs::metadata, sync::mpsc};
+use tokio::sync::mpsc;
 use std::{collections::HashMap, convert::{TryFrom, TryInto}, sync::Arc, time::SystemTime};
 use sqlx::{FromRow, Row};
 use sqlx::postgres::{PgConnection, PgPool, PgQueryResult};
@@ -30,6 +30,7 @@ const CREATED_BY_HEADER: &str = "x-created-by";
 const NOT_STORAGE_BACKED: &str = "NOT_STORAGE_BACKED";
 const CHUNK_SIZE: usize = 2000000;
 
+#[derive(Debug)]
 enum UpsertOutcome {
     Noop,
     Created,
@@ -49,7 +50,8 @@ impl From<PgQueryResult> for UpsertOutcome {
 #[derive(Debug)]
 struct DimeProperties {
     hash: String,
-    content_length: i64,
+    content_length: i64, // TODO can we make these u64?
+    dime_length: i64,
     owner_signature: String,
     owner_public_key: String,
 }
@@ -59,7 +61,8 @@ struct Object {
     uuid: uuid::Uuid,
     hash: String,
     unique_hash: String,
-    content_length: i64,
+    content_length: i64, // TODO can we make these u64?
+    dime_length: i64,
     bucket: String,
     name: String,
     payload: Option<Vec<u8>>,
@@ -81,6 +84,7 @@ struct ObjectWithPublicKeys {
     object: Object,
     public_keys: Vec<ObjectPublicKey>,
     uri_host: String,
+    outcome: UpsertOutcome,
 }
 
 impl TryFrom<ObjectWithPublicKeys> for ObjectResponse {
@@ -130,13 +134,13 @@ impl TryFrom<ObjectWithPublicKeys> for ObjectResponse {
 
 pub struct ObjectGrpc {
     db_pool: Arc<PgPool>,
-    uri_host: String,
+    config: Arc<Config>,
 }
 
 impl ObjectGrpc {
 
-    pub fn new(db_pool: Arc<PgPool>, uri_host: String) -> Self {
-        Self { db_pool, uri_host }
+    pub fn new(db_pool: Arc<PgPool>, config: Arc<Config>) -> Self {
+        Self { db_pool, config }
     }
 
     // TODO write test to make sure this gets key with signature first
@@ -260,14 +264,14 @@ SELECT * FROM UNNEST($1, $2, $3, $4, $5)
 
         let query_str = if raw_dime.is_some() {
             r#"
-INSERT INTO object (uuid, hash, unique_hash, content_length, bucket, name, payload)
+INSERT INTO object (uuid, hash, unique_hash, content_length, dime_length, bucket, name, payload)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
 ON CONFLICT ON CONSTRAINT unique_hash_cnst
 DO NOTHING
             "#
         } else {
             r#"
-INSERT INTO object (uuid, hash, unique_hash, content_length, bucket, name)
+INSERT INTO object (uuid, hash, unique_hash, content_length, dime_length, bucket, name)
 VALUES ($1, $2, $3, $4, $5, $6)
 ON CONFLICT ON CONSTRAINT unique_hash_cnst
 DO NOTHING
@@ -278,7 +282,8 @@ DO NOTHING
             .bind(&dime.uuid)
             .bind(&properties.hash)
             .bind(&unique_hash)
-            .bind(&properties.content_length);
+            .bind(&properties.content_length)
+            .bind(&properties.dime_length);
         let query = if let Some(raw_dime) = raw_dime {
             query.bind(NOT_STORAGE_BACKED)
                 .bind(NOT_STORAGE_BACKED)
@@ -287,11 +292,8 @@ DO NOTHING
             unimplemented!("raw dime was None")
         };
 
-        println!("in here!");
-
         let mut tx = self.db_pool.begin().await?;
         let result = query.execute(&mut tx).await?.into();
-        println!("in here 2!");
         match result {
             UpsertOutcome::Created => self.put_object_public_keys(&mut tx, dime, properties).await,
             UpsertOutcome::Noop => Ok(()),
@@ -301,7 +303,7 @@ DO NOTHING
         let object = self.get_object_by_unique_hash(unique_hash.as_str()).await?;
         let object_public_keys = self.get_public_keys_by_object(&object.uuid).await?;
 
-        Ok(ObjectWithPublicKeys { object, public_keys: object_public_keys, uri_host: self.uri_host.clone() })
+        Ok(ObjectWithPublicKeys { object, public_keys: object_public_keys, uri_host: self.config.uri_host.clone(), outcome: result })
     }
 }
 
@@ -328,7 +330,7 @@ impl ObjectService for ObjectGrpc {
         if chunk_buffer.len() < 1 {
             return Err(Status::invalid_argument("Multipart upload is empty"))
         }
-        let multi_stream_header = match chunk_buffer[0].r#impl {
+        match chunk_buffer[0].r#impl {
             Some(MultiStreamHeaderEnum(ref header)) => {
                 if header.stream_count != 1 {
                     return Err(Status::invalid_argument("Multipart upload must contain a single stream"))
@@ -399,24 +401,38 @@ impl ObjectService for ObjectGrpc {
         let owner_public_key = properties.get(SIGNATURE_PUBLIC_KEY_FIELD_NAME)
             .map(base64::encode)
             .ok_or(Status::invalid_argument("Properties must contain \"SIGNATURE_PUBLIC_KEY_FIELD_NAME\""))?;
-        let dime_properties = DimeProperties {
-            hash,
-            content_length: header_chunk_header.content_length,
-            owner_signature,
-            owner_public_key,
-        };
 
         let byte_buffer: Bytes = byte_buffer.into();
         // Bytes clones are cheap
         let raw_dime = byte_buffer.clone();
         let dime: Dime = byte_buffer.try_into()
             .map_err(|err| Into::<OsError>::into(err))?;
+        let dime_properties = DimeProperties {
+            hash,
+            content_length: header_chunk_header.content_length,
+            dime_length: raw_dime.len() as i64,
+            owner_signature,
+            owner_public_key,
+        };
 
-        println!("before put object dime base64 = {}", base64::encode(&raw_dime));
-        // TODO none here when raw_dime threshold is met
-        let response = self.put_object(&dime, &dime_properties, Some(&raw_dime))
-            .await?
-            .try_into()?;
+        let response = if dime_properties.dime_length > self.config.storage_threshold.into() {
+            // TODO implement case where we need to save file
+            let response: ObjectWithPublicKeys = self.put_object(&dime, &dime_properties, Some(&raw_dime))
+                .await?;
+
+            match response.outcome {
+                UpsertOutcome::Created => unimplemented!(),
+                // TODO check existinence of storage file in this case to handle edge cases of
+                // partial writes?
+                UpsertOutcome::Noop => unimplemented!(),
+            };//?; TODO add ? back after implementation
+
+            response.try_into()?
+        } else {
+            self.put_object(&dime, &dime_properties, Some(&raw_dime))
+                .await?
+                .try_into()?
+        };
 
         Ok(Response::new(response))
     }
@@ -431,23 +447,17 @@ impl ObjectService for ObjectGrpc {
         let hash = base64::encode(request.hash);
         let public_key = base64::encode(&request.public_key);
 
-        println!("hash {}\n public_key {}", &hash, &public_key);
-
         let (object_uuid, signature) = self.get_public_key_object_uuid(hash.as_str(), public_key.as_str()).await?;
         // TODO fix later
         let signature = signature.unwrap();
         let object = self.get_object_by_uuid(&object_uuid).await?;
         // TODO how to get self owner and fallback to any owner
         let owner_signature = DimeSignature { signature: signature.1, public_key: signature.0 };
-        println!("owner signature {:?}", &owner_signature);
         // TODO fix this?
         let payload = object.payload.clone().unwrap_or_default();
-        // TODO remove println
-        println!("before get object dime base64 = {}", base64::encode(&payload));
         let mut payload = Bytes::copy_from_slice(payload.as_slice());
         let payload = format_dime_bytes(&mut payload, owner_signature)
             .map_err(Into::<OsError>::into)?;
-        println!("after get object dime base64 = {}", base64::encode(&payload.as_ref()));
 
         let (tx, rx) = mpsc::channel(4);
 

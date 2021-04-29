@@ -5,13 +5,15 @@ use std::net::SocketAddr;
 pub struct Config {
     pub url: SocketAddr,
     pub uri_host: String,
-    pub db_connection_pool_size: u32,
+    pub db_connection_pool_size: u16,
     pub db_host: String,
     pub db_port: u16,
     pub db_user: String,
     pub db_password: String,
     pub db_database: String,
     pub db_schema: String,
+    pub storage_base_path: String,
+    pub storage_threshold: u32,
 }
 
 impl Config {
@@ -36,8 +38,14 @@ impl Config {
         let db_password = env::var("DB_PASSWORD").expect("DB_PASSWORD not set");
         let db_database = env::var("DB_DATABASE").expect("DB_DATABASE not set");
         let db_schema = env::var("DB_SCHEMA").expect("DB_SCHEMA not set");
+        let storage_base_path = env::var("STORAGE_BASE_PATH").expect("STORAGE_BASE_PATH not set");
+        let storage_threshold = env::var("STORAGE_THRESHOLD")
+            // default to ~ 5KB
+            .unwrap_or("5000".to_owned())
+            .parse()
+            .expect("STORAGE_THRESHOLD could not be parsed into a u32");
 
-        Self { url, uri_host, db_connection_pool_size, db_host, db_port, db_user, db_password, db_database, db_schema }
+        Self { url, uri_host, db_connection_pool_size, db_host, db_port, db_user, db_password, db_database, db_schema, storage_base_path, storage_threshold }
     }
 
     pub fn db_connection_string(&self) -> String {

@@ -1,8 +1,8 @@
 use quick_error::quick_error;
 
-mod aes;
 mod dime;
 
+// forwarding declarations
 pub use dime::*;
 
 quick_error! {

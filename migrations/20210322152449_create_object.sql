@@ -4,6 +4,7 @@ CREATE TABLE object
     hash TEXT NOT NULL,
     unique_hash TEXT NOT NULL,
     content_length BIGINT NOT NULL,
+    dime_length BIGINT NOT NULL,
     bucket TEXT NOT NULL,
     name TEXT NOT NULL,
     payload BYTEA,

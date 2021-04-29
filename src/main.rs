@@ -2,6 +2,7 @@ mod config;
 mod dime;
 mod object;
 mod public_key;
+mod storage;
 mod types;
 
 use crate::config::Config;
@@ -25,6 +26,8 @@ static MIGRATOR: Migrator = sqlx::migrate!();
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    env_logger::init();
+
     let config = Config::new();
     let schema = Arc::new(config.db_schema.clone());
     let pool = PgPoolOptions::new()
@@ -37,15 +40,16 @@ async fn main() -> Result<()> {
             })
         })
         // TODO add more config fields
-        .max_connections(config.db_connection_pool_size)
+        .max_connections(config.db_connection_pool_size.into())
         .connect(config.db_connection_string().as_ref())
         .await?;
     let pool = Arc::new(pool);
+    let config = Arc::new(config);
 
     MIGRATOR.run(&*pool).await?;
 
     let public_key_service = PublicKeyGrpc::new(Arc::clone(&pool));
-    let object_service = ObjectGrpc::new(Arc::clone(&pool), config.uri_host.clone());
+    let object_service = ObjectGrpc::new(Arc::clone(&pool), Arc::clone(&config));
 
     log::info!("Starting server on {:?}", &config.url);
 
