@@ -29,8 +29,12 @@ quick_error! {
         Base64DecodeError(err: base64::DecodeError) {
             from()
         }
-        NotFound(err: String) { }
-        InvalidSignatureState(err: String) { }
+        NotFound(message: String) { }
+        InvalidSignatureState(message: String) { }
+        InvalidApplicationState(message: String) { }
+        StorageError(err: crate::storage::StorageError) {
+            from()
+        }
     }
 }
 
@@ -60,6 +64,8 @@ impl From<OsError> for tonic::Status {
             OsError::Base64DecodeError(_) => tonic::Code::Internal,
             OsError::NotFound(_) => tonic::Code::NotFound,
             OsError::InvalidSignatureState(_) => tonic::Code::Internal,
+            OsError::InvalidApplicationState(_) => tonic::Code::Internal,
+            OsError::StorageError(_) => tonic::Code::Internal,
         };
 
         tonic::Status::new(code, format!("{:?}", error))

@@ -5,7 +5,7 @@ CREATE TABLE object
     unique_hash TEXT NOT NULL,
     content_length BIGINT NOT NULL,
     dime_length BIGINT NOT NULL,
-    bucket TEXT NOT NULL,
+    directory TEXT NOT NULL DEFAULT to_char(current_date, 'YYYYMMDD'),
     name TEXT NOT NULL,
     payload BYTEA,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()

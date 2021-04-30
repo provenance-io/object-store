@@ -1,10 +1,9 @@
-use crate::{config::Config, dime::{Dime, Signature as DimeSignature, format_dime_bytes}};
+use crate::{config::Config, dime::{Dime, Signature as DimeSignature, format_dime_bytes}, storage::{Storage, StoragePath}};
 use crate::types::{GrpcResult, Result, OsError};
 use crate::pb::chunk_bidi::Impl::{Chunk as ChunkEnum, MultiStreamHeader as MultiStreamHeaderEnum};
 use crate::pb::MultiStreamHeader;
 use crate::pb::chunk::Impl::{End, Data, Value};
-// TODO change to ObjectWrapper?
-use crate::pb::{Chunk, ChunkBidi, ChunkEnd, Item, Object as ObjectInner, ObjectMetadata, ObjectResponse, Sha512Request, Signature, StreamHeader, Uuid};
+use crate::pb::{Chunk, ChunkBidi, ChunkEnd, ObjectMetadata, ObjectResponse, Sha512Request, Signature, StreamHeader, Uuid};
 use crate::pb::object_service_server::ObjectService;
 
 use bytes::{BufMut, Bytes, BytesMut};
@@ -12,14 +11,13 @@ use chrono::prelude::*;
 use futures_util::{StreamExt, TryStreamExt};
 use prost::Message;
 use tokio::sync::mpsc;
-use std::{collections::HashMap, convert::{TryFrom, TryInto}, sync::Arc, time::SystemTime};
+use std::{collections::HashMap, convert::TryInto, sync::Arc, time::SystemTime};
 use sqlx::{FromRow, Row};
 use sqlx::postgres::{PgConnection, PgPool, PgQueryResult};
 use tonic::{Request, Response, Status, Streaming};
 
 // TODO set encryption and signing key pair to something different locally and try this again
 // TODO time slow requests
-// TODO multistream header created by
 // TODO tests
 
 const DIME_FIELD_NAME: &str = "DIME";
@@ -50,7 +48,7 @@ impl From<PgQueryResult> for UpsertOutcome {
 #[derive(Debug)]
 struct DimeProperties {
     hash: String,
-    content_length: i64, // TODO can we make these u64?
+    content_length: i64,
     dime_length: i64,
     owner_signature: String,
     owner_public_key: String,
@@ -61,9 +59,9 @@ struct Object {
     uuid: uuid::Uuid,
     hash: String,
     unique_hash: String,
-    content_length: i64, // TODO can we make these u64?
+    content_length: i64,
     dime_length: i64,
-    bucket: String,
+    directory: String,
     name: String,
     payload: Option<Vec<u8>>,
     created_at: DateTime<Utc>,
@@ -83,64 +81,59 @@ struct ObjectPublicKey {
 struct ObjectWithPublicKeys {
     object: Object,
     public_keys: Vec<ObjectPublicKey>,
-    uri_host: String,
-    outcome: UpsertOutcome,
 }
 
-impl TryFrom<ObjectWithPublicKeys> for ObjectResponse {
-    type Error = OsError;
+impl ObjectWithPublicKeys {
 
-    fn try_from(opk: ObjectWithPublicKeys) -> Result<Self> {
-        let uuid = opk.object.uuid.to_hyphenated().to_string();
+    fn to_response(&self, config: &Config) -> Result<ObjectResponse> {
+        let uuid = self.object.uuid.to_hyphenated().to_string();
         let mut signatures = Vec::new();
 
-        for key in &opk.public_keys {
-            if key.signature.is_some() {
-                // TODO fix unwrap
-                signatures.push(Signature {
-                    // signature: key.signature.clone().unwrap().into_bytes(),
-                    signature: base64::decode(key.signature.clone().unwrap()).unwrap(),
-                    // public_key: key.signature_public_key.clone().unwrap().into_bytes(),
-                    public_key: base64::decode(key.signature_public_key.clone().unwrap()).unwrap(),
-                });
+        for key in &self.public_keys {
+            match (&key.signature_public_key, &key.signature) {
+                (Some(signature_public_key), Some(signature)) => {
+                    signatures.push(Signature {
+                        signature: base64::decode(&signature)?,
+                        public_key: base64::decode(&signature_public_key)?,
+                    });
+                },
+                (None, None) => (),
+                _ => return Err(OsError::InvalidSignatureState("Signature_public_key and signature must be both null or non null.".to_owned()))
             }
         }
 
         Ok(ObjectResponse {
-            object: Some(ObjectInner {
-                uuid: Some(Uuid { value: uuid }),
-                hash: base64::decode(&opk.object.hash)?,
-                signatures,
-                uri: format!("object://{}/{}", &opk.uri_host, &opk.object.hash),
-                bucket: opk.object.bucket.clone(),
-                name: opk.object.name.clone(),
-                metadata: Some(ObjectMetadata {
-                    hash: Vec::new(), // TODO get hash of whole dime?
-                    length: 0_i64, // TODO this is the size of the blob in non db storage mode
-                }),
-                created: Some(Into::<SystemTime>::into(opk.object.created_at).into()),
-                created_by: "".to_owned(), // TODO fix this
+            uuid: Some(Uuid { value: uuid }),
+            hash: base64::decode(&self.object.hash)?,
+            signatures,
+            uri: format!("object://{}/{}", &config.uri_host, &self.object.hash),
+            bucket: config.storage_base_path.clone(),
+            name: self.object.name.clone(),
+            metadata: Some(ObjectMetadata {
+                sha512: Vec::new(), // TODO get hash of whole dime?
+                length: self.object.dime_length,
+                content_length: self.object.content_length,
             }),
-            item: Some(Item {
-                bucket: opk.object.bucket,
-                name: opk.object.name,
-                length: 0_i64, // TODO this is the size of the blob in non db storage mode
-                // TODO only "x-content-length" in legacy, but that's not really needed
-                metadata: HashMap::new(),
-            }),
+            created: Some(Into::<SystemTime>::into(self.object.created_at).into()),
         })
     }
 }
 
-pub struct ObjectGrpc {
+pub struct ObjectGrpc<S>
+    where S: Storage,
+{
     db_pool: Arc<PgPool>,
     config: Arc<Config>,
+    storage: S,
 }
 
-impl ObjectGrpc {
+impl<S> ObjectGrpc<S>
+    where S: Storage,
+{
 
-    pub fn new(db_pool: Arc<PgPool>, config: Arc<Config>) -> Self {
-        Self { db_pool, config }
+    pub fn new(db_pool: Arc<PgPool>, config: Arc<Config>, storage: S) -> Self
+    {
+        Self { db_pool, config, storage }
     }
 
     // TODO write test to make sure this gets key with signature first
@@ -222,7 +215,9 @@ SELECT object_uuid, signature_public_key, signature FROM object_public_key
             object_uuids.push(dime.uuid);
             hashes.push(&properties.hash);
 
+            println!("party {} dime owner {}", &party, &dime_owner_public_key_base64);
             if party == dime_owner_public_key_base64 {
+                println!("in here!!!");
                 signatures.push(Some(properties.owner_signature.as_str()));
                 signature_public_keys.push(Some(properties.owner_public_key.as_str()));
             } else {
@@ -233,7 +228,7 @@ SELECT object_uuid, signature_public_key, signature FROM object_public_key
             public_keys.push(party);
         }
 
-        if signatures.len() != 1 || signature_public_keys.len() != 1 {
+        if signatures.iter().flatten().count() != 1 || signature_public_keys.iter().flatten().count() != 1 {
             return Err(OsError::InvalidSignatureState(
                 format!("dime {} has no signers that match audience list", &dime.uuid)
             ))
@@ -264,14 +259,14 @@ SELECT * FROM UNNEST($1, $2, $3, $4, $5)
 
         let query_str = if raw_dime.is_some() {
             r#"
-INSERT INTO object (uuid, hash, unique_hash, content_length, dime_length, bucket, name, payload)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
+INSERT INTO object (uuid, hash, unique_hash, content_length, dime_length, directory, name, payload)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 ON CONFLICT ON CONSTRAINT unique_hash_cnst
 DO NOTHING
             "#
         } else {
             r#"
-INSERT INTO object (uuid, hash, unique_hash, content_length, dime_length, bucket, name)
+INSERT INTO object (uuid, hash, unique_hash, content_length, dime_length, name)
 VALUES ($1, $2, $3, $4, $5, $6)
 ON CONFLICT ON CONSTRAINT unique_hash_cnst
 DO NOTHING
@@ -289,7 +284,8 @@ DO NOTHING
                 .bind(NOT_STORAGE_BACKED)
                 .bind(raw_dime.to_vec())
         } else {
-            unimplemented!("raw dime was None")
+            // TODO or different uuid for race condition? - think through this
+            query.bind(&dime.uuid)
         };
 
         let mut tx = self.db_pool.begin().await?;
@@ -303,12 +299,14 @@ DO NOTHING
         let object = self.get_object_by_unique_hash(unique_hash.as_str()).await?;
         let object_public_keys = self.get_public_keys_by_object(&object.uuid).await?;
 
-        Ok(ObjectWithPublicKeys { object, public_keys: object_public_keys, uri_host: self.config.uri_host.clone(), outcome: result })
+        Ok(ObjectWithPublicKeys { object, public_keys: object_public_keys })
     }
 }
 
 #[tonic::async_trait]
-impl ObjectService for ObjectGrpc {
+impl<S> ObjectService for ObjectGrpc<S>
+    where S: Storage + Send + Sync + 'static,
+{
 
     async fn put(
         &self,
@@ -364,7 +362,6 @@ impl ObjectService for ObjectGrpc {
 
         byte_buffer.put(header_chunk_data.as_ref());
 
-        // TODO refactor a lot of this fetching
         for chunk in &chunk_buffer[2..] {
             match chunk.r#impl {
                 Some(ChunkEnum(ref chunk)) => {
@@ -416,22 +413,20 @@ impl ObjectService for ObjectGrpc {
         };
 
         let response = if dime_properties.dime_length > self.config.storage_threshold.into() {
-            // TODO implement case where we need to save file
-            let response: ObjectWithPublicKeys = self.put_object(&dime, &dime_properties, Some(&raw_dime))
+            let response: ObjectWithPublicKeys = self.put_object(&dime, &dime_properties, None)
                 .await?;
+            let storage_path = StoragePath {
+                dir: response.object.directory.clone(),
+                file: response.object.name.clone(),
+            };
 
-            match response.outcome {
-                UpsertOutcome::Created => unimplemented!(),
-                // TODO check existinence of storage file in this case to handle edge cases of
-                // partial writes?
-                UpsertOutcome::Noop => unimplemented!(),
-            };//?; TODO add ? back after implementation
-
-            response.try_into()?
+            self.storage.store(&storage_path, response.object.dime_length as u64, &raw_dime).await
+                .map_err(Into::<OsError>::into)?;
+            response.to_response(&self.config)?
         } else {
             self.put_object(&dime, &dime_properties, Some(&raw_dime))
                 .await?
-                .try_into()?
+                .to_response(&self.config)?
         };
 
         Ok(Response::new(response))
@@ -453,9 +448,18 @@ impl ObjectService for ObjectGrpc {
         let object = self.get_object_by_uuid(&object_uuid).await?;
         // TODO how to get self owner and fallback to any owner
         let owner_signature = DimeSignature { signature: signature.1, public_key: signature.0 };
-        // TODO fix this?
-        let payload = object.payload.clone().unwrap_or_default();
-        let mut payload = Bytes::copy_from_slice(payload.as_slice());
+        let mut payload = if let Some(payload) = &object.payload {
+            Bytes::copy_from_slice(payload.as_slice())
+        } else {
+            let storage_path = StoragePath {
+                dir: object.directory.clone(),
+                file: object.name.clone(),
+            };
+            let payload = self.storage.fetch(&storage_path, object.dime_length as u64).await
+                .map_err(Into::<OsError>::into)?;
+
+            Bytes::copy_from_slice(payload.as_slice())
+        };
         let payload = format_dime_bytes(&mut payload, owner_signature)
             .map_err(Into::<OsError>::into)?;
 

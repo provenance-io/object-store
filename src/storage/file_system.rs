@@ -11,6 +11,10 @@ pub struct FileSystem {
 
 impl FileSystem {
 
+    pub fn new(base_url: &str) -> Self {
+        FileSystem { base_url: PathBuf::from(base_url) }
+    }
+
     fn validate_content_length(&self, path: &StoragePath, content_length: u64, data:&[u8]) -> Result<()> {
         if data.len() as u64 != content_length {
             Err(StorageError::ContentLengthError(format!(

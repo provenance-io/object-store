@@ -12,6 +12,7 @@ pub struct Config {
     pub db_password: String,
     pub db_database: String,
     pub db_schema: String,
+    pub storage_type: String,
     pub storage_base_path: String,
     pub storage_threshold: u32,
 }
@@ -38,6 +39,7 @@ impl Config {
         let db_password = env::var("DB_PASSWORD").expect("DB_PASSWORD not set");
         let db_database = env::var("DB_DATABASE").expect("DB_DATABASE not set");
         let db_schema = env::var("DB_SCHEMA").expect("DB_SCHEMA not set");
+        let storage_type  = env::var("STORAGE_TYPE").expect("STORAGE_TYPE not set");
         let storage_base_path = env::var("STORAGE_BASE_PATH").expect("STORAGE_BASE_PATH not set");
         let storage_threshold = env::var("STORAGE_THRESHOLD")
             // default to ~ 5KB
@@ -45,7 +47,7 @@ impl Config {
             .parse()
             .expect("STORAGE_THRESHOLD could not be parsed into a u32");
 
-        Self { url, uri_host, db_connection_pool_size, db_host, db_port, db_user, db_password, db_database, db_schema, storage_base_path, storage_threshold }
+        Self { url, uri_host, db_connection_pool_size, db_host, db_port, db_user, db_password, db_database, db_schema, storage_type, storage_base_path, storage_threshold }
     }
 
     pub fn db_connection_string(&self) -> String {

@@ -4,8 +4,8 @@ mod file_system;
 mod storage;
 
 // forwarding declarations
-use storage::{Storage, StoragePath};
-use file_system::FileSystem;
+pub use storage::{Storage, StoragePath};
+pub use file_system::FileSystem;
 
 quick_error! {
     #[derive(Debug, PartialEq)]

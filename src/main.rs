@@ -8,7 +8,8 @@ mod types;
 use crate::config::Config;
 use crate::object::ObjectGrpc;
 use crate::public_key::PublicKeyGrpc;
-use crate::types::Result;
+use crate::types::{OsError, Result};
+use crate::storage::FileSystem;
 
 use std::sync::Arc;
 use sqlx::{migrate::Migrator, postgres::PgPoolOptions, Executor};
@@ -29,6 +30,10 @@ async fn main() -> Result<()> {
     env_logger::init();
 
     let config = Config::new();
+    let storage = match config.storage_type.as_str() {
+        "file_system" => Ok(FileSystem::new(config.storage_base_path.as_str())),
+        _ => Err(OsError::InvalidApplicationState("".to_owned()))
+    }?;
     let schema = Arc::new(config.db_schema.clone());
     let pool = PgPoolOptions::new()
         .after_connect(move |conn| {
@@ -49,7 +54,7 @@ async fn main() -> Result<()> {
     MIGRATOR.run(&*pool).await?;
 
     let public_key_service = PublicKeyGrpc::new(Arc::clone(&pool));
-    let object_service = ObjectGrpc::new(Arc::clone(&pool), Arc::clone(&config));
+    let object_service = ObjectGrpc::new(Arc::clone(&pool), Arc::clone(&config), storage);
 
     log::info!("Starting server on {:?}", &config.url);
 

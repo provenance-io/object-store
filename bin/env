@@ -8,4 +8,5 @@ export DB_PASSWORD=password1
 export DB_DATABASE=object-store
 export DB_SCHEMA=object-store
 export URI_HOST=figure.com
-export STORAGE_BASE_PATH=os/data
+export STORAGE_TYPE=file_system
+export STORAGE_BASE_PATH=storage_bucket

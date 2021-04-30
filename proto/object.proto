@@ -25,11 +25,6 @@ message Sha512Request {
     bytes public_key = 2;
 }
 
-message ObjectResponse {
-    Object object = 1;
-    Item item = 2;
-}
-
 message Chunk {
     StreamHeader header = 1;
     oneof impl {
@@ -51,19 +46,9 @@ message StreamHeader {
     int64 content_length = 2;
 }
 
-message Item {
-    reserved 3;
-    reserved "content_length";
-
-    string bucket = 1;
-    string name = 2;
-    map<string, string> metadata = 4;
-    int64 length = 5;
-}
-
-message Object {
-    reserved 2, 9, 10, 13, 14;
-    reserved "object_uuid", "effective_start_date", "effective_end_date", "updated", "updated_by";
+message ObjectResponse {
+    reserved 2, 9, 10, 12, 13, 14;
+    reserved "object_uuid", "effective_start_date", "effective_end_date", "created_by", "updated", "updated_by";
 
     UUID uuid = 1;
     bytes hash = 3;
@@ -73,15 +58,15 @@ message Object {
     string name = 7;
     ObjectMetadata metadata = 8;
     google.protobuf.Timestamp created = 11;
-    string created_by = 12;
 }
 
 message ObjectMetadata {
     reserved 1, 2, 5, 6, 7, 8, 9;
     reserved "uuid", "document_uuid", "connector_class", "created", "created_by", "updated", "updated_by";
 
-    bytes hash = 3;
+    bytes sha512 = 3;
     int64 length = 4;
+    int64 content_length = 10;
 }
 
 message Signature {
