@@ -10,6 +10,7 @@ use sqlx::{postgres::PgPool, Row};
 use tonic::{Request, Response, Status};
 use url::Url;
 
+// TODO add models to domain and sql functions to datastore
 // TODO convert ErrorKind into local errors
 
 #[derive(Debug)]

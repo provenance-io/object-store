@@ -1,13 +1,18 @@
+mod consts;
 mod config;
+mod types;
 mod dime;
+mod datastore;
+mod domain;
+mod storage;
 mod object;
 mod public_key;
-mod storage;
-mod types;
+mod mailbox;
 
 use crate::config::Config;
 use crate::object::ObjectGrpc;
 use crate::public_key::PublicKeyGrpc;
+use crate::mailbox::MailboxGrpc;
 use crate::types::{OsError, Result};
 use crate::storage::FileSystem;
 
@@ -21,9 +26,9 @@ mod pb {
 
 use pb::public_key_service_server::PublicKeyServiceServer;
 use pb::object_service_server::ObjectServiceServer;
+use pb::mailbox_service_server::MailboxServiceServer;
 
 static MIGRATOR: Migrator = sqlx::migrate!();
-
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -54,12 +59,14 @@ async fn main() -> Result<()> {
     MIGRATOR.run(&*pool).await?;
 
     let public_key_service = PublicKeyGrpc::new(Arc::clone(&pool));
+    let mailbox_service = MailboxGrpc::new(Arc::clone(&pool));
     let object_service = ObjectGrpc::new(Arc::clone(&pool), Arc::clone(&config), storage);
 
     log::info!("Starting server on {:?}", &config.url);
 
     Server::builder()
         .add_service(PublicKeyServiceServer::new(public_key_service))
+        .add_service(MailboxServiceServer::new(mailbox_service))
         .add_service(ObjectServiceServer::new(object_service))
         .serve(config.url)
         .await?;

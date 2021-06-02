@@ -1,5 +1,5 @@
 export OS_URL=0.0.0.0
-export OS_PORT=5004
+export OS_PORT=5000
 export DB_CONNECTION_POOL_SIZE=3
 export DB_HOST=localhost
 export DB_PORT=5432
