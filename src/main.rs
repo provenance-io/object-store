@@ -30,6 +30,10 @@ use pb::mailbox_service_server::MailboxServiceServer;
 
 static MIGRATOR: Migrator = sqlx::migrate!();
 
+// TODO add logging in Trace middleware
+// TODO datadog apm integration
+// TODO implement checksum in filestore
+
 #[tokio::main]
 async fn main() -> Result<()> {
     env_logger::init();
@@ -49,7 +53,6 @@ async fn main() -> Result<()> {
                 Ok(())
             })
         })
-        // TODO add more config fields
         .max_connections(config.db_connection_pool_size.into())
         .connect(config.db_connection_string().as_ref())
         .await?;
@@ -64,6 +67,7 @@ async fn main() -> Result<()> {
 
     log::info!("Starting server on {:?}", &config.url);
 
+    // TODO add server fields that make sense
     Server::builder()
         .add_service(PublicKeyServiceServer::new(public_key_service))
         .add_service(MailboxServiceServer::new(mailbox_service))

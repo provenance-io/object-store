@@ -66,8 +66,6 @@ impl MailboxService for MailboxGrpc {
     ) -> GrpcResult<Response<()>> {
         let request = request.into_inner();
 
-        println!("in ack! {:?}", &request);
-
         let uuid = if let Some(uuid) = request.uuid {
             uuid::Uuid::from_str(uuid.value.as_str())
                 .map_err(Into::<OsError>::into)?
@@ -96,6 +94,7 @@ mod tests {
     use sqlx::postgres::PgPool;
     use tonic::transport::Channel;
 
+    use serial_test::serial;
     use testcontainers::*;
 
     async fn start_server() -> Arc<PgPool> {
@@ -168,6 +167,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial(grpc_server)]
     async fn get_and_ack_flow() {
         let db = start_server().await;
         let mut client = get_client().await;
@@ -257,6 +257,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial(grpc_server)]
     async fn duplicate_objects_does_not_dup_mail() {
         start_server().await;
         let mut client = get_client().await;
@@ -292,6 +293,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial(grpc_server)]
     async fn get_and_ack_many() {
         start_server().await;
         let mut client = get_client().await;

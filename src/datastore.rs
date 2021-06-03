@@ -9,8 +9,6 @@ use futures_util::TryStreamExt;
 use sqlx::postgres::{PgConnection, PgPool, PgQueryResult};
 use sqlx::{FromRow, Row};
 
-// TODO remove all printlns
-
 #[derive(Debug)]
 enum UpsertOutcome {
     Noop,
@@ -61,8 +59,6 @@ pub struct MailboxPublicKey {
 }
 
 pub async fn get_public_key_object_uuid(db: &PgPool, hash: &str, public_key: &str) -> Result<uuid::Uuid> {
-    println!("get hash = {}", hash);
-    println!("get public_key = {}", public_key);
     let query_str = "SELECT object_uuid FROM object_public_key WHERE hash = $1 AND public_key = $2";
     let result = sqlx::query(query_str)
         .bind(hash)
@@ -103,8 +99,6 @@ async fn put_object_public_keys(conn: &mut PgConnection, object_uuid: uuid::Uuid
     let mut public_keys: Vec<String> = Vec::new();
 
     for party in dime.unique_audience_base64()? {
-        println!("hash = {}", &properties.hash);
-        println!("public_key = {}", &party);
         object_uuids.push(object_uuid);
         hashes.push(&properties.hash);
         public_keys.push(party);
@@ -175,7 +169,7 @@ SELECT mpk.uuid mpk_uuid, o.uuid, o.dime_uuid, hash, unique_hash, content_length
 //                 },
 //                 Ok(None) => (), // end of stream
 //                 Err(e) => {
-//                     // TODO handle this better!
+//                     // handle this better!
 //                     log::info!("Error in mailbox query {:?}", e);
 //                 },
 //             }
@@ -191,16 +185,12 @@ async fn maybe_put_mailbox_public_keys(conn: &mut PgConnection, object_uuid: uui
     let mut public_keys: Vec<String> = Vec::new();
     let mut message_types: Vec<String> = Vec::new();
 
-    println!("in mailbox public keys! {:?}", &dime.metadata);
-
     let message_type = match dime.metadata.get(MAILBOX_KEY).map(|v| v.as_str()) {
         Some(MAILBOX_FRAGMENT_REQUEST) => MAILBOX_FRAGMENT_REQUEST,
         Some(MAILBOX_FRAGMENT_RESPONSE) => MAILBOX_FRAGMENT_RESPONSE,
         Some(MAILBOX_ERROR_RESPONSE) => MAILBOX_ERROR_RESPONSE,
         _ => return Ok(()),
     };
-
-    println!("Received mailbox message of type {}!", message_type);
 
     for party in dime.unique_audience_without_owner_base64()? {
         uuids.push(uuid::Uuid::new_v4());

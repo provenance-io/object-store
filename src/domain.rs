@@ -10,8 +10,6 @@ pub struct DimeProperties {
     pub hash: String,
     pub content_length: i64,
     pub dime_length: i64,
-    pub owner_signature: String,
-    pub owner_public_key: String,
 }
 
 pub trait ObjectApiResponse {

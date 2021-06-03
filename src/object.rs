@@ -1,4 +1,4 @@
-use crate::{config::Config, dime::Dime, storage::{Storage, StoragePath}};
+use crate::{config::Config, dime::{Dime, Signature, format_dime_bytes}, storage::{Storage, StoragePath}};
 use crate::consts;
 use crate::datastore;
 use crate::domain::{DimeProperties, ObjectApiResponse};
@@ -16,9 +16,6 @@ use tokio::sync::mpsc;
 use std::{collections::HashMap, convert::TryInto, sync::Arc};
 use sqlx::postgres::PgPool;
 use tonic::{Request, Response, Status, Streaming};
-
-// TODO datadog apm integration
-// TODO verify storage record is using object.uuid and not dime
 
 pub struct ObjectGrpc<S>
     where S: Storage,
@@ -126,14 +123,17 @@ impl<S> ObjectService for ObjectGrpc<S>
         let hash = properties.get(consts::HASH_FIELD_NAME)
             .map(base64::encode)
             .ok_or(Status::invalid_argument("Properties must contain \"HASH\""))?;
-        let owner_signature = properties.get(consts::SIGNATURE_FIELD_NAME)
+        let signature = properties.get(consts::SIGNATURE_FIELD_NAME)
             .map(base64::encode)
             .ok_or(Status::invalid_argument("Properties must contain \"SIGNATURE_FIELD_NAME\""))?;
-        let owner_public_key = properties.get(consts::SIGNATURE_PUBLIC_KEY_FIELD_NAME)
+        let public_key = properties.get(consts::SIGNATURE_PUBLIC_KEY_FIELD_NAME)
             .map(base64::encode)
             .ok_or(Status::invalid_argument("Properties must contain \"SIGNATURE_PUBLIC_KEY_FIELD_NAME\""))?;
 
-        let byte_buffer: Bytes = byte_buffer.into();
+        let owner_signature = Signature { signature, public_key };
+        let mut byte_buffer: Bytes = byte_buffer.into();
+        let byte_buffer = format_dime_bytes(&mut byte_buffer, owner_signature)
+            .map_err(Into::<OsError>::into)?;
         // Bytes clones are cheap
         let raw_dime = byte_buffer.clone();
         let dime: Dime = byte_buffer.try_into()
@@ -142,8 +142,6 @@ impl<S> ObjectService for ObjectGrpc<S>
             hash,
             content_length: header_chunk_header.content_length,
             dime_length: raw_dime.len() as i64,
-            owner_signature,
-            owner_public_key,
         };
 
         // mail items should be under any reasonable threshold set, but explicitly check for
@@ -255,6 +253,7 @@ pub mod tests {
     use sqlx::FromRow;
     use sqlx::postgres::PgPoolOptions;
 
+    use serial_test::serial;
     use testcontainers::*;
     use testcontainers::images::postgres::Postgres;
     use testcontainers::clients::Cli;
@@ -492,6 +491,7 @@ pub mod tests {
     // TODO test validation of sent data
 
     #[tokio::test]
+    #[serial(grpc_server)]
     async fn simple_put() {
         start_server().await;
 
@@ -516,6 +516,7 @@ pub mod tests {
     }
 
     #[tokio::test]
+    #[serial(grpc_server)]
     async fn multi_packet_file_store_put() {
         start_server().await;
 
@@ -540,6 +541,7 @@ pub mod tests {
     }
 
     #[tokio::test]
+    #[serial(grpc_server)]
     async fn multi_party_put() {
         let db = start_server().await;
 
@@ -565,6 +567,7 @@ pub mod tests {
     }
 
     #[tokio::test]
+    #[serial(grpc_server)]
     async fn small_mailbox_put() {
         let db = start_server().await;
 
@@ -592,6 +595,7 @@ pub mod tests {
     }
 
     #[tokio::test]
+    #[serial(grpc_server)]
     async fn large_mailbox_put() {
         let db = start_server().await;
 
@@ -619,6 +623,7 @@ pub mod tests {
     }
 
     #[tokio::test]
+    #[serial(grpc_server)]
     async fn simple_get() {
         start_server().await;
 
@@ -696,6 +701,7 @@ pub mod tests {
     }
 
     #[tokio::test]
+    #[serial(grpc_server)]
     async fn multi_packet_file_store_get() {
         start_server().await;
 
@@ -726,6 +732,7 @@ pub mod tests {
     }
 
     #[tokio::test]
+    #[serial(grpc_server)]
     async fn multi_party_non_owner_get() {
         start_server().await;
 
@@ -753,6 +760,7 @@ pub mod tests {
     }
 
     #[tokio::test]
+    #[serial(grpc_server)]
     async fn dupe_objects_noop() {
         start_server().await;
 
@@ -772,6 +780,7 @@ pub mod tests {
     }
 
     #[tokio::test]
+    #[serial(grpc_server)]
     async fn dupe_objects_added_audience() {
         start_server().await;
 
@@ -791,4 +800,8 @@ pub mod tests {
 
         assert_ne!(response_inner.uuid, response_dupe_inner.uuid);
     }
+
+    // TODO add test that has storage backed payload but the file wasn't written due to failure
+    // verify that fetch returns an accurate error and also a subsequent PUT can write the file
+    // TODO add test to verify owner signature is added to dime
 }

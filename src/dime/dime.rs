@@ -1,7 +1,7 @@
 use crate::dime::{DimeError, Result};
 use crate::pb::Dime as DimeProto;
 
-use bytes::{Buf, Bytes};
+use bytes::{Buf, BufMut, Bytes, BytesMut};
 use prost::Message;
 use serde::{Deserialize, Serialize};
 use std::{collections::{HashMap, HashSet}, convert::TryFrom};
@@ -67,64 +67,59 @@ impl Dime {
     }
 }
 
-// TODO need to insert signature received in header into dime or do this on the p8e side
-// TODO test the above after implemented
-// TODO skip all of this and just use the public key signature in the dime?
-// pub fn format_dime_bytes(input: &mut Bytes, owner_signature: Signature) -> Result<Bytes> {
-//     let signatures = vec![owner_signature];
-//     let signature_bytes = serde_json::to_vec(&signatures)
-//         .map_err(|err| DimeError::SerdeEncodeError(format!("{:?}", err)))?;
-// 
-//     let mut buffer = BytesMut::with_capacity(input.remaining() + 4 + signature_bytes.len());
-// 
-//     // header
-//     buffer.put_u32(input.get_u32());
-//     buffer.put_u16(input.get_u16());
-// 
-//     // uuid
-//     let length = input.get_u32();
-//     buffer.put_u32(length);
-//     let mut uuid = vec![0; length as usize];
-//     input.copy_to_slice(uuid.as_mut_slice());
-//     buffer.put_slice(uuid.as_slice());
-// 
-//     // metadata
-//     let length = input.get_u32();
-//     buffer.put_u32(length);
-//     let mut metadata = vec![0; length as usize];
-//     input.copy_to_slice(metadata.as_mut_slice());
-//     buffer.put_slice(metadata.as_slice());
-// 
-//     // uri
-//     let length = input.get_u32();
-//     buffer.put_u32(length);
-//     let mut uri = vec![0; length as usize];
-//     input.copy_to_slice(uri.as_mut_slice());
-//     buffer.put_slice(uri.as_slice());
-// 
-//     // signatures
-//     let length = input.get_u32();
-//     // TODO remove
-//     println!("input length = {} signature length = {}", length, signature_bytes.len());
-//     input.advance(length as usize);
-//     buffer.put_u32(signature_bytes.len() as u32);
-//     buffer.put_slice(&signature_bytes);
-// 
-//     // dime proto
-//     let length = input.get_u32();
-//     buffer.put_u32(length);
-//     let mut proto = vec![0; length as usize];
-//     input.copy_to_slice(proto.as_mut_slice());
-//     buffer.put_slice(proto.as_slice());
-// 
-//     // remaining
-//     let length = input.remaining();
-//     let mut remaining = vec![0; length as usize];
-//     input.copy_to_slice(remaining.as_mut_slice());
-//     buffer.put_slice(remaining.as_slice());
-// 
-//     Ok(buffer.freeze())
-// }
+pub fn format_dime_bytes(input: &mut Bytes, owner_signature: Signature) -> Result<Bytes> {
+    let signatures = vec![owner_signature];
+    let signature_bytes = serde_json::to_vec(&signatures)
+        .map_err(|err| DimeError::SerdeEncodeError(format!("{:?}", err)))?;
+
+    let mut buffer = BytesMut::with_capacity(input.remaining() + 4 + signature_bytes.len());
+
+    // header
+    buffer.put_u32(input.get_u32());
+    buffer.put_u16(input.get_u16());
+
+    // uuid
+    let length = input.get_u32();
+    buffer.put_u32(length);
+    let mut uuid = vec![0; length as usize];
+    input.copy_to_slice(uuid.as_mut_slice());
+    buffer.put_slice(uuid.as_slice());
+
+    // metadata
+    let length = input.get_u32();
+    buffer.put_u32(length);
+    let mut metadata = vec![0; length as usize];
+    input.copy_to_slice(metadata.as_mut_slice());
+    buffer.put_slice(metadata.as_slice());
+
+    // uri
+    let length = input.get_u32();
+    buffer.put_u32(length);
+    let mut uri = vec![0; length as usize];
+    input.copy_to_slice(uri.as_mut_slice());
+    buffer.put_slice(uri.as_slice());
+
+    // signatures
+    let length = input.get_u32();
+    input.advance(length as usize);
+    buffer.put_u32(signature_bytes.len() as u32);
+    buffer.put_slice(&signature_bytes);
+
+    // dime proto
+    let length = input.get_u32();
+    buffer.put_u32(length);
+    let mut proto = vec![0; length as usize];
+    input.copy_to_slice(proto.as_mut_slice());
+    buffer.put_slice(proto.as_slice());
+
+    // remaining
+    let length = input.remaining();
+    let mut remaining = vec![0; length as usize];
+    input.copy_to_slice(remaining.as_mut_slice());
+    buffer.put_slice(remaining.as_slice());
+
+    Ok(buffer.freeze())
+}
 
 impl TryFrom<Bytes> for Dime {
     type Error = DimeError;
@@ -360,66 +355,65 @@ mod tests {
         assert_eq!(actual, Ok(expected));
     }
 
-    // #[test]
-    // fn encode_to_decode_matches() {
-    //     let mut buffer = BytesMut::new();
-    //     buffer.put_u32(MAGIC_BYTES);
-    //     buffer.put_u16(1);
-    //     buffer.put_u32(16);
-    //     buffer.put_u128(300);
-    //     let mut metadata = HashMap::new();
-    //     metadata.insert("one".to_owned(), "1".to_owned());
-    //     metadata.insert("two".to_owned(), "2".to_owned());
-    //     metadata.insert("three".to_owned(), "3".to_owned());
-    //     let json = serde_json::to_vec(&metadata).unwrap();
-    //     buffer.put_u32(json.len().try_into().unwrap());
-    //     buffer.put_slice(json.as_slice());
-    //     buffer.put_u32(10);
-    //     buffer.put_slice(b"valid uri!");
-    //     buffer.put_u32(0);
-    //     // no signature slice needed since length is 0
-    //     // buffer.put_slice();
+    #[test]
+    fn encode_to_decode_matches() {
+        let mut buffer = BytesMut::new();
+        buffer.put_u32(MAGIC_BYTES);
+        buffer.put_u16(1);
+        buffer.put_u32(16);
+        buffer.put_u128(300);
+        let mut metadata = HashMap::new();
+        metadata.insert("one".to_owned(), "1".to_owned());
+        metadata.insert("two".to_owned(), "2".to_owned());
+        metadata.insert("three".to_owned(), "3".to_owned());
+        let json = serde_json::to_vec(&metadata).unwrap();
+        buffer.put_u32(json.len().try_into().unwrap());
+        buffer.put_slice(json.as_slice());
+        buffer.put_u32(10);
+        buffer.put_slice(b"valid uri!");
+        buffer.put_u32(0);
+        // no signature slice needed since length is 0
+        // buffer.put_slice();
 
-    //     let audience = pb::Audience {
-    //         payload_id: 10,
-    //         public_key: vec![1, 2, 3],
-    //         context: 10,
-    //         tag: vec![4, 5, 6],
-    //         ephemeral_pubkey: vec![7, 8, 9],
-    //         encrypted_dek: vec![10, 11, 12],
-    //     };
-    //     let proto = pb::Dime {
-    //         uuid: Some(pb::Uuid { value: "a uuid?".to_owned() }),
-    //         owner: Some(audience.clone()),
-    //         metadata: HashMap::default(),
-    //         audience: vec![audience],
-    //         payload: vec![pb::Payload { id: 1, cipher_text: vec![1, 2, 3, 4, 5, 6, 7, 8] }],
-    //         audit_fields: None,
-    //     };
-    //     let proto_len = proto.encoded_len();
-    //     let mut proto_buffer = BytesMut::with_capacity(proto_len);
-    //     proto.encode(&mut proto_buffer).unwrap();
-    //     buffer.put_u32(proto_len.try_into().unwrap());
-    //     buffer.put_slice(proto_buffer.as_ref());
-    //     let mut buffer: Bytes = buffer.into();
-    //     let signature = Signature {
-    //         signature: "signature".to_owned(),
-    //         public_key: "public_key".to_owned(),
-    //     };
+        let audience = pb::Audience {
+            payload_id: 10,
+            public_key: vec![1, 2, 3],
+            context: 10,
+            tag: vec![4, 5, 6],
+            ephemeral_pubkey: vec![7, 8, 9],
+            encrypted_dek: vec![10, 11, 12],
+        };
+        let proto = pb::Dime {
+            uuid: Some(pb::Uuid { value: "a uuid?".to_owned() }),
+            owner: Some(audience.clone()),
+            metadata: HashMap::default(),
+            audience: vec![audience],
+            payload: vec![pb::Payload { id: 1, cipher_text: vec![1, 2, 3, 4, 5, 6, 7, 8] }],
+            audit_fields: None,
+        };
+        let proto_len = proto.encoded_len();
+        let mut proto_buffer = BytesMut::with_capacity(proto_len);
+        proto.encode(&mut proto_buffer).unwrap();
+        buffer.put_u32(proto_len.try_into().unwrap());
+        buffer.put_slice(proto_buffer.as_ref());
+        let mut buffer: Bytes = buffer.into();
+        let signature = Signature {
+            signature: "signature".to_owned(),
+            public_key: "public_key".to_owned(),
+        };
 
-    //     let mut expected = Dime {
-    //         uuid: Uuid::from_u128(300),
-    //         uri: "valid uri!".to_owned(),
-    //         proto,
-    //         metadata,
-    //         signatures: Vec::default(),
-    //     };
+        let expected = Dime {
+            uuid: Uuid::from_u128(300),
+            uri: "valid uri!".to_owned(),
+            proto,
+            metadata,
+            signatures: vec![signature.clone()],
+        };
 
-    //     let actual = format_dime_bytes(&mut buffer, signature.clone());
-    //     assert!(actual.is_ok());
-    //     let actual: Result<Dime> = actual.unwrap().try_into();
-    //     assert!(actual.is_ok());
-    //     expected.signatures = vec![signature];
-    //     assert_eq!(actual.unwrap(), expected);
-    // }
+        let actual = format_dime_bytes(&mut buffer, signature);
+        assert!(actual.is_ok());
+        let actual: Result<Dime> = actual.unwrap().try_into();
+        assert!(actual.is_ok());
+        assert_eq!(actual.unwrap(), expected);
+    }
 }
