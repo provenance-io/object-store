@@ -240,15 +240,13 @@ pub async fn put_object(db: &PgPool, dime: &Dime, properties: &DimeProperties, r
         r#"
 INSERT INTO object (uuid, dime_uuid, hash, unique_hash, content_length, dime_length, directory, name, payload)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-ON CONFLICT ON CONSTRAINT unique_hash_cnst
-DO NOTHING
+ON CONFLICT DO NOTHING
         "#
     } else {
         r#"
 INSERT INTO object (uuid, dime_uuid, hash, unique_hash, content_length, dime_length, name)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
-ON CONFLICT ON CONSTRAINT unique_hash_cnst
-DO NOTHING
+ON CONFLICT DO NOTHING
         "#
     };
 

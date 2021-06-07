@@ -804,4 +804,5 @@ pub mod tests {
     // TODO add test that has storage backed payload but the file wasn't written due to failure
     // verify that fetch returns an accurate error and also a subsequent PUT can write the file
     // TODO add test to verify owner signature is added to dime
+    // TODO add test to fetch object hash that doesn't exist - verify error type
 }
