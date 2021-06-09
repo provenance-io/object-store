@@ -36,8 +36,8 @@ impl Config {
             .parse()
             .expect("DB_PORT could not be parsed into a u16");
         let db_user = env::var("DB_USER").expect("DB_USER not set");
-        let db_password = env::var("DB_PASSWORD").expect("DB_PASSWORD not set");
-        let db_database = env::var("DB_DATABASE").expect("DB_DATABASE not set");
+        let db_password = env::var("DB_PASS").expect("DB_PASS not set");
+        let db_database = env::var("DB_NAME").expect("DB_NAME not set");
         let db_schema = env::var("DB_SCHEMA").expect("DB_SCHEMA not set");
         let storage_type  = env::var("STORAGE_TYPE").expect("STORAGE_TYPE not set");
         let storage_base_path = env::var("STORAGE_BASE_PATH").expect("STORAGE_BASE_PATH not set");
