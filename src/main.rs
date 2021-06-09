@@ -17,7 +17,7 @@ use crate::types::{OsError, Result};
 use crate::storage::FileSystem;
 
 use std::sync::Arc;
-use sqlx::{migrate::Migrator, postgres::PgPoolOptions, Executor};
+use sqlx::{migrate::Migrator, postgres::{PgPool, PgPoolOptions}, Executor};
 use tonic::transport::Server;
 
 mod pb {
@@ -33,6 +33,26 @@ static MIGRATOR: Migrator = sqlx::migrate!();
 // TODO add logging in Trace middleware
 // TODO datadog apm integration
 // TODO implement checksum in filestore
+
+async fn health_status(mut reporter: tonic_health::server::HealthReporter, db: Arc<PgPool>) {
+    loop {
+        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+
+        if let Err(err) = datastore::health_check(&db).await {
+            log::warn!("Failed to health check the database connection {:?}", err);
+
+            reporter
+                .set_service_status("", tonic_health::ServingStatus::NotServing)
+                .await;
+        } else {
+            log::trace!("Database health check success!");
+
+            reporter
+                .set_service_status("", tonic_health::ServingStatus::Serving)
+                .await;
+        }
+    }
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -61,14 +81,22 @@ async fn main() -> Result<()> {
 
     MIGRATOR.run(&*pool).await?;
 
+    let (mut health_reporter, health_service) = tonic_health::server::health_reporter();
     let public_key_service = PublicKeyGrpc::new(Arc::clone(&pool));
     let mailbox_service = MailboxGrpc::new(Arc::clone(&pool));
     let object_service = ObjectGrpc::new(Arc::clone(&pool), Arc::clone(&config), storage);
+
+    // set initial health status and start a background
+    health_reporter
+        .set_service_status("", tonic_health::ServingStatus::NotServing)
+        .await;
+    tokio::spawn(health_status(health_reporter, Arc::clone(&pool)));
 
     log::info!("Starting server on {:?}", &config.url);
 
     // TODO add server fields that make sense
     Server::builder()
+        .add_service(health_service)
         .add_service(PublicKeyServiceServer::new(public_key_service))
         .add_service(MailboxServiceServer::new(mailbox_service))
         .add_service(ObjectServiceServer::new(object_service))
