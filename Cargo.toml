@@ -23,6 +23,7 @@ serde = "1.0"
 serde_json = "1.0"
 sqlx = { version = "0.5", features = ["runtime-tokio-rustls", "postgres", "macros", "uuid", "chrono"] }
 tonic = "0.4"
+tonic-health = "0.3"
 # TODO can we upgrade this?
 tokio = { version = "1.0", features = ["macros", "rt-multi-thread", "sync"] }
 tokio-stream = "0.1"

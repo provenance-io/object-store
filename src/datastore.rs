@@ -74,7 +74,7 @@ pub async fn get_public_key_object_uuid(db: &PgPool, hash: &str, public_key: &st
 }
 
 async fn get_object_by_unique_hash(db: &PgPool, unique_hash: &str) -> Result<Object> {
-    let query_str = "SELECT * FROM object WHERE unique_hash = $1";
+    let query_str = "SELECT * FROM object WHERE md5(unique_hash) = md5($1)";
     let result = sqlx::query_as::<_, Object>(query_str)
         .bind(unique_hash)
         .fetch_one(db)
@@ -280,4 +280,12 @@ ON CONFLICT DO NOTHING
     let object = get_object_by_unique_hash(db, unique_hash.as_str()).await?;
 
     Ok(object)
+}
+
+pub async fn health_check(db: &PgPool) -> Result<()> {
+    sqlx::query("SELECT 1")
+        .fetch_one(db)
+        .await?;
+
+    Ok(())
 }
