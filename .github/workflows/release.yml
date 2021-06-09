@@ -1,0 +1,46 @@
+name: Release
+
+on:
+  release:
+    types: [created]
+
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Version
+        run: |
+          # strip git ref prefix from version
+          VERSION=$(echo "${{ github.ref }}" | sed -e 's,.*/\(.*\),\1,')
+
+          # strip "v" prefix from tag name
+          [[ "${{ github.ref }}" == "refs/tags/"* ]] && VERSION=$(echo $VERSION | sed -e 's/^v//')
+
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+      - name: Docker Build
+        run: docker build . --tag object-store:$VERSION
+      - name: Push Image
+        run: |
+          # log into registry
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+          IMAGE_ID=ghcr.io/${{ github.repository_owner }}/object-store
+          # change all uppercase to lowercase
+          IMAGE_ID=$(echo $IMAGE_ID | tr '[A-Z]' '[a-z]')
+
+          echo IMAGE_ID=$IMAGE_ID
+          echo VERSION=$VERSION
+
+          docker tag object-store:$VERSION $IMAGE_ID:$VERSION
+          docker push $IMAGE_ID:$VERSION
+
+          PRERELEASE=${{ github.event.release.prerelease }}
+          echo PRERELEASE=$PRERELEASE
+
+          # update latest tag if this isn't a prerelease
+          if [ "$PRERELEASE" == "false" ]; then
+              docker tag object-store:$VERSION $IMAGE_ID:latest
+              docker push $IMAGE_ID:latest
+          fi

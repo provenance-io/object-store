@@ -1,8 +1,8 @@
 use quick_error::quick_error;
 
-mod aes;
 mod dime;
 
+// forwarding declarations
 pub use dime::*;
 
 quick_error! {
@@ -18,9 +18,11 @@ quick_error! {
         ProstDecodeError(err: prost::DecodeError) {
             from()
         }
-        SerdeDecodeError(message: String) {
-            from()
-        }
+        // serde_json::Error is converted to a String because it does not implement PartialEq
+        SerdeDecodeError(message: String) { }
+        // serde_json::Error is converted to a String because it does not implement PartialEq
+        SerdeEncodeError(message: String) { }
+        InternalInvalidState(message: String) { }
     }
 }
 
