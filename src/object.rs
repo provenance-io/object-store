@@ -801,8 +801,53 @@ pub mod tests {
         assert_ne!(response_inner.uuid, response_dupe_inner.uuid);
     }
 
+    #[tokio::test]
+    #[serial(grpc_server)]
+    async fn get_with_wrong_key() {
+        start_server().await;
+
+        let (audience1, signature1) = party_1();
+        let (audience2, signature2) = party_2();
+        let (audience3, _) = party_3();
+        let dime = generate_dime(vec![audience1, audience2], vec![signature1, signature2]);
+        let payload: bytes::Bytes = "testing small payload".as_bytes().into();
+        let chunk_size = 500; // full payload in one packet
+        let response = put_helper(dime, payload.clone(), chunk_size).await;
+
+        match response {
+            Ok(_) => (),
+            _ => assert_eq!(format!("{:?}", response), ""),
+        }
+        let mut client = pb::object_service_client::ObjectServiceClient::connect("tcp://0.0.0.0:6789").await.unwrap();
+        let public_key = base64::decode(audience3.public_key).unwrap();
+        let request = HashRequest { hash: hash(payload), public_key };
+        let response = client.get(Request::new(request)).await;
+
+        match response {
+            Err(err) => assert_eq!(err.code(), tonic::Code::NotFound),
+            _ => assert_eq!(format!("{:?}", response), ""),
+        }
+    }
+
+    #[tokio::test]
+    #[serial(grpc_server)]
+    async fn get_nonexistent_hash() {
+        start_server().await;
+
+        let (audience1, _) = party_1();
+        let payload: bytes::Bytes = "testing small payload".as_bytes().into();
+        let mut client = pb::object_service_client::ObjectServiceClient::connect("tcp://0.0.0.0:6789").await.unwrap();
+        let public_key = base64::decode(audience1.public_key).unwrap();
+        let request = HashRequest { hash: hash(payload), public_key };
+        let response = client.get(Request::new(request)).await;
+
+        match response {
+            Err(err) => assert_eq!(err.code(), tonic::Code::NotFound),
+            _ => assert_eq!(format!("{:?}", response), ""),
+        }
+    }
+
     // TODO add test that has storage backed payload but the file wasn't written due to failure
     // verify that fetch returns an accurate error and also a subsequent PUT can write the file
     // TODO add test to verify owner signature is added to dime
-    // TODO add test to fetch object hash that doesn't exist - verify error type
 }
