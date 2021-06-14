@@ -1,4 +1,4 @@
-use crate::{config::Config, dime::{Dime, Signature, format_dime_bytes}, storage::{Storage, StoragePath}};
+use crate::{cache::Cache, config::Config, dime::{Dime, Signature, format_dime_bytes}, storage::{Storage, StoragePath}};
 use crate::consts;
 use crate::datastore;
 use crate::domain::{DimeProperties, ObjectApiResponse};
@@ -20,17 +20,18 @@ use tonic::{Request, Response, Status, Streaming};
 pub struct ObjectGrpc<S>
     where S: Storage,
 {
-    pub db_pool: Arc<PgPool>,
+    pub cache: Arc<Cache>,
     pub config: Arc<Config>,
+    pub db_pool: Arc<PgPool>,
     pub storage: S,
 }
 
 impl<S> ObjectGrpc<S>
     where S: Storage,
 {
-    pub fn new(db_pool: Arc<PgPool>, config: Arc<Config>, storage: S) -> Self
+    pub fn new(cache: Arc<Cache>, config: Arc<Config>, db_pool: Arc<PgPool>, storage: S) -> Self
     {
-        Self { db_pool, config, storage }
+        Self { cache, config, db_pool, storage }
     }
 }
 
@@ -296,6 +297,7 @@ pub mod tests {
         let (tx, mut rx) = tokio::sync::mpsc::channel(1);
 
         tokio::spawn(async move {
+            let cache = Cache::default();
             let config = test_config();
             let url = config.url.clone();
             let docker = clients::Cli::default();
@@ -304,8 +306,9 @@ pub mod tests {
             let pool = setup_postgres(&container).await;
             let storage = FileSystem::new(config.storage_base_path.as_str());
             let object_service = ObjectGrpc {
-                db_pool: Arc::new(pool),
+                cache: Arc::new(cache),
                 config: Arc::new(config),
+                db_pool: Arc::new(pool),
                 storage,
             };
 

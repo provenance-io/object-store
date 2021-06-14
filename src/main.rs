@@ -1,3 +1,4 @@
+mod cache;
 mod consts;
 mod config;
 mod types;
@@ -9,6 +10,7 @@ mod object;
 mod public_key;
 mod mailbox;
 
+use crate::cache::Cache;
 use crate::config::Config;
 use crate::object::ObjectGrpc;
 use crate::public_key::PublicKeyGrpc;
@@ -58,6 +60,7 @@ async fn health_status(mut reporter: tonic_health::server::HealthReporter, db: A
 async fn main() -> Result<()> {
     env_logger::init();
 
+    let cache = Cache::default();
     let config = Config::new();
     let storage = match config.storage_type.as_str() {
         "file_system" => Ok(FileSystem::new(config.storage_base_path.as_str())),
@@ -77,14 +80,17 @@ async fn main() -> Result<()> {
         .connect(config.db_connection_string().as_ref())
         .await?;
     let pool = Arc::new(pool);
+    let cache = Arc::new(cache);
     let config = Arc::new(config);
 
     MIGRATOR.run(&*pool).await?;
 
+    // TODO initial cache populate
+
     let (mut health_reporter, health_service) = tonic_health::server::health_reporter();
-    let public_key_service = PublicKeyGrpc::new(Arc::clone(&pool));
+    let public_key_service = PublicKeyGrpc::new(Arc::clone(&cache), Arc::clone(&pool));
     let mailbox_service = MailboxGrpc::new(Arc::clone(&pool));
-    let object_service = ObjectGrpc::new(Arc::clone(&pool), Arc::clone(&config), storage);
+    let object_service = ObjectGrpc::new(Arc::clone(&cache), Arc::clone(&config), Arc::clone(&pool), storage);
 
     // set initial health status and start a background
     health_reporter

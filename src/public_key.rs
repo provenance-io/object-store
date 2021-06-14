@@ -1,3 +1,4 @@
+use crate::cache::Cache;
 use crate::types::{GrpcResult, Result};
 use crate::pb::{public_key::Key, PublicKey, PublicKeyRequest, PublicKeyResponse, Uuid};
 use crate::pb::public_key_service_server::PublicKeyService;
@@ -15,12 +16,13 @@ use url::Url;
 
 #[derive(Debug)]
 pub struct PublicKeyGrpc {
+    cache: Arc<Cache>,
     db_pool: Arc<PgPool>,
 }
 
 impl PublicKeyGrpc {
-    pub fn new(pool: Arc<PgPool>) -> Self {
-        Self { db_pool: pool }
+    pub fn new(cache: Arc<Cache>, db_pool: Arc<PgPool>) -> Self {
+        Self { cache, db_pool }
     }
 
     async fn add_public_key(&self, public_key: PublicKeyRequest) -> Result<PublicKeyResponse> {
@@ -146,8 +148,9 @@ mod tests {
         let docker = clients::Cli::default();
         let image = images::postgres::Postgres::default().with_version(9);
         let container = docker.run(image);
+        let cache = Cache::default();
         let pool = setup_postgres(&container).await;
-        let public_key_service = PublicKeyGrpc { db_pool: Arc::new(pool) };
+        let public_key_service = PublicKeyGrpc { cache: Arc::new(cache), db_pool: Arc::new(pool) };
         let request = PublicKeyRequest {
             public_key: Some(PublicKey {
                 key: Some(Key::Secp256k1(vec![])),
@@ -170,8 +173,9 @@ mod tests {
         let docker = clients::Cli::default();
         let image = images::postgres::Postgres::default().with_version(9);
         let container = docker.run(image);
+        let cache = Cache::default();
         let pool = setup_postgres(&container).await;
-        let public_key_service = PublicKeyGrpc { db_pool: Arc::new(pool) };
+        let public_key_service = PublicKeyGrpc { cache: Arc::new(cache), db_pool: Arc::new(pool) };
         let request = PublicKeyRequest {
             public_key: None,
             url: "http://test.com".to_owned(),
@@ -192,8 +196,9 @@ mod tests {
         let docker = clients::Cli::default();
         let image = images::postgres::Postgres::default().with_version(9);
         let container = docker.run(image);
+        let cache = Cache::default();
         let pool = setup_postgres(&container).await;
-        let public_key_service = PublicKeyGrpc { db_pool: Arc::new(pool) };
+        let public_key_service = PublicKeyGrpc { cache: Arc::new(cache), db_pool: Arc::new(pool) };
         let request = PublicKeyRequest {
             public_key: Some(PublicKey { key: None }),
             url: "http://test.com".to_owned(),
@@ -214,8 +219,9 @@ mod tests {
         let docker = clients::Cli::default();
         let image = images::postgres::Postgres::default().with_version(9);
         let container = docker.run(image);
+        let cache = Cache::default();
         let pool = setup_postgres(&container).await;
-        let public_key_service = PublicKeyGrpc { db_pool: Arc::new(pool) };
+        let public_key_service = PublicKeyGrpc { cache: Arc::new(cache), db_pool: Arc::new(pool) };
         // TODO add metadata to this request
         let request = PublicKeyRequest {
             public_key: Some(PublicKey {

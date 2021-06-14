@@ -84,6 +84,7 @@ mod tests {
     use std::str::FromStr;
     use std::sync::Arc;
 
+    use crate::cache::Cache;
     use crate::consts::*;
     use crate::pb::{self, AckRequest, Audience, GetRequest, mailbox_service_client::MailboxServiceClient};
     use crate::mailbox::*;
@@ -106,13 +107,15 @@ mod tests {
             let docker = clients::Cli::default();
             let image = images::postgres::Postgres::default().with_version(9);
             let container = docker.run(image);
+            let cache = Cache::default();
             let pool = setup_postgres(&container).await;
             let pool = Arc::new(pool);
             let storage = FileSystem::new(config.storage_base_path.as_str());
             let mailbox_service = MailboxGrpc { db_pool: pool.clone() };
             let object_service = ObjectGrpc {
-                db_pool: pool.clone(),
+                cache: Arc::new(cache),
                 config: Arc::new(config),
+                db_pool: pool.clone(),
                 storage,
             };
 
