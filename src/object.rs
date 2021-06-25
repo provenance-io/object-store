@@ -13,14 +13,14 @@ use bytes::{BufMut, Bytes, BytesMut};
 use futures_util::StreamExt;
 use prost::Message;
 use tokio::sync::mpsc;
-use std::{collections::HashMap, convert::TryInto, sync::Arc};
+use std::{collections::HashMap, convert::TryInto, sync::{Arc, Mutex}};
 use sqlx::postgres::PgPool;
 use tonic::{Request, Response, Status, Streaming};
 
 pub struct ObjectGrpc<S>
     where S: Storage,
 {
-    pub cache: Arc<Cache>,
+    pub cache: Arc<Mutex<Cache>>,
     pub config: Arc<Config>,
     pub db_pool: Arc<PgPool>,
     pub storage: S,
@@ -29,7 +29,7 @@ pub struct ObjectGrpc<S>
 impl<S> ObjectGrpc<S>
     where S: Storage,
 {
-    pub fn new(cache: Arc<Cache>, config: Arc<Config>, db_pool: Arc<PgPool>, storage: S) -> Self
+    pub fn new(cache: Arc<Mutex<Cache>>, config: Arc<Config>, db_pool: Arc<PgPool>, storage: S) -> Self
     {
         Self { cache, config, db_pool, storage }
     }
@@ -144,13 +144,24 @@ impl<S> ObjectService for ObjectGrpc<S>
             content_length: header_chunk_header.content_length,
             dime_length: raw_dime.len() as i64,
         };
+        let mut replication_key_states = Vec::new();
+
+        {
+            let audience = dime.unique_audience_without_owner_base64()
+                .map_err(|_| Status::invalid_argument("Invalid Dime proto - audience list"))?;
+            let cache = self.cache.lock().unwrap();
+
+            for ref party in audience {
+                replication_key_states.push(cache.get_public_key_state(party));
+            }
+        }
 
         // mail items should be under any reasonable threshold set, but explicitly check for
         // mail and always used database storage
         let response = if !dime.metadata.contains_key(consts::MAILBOX_KEY) &&
             dime_properties.dime_length > self.config.storage_threshold.into()
         {
-            let response = datastore::put_object(&self.db_pool, &dime, &dime_properties, None)
+            let response = datastore::put_object(&self.db_pool, &dime, &dime_properties, &replication_key_states, None)
                 .await?;
             let storage_path = StoragePath {
                 dir: response.directory.clone(),
@@ -161,7 +172,7 @@ impl<S> ObjectService for ObjectGrpc<S>
                 .map_err(Into::<OsError>::into)?;
             response.to_response(&self.config)?
         } else {
-            datastore::put_object(&self.db_pool, &dime, &dime_properties, Some(&raw_dime))
+            datastore::put_object(&self.db_pool, &dime, &dime_properties, &replication_key_states, Some(&raw_dime))
                 .await?
                 .to_response(&self.config)?
         };
@@ -297,7 +308,7 @@ pub mod tests {
         let (tx, mut rx) = tokio::sync::mpsc::channel(1);
 
         tokio::spawn(async move {
-            let cache = Cache::default();
+            let cache = Mutex::new(Cache::default());
             let config = test_config();
             let url = config.url.clone();
             let docker = clients::Cli::default();

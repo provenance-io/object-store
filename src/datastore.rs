@@ -1,3 +1,4 @@
+use crate::cache::PublicKeyState;
 use crate::consts::*;
 use crate::dime::Dime;
 use crate::domain::DimeProperties;
@@ -6,6 +7,8 @@ use crate::types::{Result, OsError};
 use bytes::Bytes;
 use chrono::prelude::*;
 use futures_util::TryStreamExt;
+use sqlx::Acquire;
+use sqlx::Connection;
 use sqlx::postgres::{PgConnection, PgPool, PgQueryResult};
 use sqlx::{FromRow, Row};
 
@@ -91,6 +94,53 @@ pub async fn get_object_by_uuid(db: &PgPool, uuid: &uuid::Uuid) -> Result<Object
         .await?;
 
     Ok(result)
+}
+
+async fn maybe_put_replication_objects(conn: &mut PgConnection, object_uuid: uuid::Uuid, dime: &Dime, replication_key_states: &Vec<PublicKeyState>) -> Result<()> {
+    let mut replication_uuids: Vec<uuid::Uuid> = Vec::new();
+    let mut replication_object_uuids: Vec<uuid::Uuid> = Vec::new();
+    let mut staging_object_uuids: Vec<uuid::Uuid> = Vec::new();
+    let mut replication_public_keys: Vec<String> = Vec::new();
+    let mut staging_public_keys: Vec<String> = Vec::new();
+
+    for (party, replication_key_state) in dime.unique_audience_without_owner_base64()?.into_iter().zip(replication_key_states.iter()) {
+        match replication_key_state {
+            PublicKeyState::Local => (),
+            PublicKeyState::Remote => {
+                replication_uuids.push(uuid::Uuid::new_v4());
+                replication_object_uuids.push(object_uuid);
+                replication_public_keys.push(party);
+            },
+            PublicKeyState::Unknown => {
+                staging_object_uuids.push(object_uuid);
+                staging_public_keys.push(party);
+            },
+        }
+    }
+
+    let remote_query_str = r#"
+INSERT INTO object_replication (uuid, object_uuid, public_key)
+SELECT * FROM UNNEST($1, $2, $3)
+    "#;
+    let staging_query_str = r#"
+INSERT INTO object_replication_staging (object_uuid, public_key)
+SELECT * FROM UNNEST($1, $2)
+    "#;
+
+    sqlx::query(remote_query_str)
+        .bind(&replication_uuids)
+        .bind(&replication_object_uuids)
+        .bind(&replication_public_keys)
+        .execute(conn.acquire().await?)
+        .await?;
+
+    sqlx::query(staging_query_str)
+        .bind(&staging_object_uuids)
+        .bind(&staging_public_keys)
+        .execute(conn)
+        .await?;
+
+    Ok(())
 }
 
 async fn put_object_public_keys(conn: &mut PgConnection, object_uuid: uuid::Uuid, dime: &Dime, properties: &DimeProperties) -> Result<()> {
@@ -230,7 +280,7 @@ UPDATE mailbox_public_key SET acked_at = $1 WHERE uuid = $2
     Ok(rows_affected > 0)
 }
 
-pub async fn put_object(db: &PgPool, dime: &Dime, properties: &DimeProperties, raw_dime: Option<&Bytes>) -> Result<Object> {
+pub async fn put_object(db: &PgPool, dime: &Dime, properties: &DimeProperties, replication_key_states: &Vec<PublicKeyState>, raw_dime: Option<&Bytes>) -> Result<Object> {
     let mut unique_hash = dime.unique_audience_base64()?;
     unique_hash.sort_unstable();
     unique_hash.insert(0, String::from(&properties.hash));
@@ -272,6 +322,7 @@ ON CONFLICT DO NOTHING
         UpsertOutcome::Created => {
             put_object_public_keys(&mut tx, uuid, dime, properties).await?;
             maybe_put_mailbox_public_keys(&mut tx, uuid, dime).await?;
+            maybe_put_replication_objects(&mut tx, uuid, dime, replication_key_states).await?;
         },
         UpsertOutcome::Noop => (),
     };

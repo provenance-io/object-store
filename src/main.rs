@@ -18,7 +18,7 @@ use crate::mailbox::MailboxGrpc;
 use crate::types::{OsError, Result};
 use crate::storage::FileSystem;
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use sqlx::{migrate::Migrator, postgres::{PgPool, PgPoolOptions}, Executor};
 use tonic::transport::Server;
 
@@ -80,7 +80,7 @@ async fn main() -> Result<()> {
         .connect(config.db_connection_string().as_ref())
         .await?;
     let pool = Arc::new(pool);
-    let cache = Arc::new(cache);
+    let cache = Arc::new(Mutex::new(cache));
     let config = Arc::new(config);
 
     MIGRATOR.run(&*pool).await?;

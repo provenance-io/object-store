@@ -82,7 +82,7 @@ impl MailboxService for MailboxGrpc {
 #[cfg(test)]
 mod tests {
     use std::str::FromStr;
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
 
     use crate::cache::Cache;
     use crate::consts::*;
@@ -107,7 +107,7 @@ mod tests {
             let docker = clients::Cli::default();
             let image = images::postgres::Postgres::default().with_version(9);
             let container = docker.run(image);
-            let cache = Cache::default();
+            let cache = Mutex::new(Cache::default());
             let pool = setup_postgres(&container).await;
             let pool = Arc::new(pool);
             let storage = FileSystem::new(config.storage_base_path.as_str());
