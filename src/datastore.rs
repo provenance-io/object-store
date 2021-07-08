@@ -8,7 +8,6 @@ use bytes::Bytes;
 use chrono::prelude::*;
 use futures_util::TryStreamExt;
 use sqlx::Acquire;
-use sqlx::Connection;
 use sqlx::postgres::{PgConnection, PgPool, PgQueryResult};
 use sqlx::{FromRow, Row};
 
@@ -167,6 +166,43 @@ SELECT * FROM UNNEST($1, $2, $3)
         .await?;
 
     Ok(())
+}
+
+pub async fn ack_object_replication(db: &PgPool, uuid: &uuid::Uuid) -> Result<bool> {
+    let query_str = r#"
+UPDATE object_replication SET replication_at = $1 WHERE uuid = $2
+    "#;
+
+    let rows_affected = sqlx::query(query_str)
+        .bind(Utc::now())
+        .bind(&uuid)
+        .execute(db)
+        .await?
+        .rows_affected();
+
+    Ok(rows_affected > 0)
+}
+
+pub async fn replication_object_uuids(db: &PgPool, public_key: &str, limit: i32) -> Result<Vec<(uuid::Uuid, uuid::Uuid)>> {
+    let mut result = Vec::new();
+    let query_str = r#"
+SELECT uuid, object_uuid FROM object_replication
+  WHERE public_key = $1 AND replicated_at IS NULL
+  LIMIT $2
+    "#;
+
+    let mut query_result = sqlx::query(query_str)
+        .bind(public_key)
+        .bind(limit)
+        .fetch(db);
+
+    while let Some(row) = query_result.try_next().await? {
+        let uuid = row.try_get("uuid")?;
+        let object_uuid = row.try_get("object_uuid")?;
+        result.push((uuid, object_uuid));
+    }
+
+    Ok(result)
 }
 
 pub async fn stream_mailbox_public_keys(db: &PgPool, public_key: &str, limit: i32) -> Result<Vec<(uuid::Uuid, Object)>> {

@@ -1,4 +1,4 @@
-use crate::{cache::Cache, config::Config, dime::{Dime, Signature, format_dime_bytes}, storage::{Storage, StoragePath}};
+use crate::{cache::Cache, config::Config, dime::{Dime, Signature, format_dime_bytes}, storage::{FileSystem, StoragePath}};
 use crate::consts;
 use crate::datastore;
 use crate::domain::{DimeProperties, ObjectApiResponse};
@@ -17,29 +17,29 @@ use std::{collections::HashMap, convert::TryInto, sync::{Arc, Mutex}};
 use sqlx::postgres::PgPool;
 use tonic::{Request, Response, Status, Streaming};
 
-pub struct ObjectGrpc<S>
-    where S: Storage,
-{
+// TODO add flag for whether object-replication can be ignored for a PUT
+// TODO move test packet generation to helper functions
+
+// TODO implement no object_replication saving when metadata key is present
+// TODO write test for the above
+// TODO remove all object_staging functionality
+
+pub struct ObjectGrpc {
     pub cache: Arc<Mutex<Cache>>,
     pub config: Arc<Config>,
     pub db_pool: Arc<PgPool>,
-    pub storage: S,
+    pub storage: Arc<FileSystem>,
 }
 
-impl<S> ObjectGrpc<S>
-    where S: Storage,
-{
-    pub fn new(cache: Arc<Mutex<Cache>>, config: Arc<Config>, db_pool: Arc<PgPool>, storage: S) -> Self
+impl ObjectGrpc {
+    pub fn new(cache: Arc<Mutex<Cache>>, config: Arc<Config>, db_pool: Arc<PgPool>, storage: Arc<FileSystem>) -> Self
     {
         Self { cache, config, db_pool, storage }
     }
 }
 
 #[tonic::async_trait]
-impl<S> ObjectService for ObjectGrpc<S>
-    where S: Storage + Send + Sync + 'static,
-{
-
+impl ObjectService for ObjectGrpc {
     async fn put(
         &self,
         request: Request<Streaming<ChunkBidi>>,
@@ -258,7 +258,6 @@ pub mod tests {
     use crate::dime::Signature;
     use crate::pb::{self, Audience, Dime as DimeProto, ObjectResponse};
     use crate::object::*;
-    use crate::storage::FileSystem;
 
     use futures::stream;
     use futures_util::TryStreamExt;
@@ -320,7 +319,7 @@ pub mod tests {
                 cache: Arc::new(cache),
                 config: Arc::new(config),
                 db_pool: Arc::new(pool),
-                storage,
+                storage: Arc::new(storage),
             };
 
             tx.send(object_service.db_pool.clone()).await.unwrap();

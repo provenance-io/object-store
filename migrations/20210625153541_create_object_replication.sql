@@ -6,8 +6,7 @@ CREATE TABLE object_replication
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     replicated_at TIMESTAMPTZ,
 
-    PRIMARY KEY(object_uuid, public_key),
-    CONSTRAINT fk_object_uuid_opk FOREIGN KEY(object_uuid) REFERENCES object(uuid)
+    PRIMARY KEY(object_uuid, public_key)
 );
 
 CREATE INDEX object_replication_uuid_idx ON object_replication (uuid);

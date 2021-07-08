@@ -109,7 +109,7 @@ impl PublicKeyService for PublicKeyGrpc {
         } else {
             let mut cache = self.cache.lock().unwrap();
 
-            cache.add_remote_public_key(key_bytes);
+            cache.add_remote_public_key(key_bytes, response.url.clone());
         }
 
         Ok(Response::new(response))

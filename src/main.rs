@@ -1,14 +1,16 @@
 mod cache;
 mod consts;
 mod config;
-mod types;
-mod dime;
 mod datastore;
+mod dime;
 mod domain;
-mod storage;
+mod mailbox;
 mod object;
 mod public_key;
-mod mailbox;
+mod proto_helpers;
+mod replication;
+mod storage;
+mod types;
 
 use crate::cache::Cache;
 use crate::config::Config;
@@ -17,6 +19,7 @@ use crate::public_key::PublicKeyGrpc;
 use crate::mailbox::MailboxGrpc;
 use crate::types::{OsError, Result};
 use crate::storage::FileSystem;
+use crate::replication::{replicate, ReplicationState};
 
 use std::sync::{Arc, Mutex};
 use sqlx::{migrate::Migrator, postgres::{PgPool, PgPoolOptions}, Executor};
@@ -82,6 +85,7 @@ async fn main() -> Result<()> {
     let pool = Arc::new(pool);
     let cache = Arc::new(Mutex::new(cache));
     let config = Arc::new(config);
+    let storage = Arc::new(storage);
 
     MIGRATOR.run(&*pool).await?;
 
@@ -90,13 +94,17 @@ async fn main() -> Result<()> {
     let (mut health_reporter, health_service) = tonic_health::server::health_reporter();
     let public_key_service = PublicKeyGrpc::new(Arc::clone(&cache), Arc::clone(&pool));
     let mailbox_service = MailboxGrpc::new(Arc::clone(&pool));
-    let object_service = ObjectGrpc::new(Arc::clone(&cache), Arc::clone(&config), Arc::clone(&pool), storage);
+    let object_service = ObjectGrpc::new(Arc::clone(&cache), Arc::clone(&config), Arc::clone(&pool), Arc::clone(&storage));
+    let replication_state = ReplicationState::new(Arc::clone(&cache), Arc::clone(&pool), Arc::clone(&storage));
 
     // set initial health status and start a background
     health_reporter
         .set_service_status("", tonic_health::ServingStatus::NotServing)
         .await;
     tokio::spawn(health_status(health_reporter, Arc::clone(&pool)));
+
+    // start replication
+    tokio::spawn(replicate(replication_state));
 
     log::info!("Starting server on {:?}", &config.url);
 
