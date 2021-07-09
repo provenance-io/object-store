@@ -20,10 +20,6 @@ use tonic::{Request, Response, Status, Streaming};
 // TODO add flag for whether object-replication can be ignored for a PUT
 // TODO move test packet generation to helper functions
 
-// TODO implement no object_replication saving when metadata key is present
-// TODO write test for the above
-// TODO remove all object_staging functionality
-
 pub struct ObjectGrpc {
     pub cache: Arc<Mutex<Cache>>,
     pub config: Arc<Config>,
@@ -151,8 +147,10 @@ impl ObjectService for ObjectGrpc {
                 .map_err(|_| Status::invalid_argument("Invalid Dime proto - audience list"))?;
             let cache = self.cache.lock().unwrap();
 
+            println!("whole cache = {:?}", &cache);
             for ref party in audience {
-                replication_key_states.push(cache.get_public_key_state(party));
+                println!("party state {} {:?}", party, cache.get_public_key_state(party));
+                replication_key_states.push((party.clone(), cache.get_public_key_state(party)));
             }
         }
 
@@ -161,7 +159,7 @@ impl ObjectService for ObjectGrpc {
         let response = if !dime.metadata.contains_key(consts::MAILBOX_KEY) &&
             dime_properties.dime_length > self.config.storage_threshold.into()
         {
-            let response = datastore::put_object(&self.db_pool, &dime, &dime_properties, &replication_key_states, None)
+            let response = datastore::put_object(&self.db_pool, &dime, &dime_properties, replication_key_states, None)
                 .await?;
             let storage_path = StoragePath {
                 dir: response.directory.clone(),
@@ -172,7 +170,7 @@ impl ObjectService for ObjectGrpc {
                 .map_err(Into::<OsError>::into)?;
             response.to_response(&self.config)?
         } else {
-            datastore::put_object(&self.db_pool, &dime, &dime_properties, &replication_key_states, Some(&raw_dime))
+            datastore::put_object(&self.db_pool, &dime, &dime_properties, replication_key_states, Some(&raw_dime))
                 .await?
                 .to_response(&self.config)?
         };
@@ -254,7 +252,7 @@ pub mod tests {
 
     use crate::MIGRATOR;
     use crate::consts::*;
-    use crate::datastore::{MailboxPublicKey, ObjectPublicKey};
+    use crate::datastore::{replication_object_uuids, MailboxPublicKey, ObjectPublicKey};
     use crate::dime::Signature;
     use crate::pb::{self, Audience, Dime as DimeProto, ObjectResponse};
     use crate::object::*;
@@ -307,7 +305,10 @@ pub mod tests {
         let (tx, mut rx) = tokio::sync::mpsc::channel(1);
 
         tokio::spawn(async move {
-            let cache = Mutex::new(Cache::default());
+            let mut cache = Cache::default();
+            cache.add_local_public_key(std::str::from_utf8(&party_1().0.public_key).unwrap().to_owned());
+            cache.add_remote_public_key(std::str::from_utf8(&party_2().0.public_key).unwrap().to_owned(), String::from("tcp://party2:8080"));
+            let cache = Mutex::new(cache);
             let config = test_config();
             let url = config.url.clone();
             let docker = clients::Cli::default();
@@ -856,6 +857,98 @@ pub mod tests {
 
         match response {
             Err(err) => assert_eq!(err.code(), tonic::Code::NotFound),
+            _ => assert_eq!(format!("{:?}", response), ""),
+        }
+    }
+
+    // TODO add test for local cache with non owner - make owner the unknown one
+
+    #[tokio::test]
+    #[serial(grpc_server)]
+    async fn put_with_replication() {
+        let db = start_server().await;
+
+        let (audience1, signature1) = party_1();
+        let (audience2, signature2) = party_2();
+        let (audience3, signature3) = party_3();
+        let mut dime = generate_dime(vec![audience1.clone(), audience2.clone(), audience3.clone()], vec![signature1, signature2, signature3]);
+        dime.metadata.insert(SOURCE_KEY.to_owned(), String::from("standard key"));
+        let payload: bytes::Bytes = "testing small payload".as_bytes().into();
+        let chunk_size = 500; // full payload in one packet
+        let response = put_helper(dime, payload, chunk_size).await;
+
+        match response {
+            Ok(response) => {
+                let response = response.into_inner();
+                let uuid = response.uuid.unwrap().value;
+                let uuid = uuid::Uuid::from_str(uuid.as_str()).unwrap();
+
+                assert_eq!(response.name, NOT_STORAGE_BACKED);
+                assert_eq!(get_public_keys_by_object(&db, &uuid).await.len(), 3);
+                assert_eq!(replication_object_uuids(&db, String::from_utf8(audience1.public_key).unwrap().as_str(), 50).await.unwrap().len(), 0);
+                assert_eq!(replication_object_uuids(&db, String::from_utf8(audience2.public_key).unwrap().as_str(), 50).await.unwrap().len(), 1);
+                assert_eq!(replication_object_uuids(&db, String::from_utf8(audience3.public_key).unwrap().as_str(), 50).await.unwrap().len(), 1);
+            },
+            _ => assert_eq!(format!("{:?}", response), ""),
+        }
+    }
+
+    #[tokio::test]
+    #[serial(grpc_server)]
+    async fn put_with_replication_different_owner() {
+        let db = start_server().await;
+
+        let (audience1, signature1) = party_1();
+        let (audience2, signature2) = party_2();
+        let (audience3, signature3) = party_3();
+        let mut dime = generate_dime(vec![audience2.clone(), audience1.clone(), audience3.clone()], vec![signature2, signature1, signature3]);
+        dime.metadata.insert(SOURCE_KEY.to_owned(), String::from("standard key"));
+        let payload: bytes::Bytes = "testing small payload".as_bytes().into();
+        let chunk_size = 500; // full payload in one packet
+        let response = put_helper(dime, payload, chunk_size).await;
+
+        match response {
+            Ok(response) => {
+                let response = response.into_inner();
+                let uuid = response.uuid.unwrap().value;
+                let uuid = uuid::Uuid::from_str(uuid.as_str()).unwrap();
+
+                assert_eq!(response.name, NOT_STORAGE_BACKED);
+                assert_eq!(get_public_keys_by_object(&db, &uuid).await.len(), 3);
+                assert_eq!(replication_object_uuids(&db, String::from_utf8(audience1.public_key).unwrap().as_str(), 50).await.unwrap().len(), 0);
+                assert_eq!(replication_object_uuids(&db, String::from_utf8(audience2.public_key).unwrap().as_str(), 50).await.unwrap().len(), 0);
+                assert_eq!(replication_object_uuids(&db, String::from_utf8(audience3.public_key).unwrap().as_str(), 50).await.unwrap().len(), 1);
+            },
+            _ => assert_eq!(format!("{:?}", response), ""),
+        }
+    }
+
+    #[tokio::test]
+    #[serial(grpc_server)]
+    async fn put_with_double_replication() {
+        let db = start_server().await;
+
+        let (audience1, signature1) = party_1();
+        let (audience2, signature2) = party_2();
+        let (audience3, signature3) = party_3();
+        let mut dime = generate_dime(vec![audience1.clone(), audience2.clone(), audience3.clone()], vec![signature1, signature2, signature3]);
+        dime.metadata.insert(SOURCE_KEY.to_owned(), SOURCE_REPLICATION.to_owned());
+        let payload: bytes::Bytes = "testing small payload".as_bytes().into();
+        let chunk_size = 500; // full payload in one packet
+        let response = put_helper(dime, payload, chunk_size).await;
+
+        match response {
+            Ok(response) => {
+                let response = response.into_inner();
+                let uuid = response.uuid.unwrap().value;
+                let uuid = uuid::Uuid::from_str(uuid.as_str()).unwrap();
+
+                assert_eq!(response.name, NOT_STORAGE_BACKED);
+                assert_eq!(get_public_keys_by_object(&db, &uuid).await.len(), 3);
+                assert_eq!(replication_object_uuids(&db, base64::encode(audience1.public_key).as_str(), 50).await.unwrap().len(), 0);
+                assert_eq!(replication_object_uuids(&db, base64::encode(audience2.public_key).as_str(), 50).await.unwrap().len(), 0);
+                assert_eq!(replication_object_uuids(&db, base64::encode(audience3.public_key).as_str(), 50).await.unwrap().len(), 0);
+            },
             _ => assert_eq!(format!("{:?}", response), ""),
         }
     }

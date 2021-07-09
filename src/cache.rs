@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
+#[derive(Debug)]
 pub enum PublicKeyState {
     Local,
     Remote,
@@ -16,12 +17,12 @@ pub struct Cache {
 
 impl Cache {
 
-    pub fn add_local_public_key(&mut self, public_key: Vec<u8>) -> bool {
-        self.local_public_keys.insert(base64::encode(&public_key))
+    pub fn add_local_public_key(&mut self, public_key: String) -> bool {
+        self.local_public_keys.insert(public_key)
     }
 
-    pub fn add_remote_public_key(&mut self, public_key: Vec<u8>, url: String) -> Option<String> {
-        self.remote_public_keys.insert(base64::encode(&public_key), url)
+    pub fn add_remote_public_key(&mut self, public_key: String, url: String) -> Option<String> {
+        self.remote_public_keys.insert(public_key, url)
     }
 
     pub fn get_public_key_state(&self, public_key: &String) -> PublicKeyState {

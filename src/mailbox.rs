@@ -116,7 +116,7 @@ mod tests {
                 cache: Arc::new(cache),
                 config: Arc::new(config),
                 db_pool: pool.clone(),
-                storage,
+                storage: Arc::new(storage),
             };
 
             tx.send(pool.clone()).await.unwrap();

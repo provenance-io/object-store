@@ -1,5 +1,5 @@
 use crate::cache::Cache;
-use crate::types::{GrpcResult, Result};
+use crate::types::{GrpcResult, OsError, Result};
 use crate::pb::{public_key::Key, PublicKey, PublicKeyRequest, PublicKeyResponse, Uuid};
 use crate::pb::public_key_service_server::PublicKeyService;
 
@@ -101,15 +101,20 @@ impl PublicKeyService for PublicKeyGrpc {
         let key_bytes = match response.public_key.clone().unwrap().key.unwrap() {
             Key::Secp256k1(data) => data,
         };
+        let key = std::str::from_utf8(&key_bytes)
+            .map_err(Into::<OsError>::into)
+            // TODO remove this when we have public_key RPCs using the OsError across the board
+            .map_err(Into::<Status>::into)?
+            .to_owned();
 
         if response.url.is_empty() {
             let mut cache = self.cache.lock().unwrap();
 
-            cache.add_local_public_key(key_bytes);
+            cache.add_local_public_key(key);
         } else {
             let mut cache = self.cache.lock().unwrap();
 
-            cache.add_remote_public_key(key_bytes, response.url.clone());
+            cache.add_remote_public_key(key, response.url.clone());
         }
 
         Ok(Response::new(response))
@@ -387,7 +392,7 @@ mod tests {
         let cache = cache.lock().unwrap();
         assert_eq!(cache.local_public_keys.len(), 1);
         assert_eq!(cache.remote_public_keys.len(), 0);
-        assert!(cache.local_public_keys.contains(&base64::encode(vec![1u8, 2u8, 3u8])));
+        assert!(cache.local_public_keys.contains(&std::str::from_utf8(&vec![1u8, 2u8, 3u8]).unwrap().to_owned()));
     }
 
     #[tokio::test]
@@ -419,6 +424,6 @@ mod tests {
         let cache = cache.lock().unwrap();
         assert_eq!(cache.local_public_keys.len(), 0);
         assert_eq!(cache.remote_public_keys.len(), 1);
-        assert!(cache.remote_public_keys.contains(&base64::encode(vec![1u8, 2u8, 3u8])));
+        assert!(cache.remote_public_keys.contains_key(&std::str::from_utf8(&vec![1u8, 2u8, 3u8]).unwrap().to_owned()));
     }
 }

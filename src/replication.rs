@@ -2,6 +2,7 @@ use crate::cache::Cache;
 use crate::consts;
 use crate::datastore;
 use crate::storage::{FileSystem, StoragePath};
+use crate::pb::object_service_client::ObjectServiceClient;
 use crate::proto_helpers::{create_data_chunk, create_multi_stream_header, create_stream_header_field, create_stream_end};
 
 use std::sync::{Arc, Mutex};
@@ -50,7 +51,7 @@ impl ReplicationState {
 // TODO return Err in case we can't replicate to the remote
 // this will allow replicate_iteration to clean up the working cache of connections and backoff
 // for that key
-pub async fn replicate_public_key(inner: &ReplicationState, public_key: &String, url: &String) {
+pub async fn replicate_public_key(inner: &ReplicationState, public_key: &String, url: String) {
     // X - fetch batch of replication objects
     // pull objects and create requests
     // replicate to the remote - take in this connection as an added parameter
@@ -59,6 +60,7 @@ pub async fn replicate_public_key(inner: &ReplicationState, public_key: &String,
     // TODO make batch size configurable
     // TODO move to ? for all await
     let batch = datastore::replication_object_uuids(&inner.db_pool, public_key, 10i32).await.unwrap();
+    let mut client = ObjectServiceClient::connect(url).await.unwrap();
 
     for (uuid, object_uuid) in batch.iter() {
         let object = datastore::get_object_by_uuid(&inner.db_pool, &object_uuid).await.unwrap();
@@ -98,6 +100,8 @@ pub async fn replicate_public_key(inner: &ReplicationState, public_key: &String,
 
         let stream = stream::iter(packets);
 
+        client.put(tonic::Request::new(stream)).await.unwrap();
+
         datastore::ack_object_replication(&inner.db_pool, &uuid).await.unwrap();
     }
 }
@@ -113,8 +117,9 @@ pub async fn replicate_iteration(inner: &mut ReplicationState) {
         }
 
         // TODO change to creating all of these tasks at once
+        // TODO remove need for clone
         for (public_key, url) in &inner.snapshot_cache.1.remote_public_keys {
-            replicate_public_key(&inner, public_key, url).await;
+            replicate_public_key(&inner, public_key, url.clone()).await;
         }
 }
 
