@@ -69,8 +69,10 @@ impl PublicKeyService for PublicKeyGrpc {
         } else {
             return Err(Error::new(ErrorKind::InvalidInput, "must specify public key").into());
         }
-        Url::parse(&request.url)
-            .map_err(|err| Error::new(ErrorKind::InvalidInput, err))?;
+        if !request.url.is_empty() {
+            Url::parse(&request.url)
+                .map_err(|err| Error::new(ErrorKind::InvalidInput, err))?;
+        }
 
         let response = self.add_public_key(request).await?;
 
@@ -160,6 +162,35 @@ mod tests {
             Err(err) => {
                 assert_eq!(err.code(), tonic::Code::InvalidArgument);
                 assert_eq!(err.message(), "relative URL without a base".to_owned());
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    #[tokio::test]
+    async fn empty_url() {
+        let docker = clients::Cli::default();
+        let image = images::postgres::Postgres::default().with_version(9);
+        let container = docker.run(image);
+        let pool = setup_postgres(&container).await;
+        let public_key_service = PublicKeyGrpc { db_pool: Arc::new(pool) };
+        let request = PublicKeyRequest {
+            public_key: Some(PublicKey {
+                key: Some(Key::Secp256k1(vec![1u8, 2u8, 3u8])),
+            }),
+            url: String::default(),
+            metadata: None,
+        };
+
+        match public_key_service.add(Request::new(request)).await {
+            Ok(result) => {
+                let result = result.into_inner();
+                assert!(!result.uuid.is_none());
+                assert_eq!(result.public_key.unwrap().key.unwrap(), Key::Secp256k1(vec![1u8, 2u8, 3u8]));
+                assert!(result.url.is_empty());
+                assert!(result.metadata.is_none());
+                assert!(!result.created_at.is_none());
+                assert!(!result.updated_at.is_none());
             },
             _ => unreachable!(),
         }
