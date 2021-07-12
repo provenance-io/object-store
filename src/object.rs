@@ -148,9 +148,7 @@ impl ObjectService for ObjectGrpc {
                 .map_err(|_| Status::invalid_argument("Invalid Dime proto - audience list"))?;
             let cache = self.cache.lock().unwrap();
 
-            println!("whole cache = {:?}", &cache);
             for ref party in audience {
-                println!("party state {} {:?}", party, cache.get_public_key_state(party));
                 replication_key_states.push((party.clone(), cache.get_public_key_state(party)));
             }
         }
@@ -282,6 +280,7 @@ pub mod tests {
             storage_type: "file_system".to_owned(),
             storage_base_path: "/tmp".to_owned(),
             storage_threshold: 5000,
+            replication_batch_size: 2,
         }
     }
 
@@ -405,7 +404,7 @@ pub mod tests {
         hash.to_be_bytes().to_vec()
     }
 
-    pub async fn put_helper(dime: Dime, payload: bytes::Bytes, chunk_size: usize) -> GrpcResult<Response<ObjectResponse>> {
+    pub async fn put_helper(dime: Dime, payload: bytes::Bytes, chunk_size: usize, extra_properties: HashMap<String, String>) -> GrpcResult<Response<ObjectResponse>> {
         let mut packets = Vec::new();
 
         let mut metadata = HashMap::new();
@@ -462,6 +461,13 @@ pub mod tests {
         let msg = ChunkBidi { r#impl: Some(ChunkEnum(value_chunk)) };
         packets.push(msg);
 
+        for (key, value) in extra_properties {
+            let header = StreamHeader { name: key, content_length: 0 };
+            let value_chunk = Chunk { header: Some(header), r#impl: Some(Value(value.as_bytes().to_owned())) };
+            let msg = ChunkBidi { r#impl: Some(ChunkEnum(value_chunk)) };
+            packets.push(msg);
+        }
+
         let end = Chunk { header: None, r#impl: Some(End(ChunkEnd::default())) };
         let msg = ChunkBidi { r#impl: Some(ChunkEnum(end)) };
         packets.push(msg);
@@ -516,7 +522,7 @@ pub mod tests {
         let payload: bytes::Bytes = "testing small payload".as_bytes().into();
         let payload_len = payload.len() as i64;
         let chunk_size = 500; // full payload in one packet
-        let response = put_helper(dime, payload, chunk_size).await;
+        let response = put_helper(dime, payload, chunk_size, HashMap::default()).await;
 
         match response {
             Ok(response) => {
@@ -549,7 +555,7 @@ pub mod tests {
         let payload: bytes::Bytes = "testing larger payload ".repeat(250).into_bytes().into();
         let payload_len = payload.len() as i64;
         let chunk_size = 100; // split payload into packets
-        let response = put_helper(dime, payload, chunk_size).await;
+        let response = put_helper(dime, payload, chunk_size, HashMap::default()).await;
 
         match response {
             Ok(response) => {
@@ -574,7 +580,7 @@ pub mod tests {
         let dime = generate_dime(vec![audience1, audience2, audience3], vec![signature1, signature2, signature3]);
         let payload: bytes::Bytes = "testing small payload".as_bytes().into();
         let chunk_size = 500; // full payload in one packet
-        let response = put_helper(dime, payload, chunk_size).await;
+        let response = put_helper(dime, payload, chunk_size, HashMap::default()).await;
 
         match response {
             Ok(response) => {
@@ -601,7 +607,7 @@ pub mod tests {
         dime.metadata.insert(MAILBOX_KEY.to_owned(), MAILBOX_FRAGMENT_REQUEST.to_owned());
         let payload: bytes::Bytes = "testing small payload".as_bytes().into();
         let chunk_size = 500; // full payload in one packet
-        let response = put_helper(dime, payload, chunk_size).await;
+        let response = put_helper(dime, payload, chunk_size, HashMap::default()).await;
 
         match response {
             Ok(response) => {
@@ -629,7 +635,7 @@ pub mod tests {
         dime.metadata.insert(MAILBOX_KEY.to_owned(), MAILBOX_FRAGMENT_REQUEST.to_owned());
         let payload: bytes::Bytes = "testing larger payload ".repeat(250).into_bytes().into();
         let chunk_size = 100; // split payload into packets
-        let response = put_helper(dime, payload, chunk_size).await;
+        let response = put_helper(dime, payload, chunk_size, HashMap::default()).await;
 
         match response {
             Ok(response) => {
@@ -654,7 +660,7 @@ pub mod tests {
         let dime = generate_dime(vec![audience.clone()], vec![signature]);
         let payload: bytes::Bytes = "testing small payload".as_bytes().into();
         let chunk_size = 500; // full payload in one packet
-        let response = put_helper(dime, payload.clone(), chunk_size).await;
+        let response = put_helper(dime, payload.clone(), chunk_size, HashMap::default()).await;
 
         match response {
             Ok(response) => {
@@ -732,7 +738,7 @@ pub mod tests {
         let dime = generate_dime(vec![audience.clone()], vec![signature]);
         let payload: bytes::Bytes = "testing larger payload ".repeat(250).into_bytes().into();
         let chunk_size = 100; // split payload into packets
-        let response = put_helper(dime, payload.clone(), chunk_size).await;
+        let response = put_helper(dime, payload.clone(), chunk_size, HashMap::default()).await;
 
         match response {
             Ok(response) => {
@@ -765,7 +771,7 @@ pub mod tests {
         let dime = generate_dime(vec![audience1, audience2, audience3.clone()], vec![signature1, signature2, signature3]);
         let payload: bytes::Bytes = "testing small payload".as_bytes().into();
         let chunk_size = 500; // full payload in one packet
-        let response = put_helper(dime, payload.clone(), chunk_size).await;
+        let response = put_helper(dime, payload.clone(), chunk_size, HashMap::default()).await;
 
         match response {
             Ok(_) => (),
@@ -791,8 +797,8 @@ pub mod tests {
         let dime = generate_dime(vec![audience], vec![signature]);
         let payload: bytes::Bytes = "testing small payload".as_bytes().into();
         let chunk_size = 500; // full payload in one packet
-        let response = put_helper(dime.clone(), payload.clone(), chunk_size).await;
-        let response_dupe = put_helper(dime, payload, chunk_size).await;
+        let response = put_helper(dime.clone(), payload.clone(), chunk_size, HashMap::default()).await;
+        let response_dupe = put_helper(dime, payload, chunk_size, HashMap::default()).await;
 
         assert!(response.is_ok() && response_dupe.is_ok());
 
@@ -813,8 +819,8 @@ pub mod tests {
         let dime2 = generate_dime(vec![audience, audience2], vec![signature, signature2]);
         let payload: bytes::Bytes = "testing small payload".as_bytes().into();
         let chunk_size = 500; // full payload in one packet
-        let response = put_helper(dime.clone(), payload.clone(), chunk_size).await;
-        let response_dupe = put_helper(dime2, payload, chunk_size).await;
+        let response = put_helper(dime.clone(), payload.clone(), chunk_size, HashMap::default()).await;
+        let response_dupe = put_helper(dime2, payload, chunk_size, HashMap::default()).await;
 
         assert!(response.is_ok() && response_dupe.is_ok());
 
@@ -835,7 +841,7 @@ pub mod tests {
         let dime = generate_dime(vec![audience1, audience2], vec![signature1, signature2]);
         let payload: bytes::Bytes = "testing small payload".as_bytes().into();
         let chunk_size = 500; // full payload in one packet
-        let response = put_helper(dime, payload.clone(), chunk_size).await;
+        let response = put_helper(dime, payload.clone(), chunk_size, HashMap::default()).await;
 
         match response {
             Ok(_) => (),
@@ -881,10 +887,11 @@ pub mod tests {
         let (audience2, signature2) = party_2();
         let (audience3, signature3) = party_3();
         let mut dime = generate_dime(vec![audience1.clone(), audience2.clone(), audience3.clone()], vec![signature1, signature2, signature3]);
-        dime.metadata.insert(SOURCE_KEY.to_owned(), String::from("standard key"));
+        let mut extra_properties = HashMap::new();
+        extra_properties.insert(SOURCE_KEY.to_owned(), String::from("standard key"));
         let payload: bytes::Bytes = "testing small payload".as_bytes().into();
         let chunk_size = 500; // full payload in one packet
-        let response = put_helper(dime, payload, chunk_size).await;
+        let response = put_helper(dime, payload, chunk_size, extra_properties).await;
 
         match response {
             Ok(response) => {
@@ -911,10 +918,11 @@ pub mod tests {
         let (audience2, signature2) = party_2();
         let (audience3, signature3) = party_3();
         let mut dime = generate_dime(vec![audience2.clone(), audience1.clone(), audience3.clone()], vec![signature2, signature1, signature3]);
-        dime.metadata.insert(SOURCE_KEY.to_owned(), String::from("standard key"));
+        let mut extra_properties = HashMap::new();
+        extra_properties.insert(SOURCE_KEY.to_owned(), String::from("standard key"));
         let payload: bytes::Bytes = "testing small payload".as_bytes().into();
         let chunk_size = 500; // full payload in one packet
-        let response = put_helper(dime, payload, chunk_size).await;
+        let response = put_helper(dime, payload, chunk_size, extra_properties).await;
 
         match response {
             Ok(response) => {
@@ -941,10 +949,11 @@ pub mod tests {
         let (audience2, signature2) = party_2();
         let (audience3, signature3) = party_3();
         let mut dime = generate_dime(vec![audience1.clone(), audience2.clone(), audience3.clone()], vec![signature1, signature2, signature3]);
-        dime.metadata.insert(SOURCE_KEY.to_owned(), SOURCE_REPLICATION.to_owned());
+        let mut extra_properties = HashMap::new();
+        extra_properties.insert(SOURCE_KEY.to_owned(), SOURCE_REPLICATION.to_owned());
         let payload: bytes::Bytes = "testing small payload".as_bytes().into();
         let chunk_size = 500; // full payload in one packet
-        let response = put_helper(dime, payload, chunk_size).await;
+        let response = put_helper(dime, payload, chunk_size, extra_properties).await;
 
         match response {
             Ok(response) => {

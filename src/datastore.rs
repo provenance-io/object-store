@@ -177,7 +177,7 @@ SELECT * FROM UNNEST($1, $2, $3)
 
 pub async fn ack_object_replication(db: &PgPool, uuid: &uuid::Uuid) -> Result<bool> {
     let query_str = r#"
-UPDATE object_replication SET replication_at = $1 WHERE uuid = $2
+UPDATE object_replication SET replicated_at = $1 WHERE uuid = $2
     "#;
 
     let rows_affected = sqlx::query(query_str)
@@ -373,7 +373,7 @@ ON CONFLICT DO NOTHING
             maybe_put_mailbox_public_keys(&mut tx, uuid, dime).await?;
 
             // objects that are saved via replication should not attempt to replicate again
-            if dime.metadata.get(SOURCE_KEY) != Some(&SOURCE_REPLICATION.to_owned()) {
+            if properties.get(SOURCE_KEY) != Some(&SOURCE_REPLICATION.as_bytes().to_owned()) {
                 maybe_put_replication_objects(&mut tx, uuid, replication_key_states).await?;
             }
         },

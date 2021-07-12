@@ -15,6 +15,7 @@ pub struct Config {
     pub storage_type: String,
     pub storage_base_path: String,
     pub storage_threshold: u32,
+    pub replication_batch_size: i32,
 }
 
 impl Config {
@@ -46,8 +47,12 @@ impl Config {
             .unwrap_or("5000".to_owned())
             .parse()
             .expect("STORAGE_THRESHOLD could not be parsed into a u32");
+        let replication_batch_size = env::var("REPLICATION_BATCH_SIZE")
+            .unwrap_or("10".to_owned())
+            .parse()
+            .expect("REPLICATION_BATCH_SIZE could not be parsed into a u32");
 
-        Self { url, uri_host, db_connection_pool_size, db_host, db_port, db_user, db_password, db_database, db_schema, storage_type, storage_base_path, storage_threshold }
+        Self { url, uri_host, db_connection_pool_size, db_host, db_port, db_user, db_password, db_database, db_schema, storage_type, storage_base_path, storage_threshold, replication_batch_size }
     }
 
     pub fn db_connection_string(&self) -> String {

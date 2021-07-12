@@ -95,7 +95,7 @@ async fn main() -> Result<()> {
     let public_key_service = PublicKeyGrpc::new(Arc::clone(&cache), Arc::clone(&pool));
     let mailbox_service = MailboxGrpc::new(Arc::clone(&pool));
     let object_service = ObjectGrpc::new(Arc::clone(&cache), Arc::clone(&config), Arc::clone(&pool), Arc::clone(&storage));
-    let replication_state = ReplicationState::new(Arc::clone(&cache), Arc::clone(&pool), Arc::clone(&storage));
+    let replication_state = ReplicationState::new(Arc::clone(&cache), Arc::clone(&config), Arc::clone(&pool), Arc::clone(&storage));
 
     // set initial health status and start a background
     health_reporter
