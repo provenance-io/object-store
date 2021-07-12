@@ -7,7 +7,7 @@ use chrono::prelude::*;
 use prost::Message;
 use std::{io::Error, io::ErrorKind, sync::Arc, time::SystemTime};
 use sqlx::{postgres::PgPool, Row};
-use tonic::{Request, Response, Status};
+use tonic::{Request, Response};
 use url::Url;
 
 // TODO add models to domain and sql functions to datastore
@@ -31,12 +31,12 @@ impl PublicKeyGrpc {
         } else {
             BytesMut::default()
         };
-        // TODO change to upsert
         // TODO change to compile time validated
         let record = sqlx::query_as(
             r#"
 INSERT INTO public_key (uuid, public_key, public_key_type, url, metadata)
 VALUES ($1, $2, $3::key_type, $4, $5)
+ON CONFLICT (public_key) DO UPDATE set url = $4, metadata = $5
 RETURNING uuid, public_key, public_key_type, url, metadata, created_at, updated_at
             "#)
             .bind(uuid::Uuid::new_v4())
@@ -238,6 +238,49 @@ mod tests {
             },
             _ => unreachable!(),
         }
+    }
+
+    #[tokio::test]
+    async fn duplicate_key() {
+        let docker = clients::Cli::default();
+        let image = images::postgres::Postgres::default().with_version(9);
+        let container = docker.run(image);
+        let pool = setup_postgres(&container).await;
+        let public_key_service = PublicKeyGrpc { db_pool: Arc::new(pool) };
+        let request1 = PublicKeyRequest {
+            public_key: Some(PublicKey {
+                key: Some(Key::Secp256k1(vec![1u8, 2u8, 3u8])),
+            }),
+            url: "http://test.com".to_owned(),
+            metadata: None,
+        };
+        let request2 = PublicKeyRequest {
+            public_key: Some(PublicKey {
+                key: Some(Key::Secp256k1(vec![1u8, 2u8, 3u8])),
+            }),
+            url: "http://test2.com".to_owned(),
+            metadata: None,
+        };
+
+        let (uuid, url) = match public_key_service.add(Request::new(request1)).await {
+            Ok(result) => {
+                let result = result.into_inner();
+                assert!(!result.uuid.is_none());
+                (result.uuid, result.url)
+            },
+            _ => unreachable!(),
+        };
+
+        match public_key_service.add(Request::new(request2)).await {
+            Ok(result) => {
+                let result = result.into_inner();
+                assert!(!result.uuid.is_none());
+                assert_eq!(uuid, result.uuid);
+                assert_ne!(url, result.url);
+                assert_eq!("http://test2.com", result.url);
+            }
+            _ => unreachable!(),
+        };
     }
 
     #[tokio::test]
