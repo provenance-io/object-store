@@ -7,7 +7,7 @@ use chrono::prelude::*;
 use prost::Message;
 use std::{io::Error, io::ErrorKind, sync::Arc, time::SystemTime};
 use sqlx::{postgres::PgPool, Row};
-use tonic::{Request, Response, Status};
+use tonic::{Request, Response};
 use url::Url;
 
 // TODO add models to domain and sql functions to datastore
@@ -246,10 +246,6 @@ mod tests {
         let image = images::postgres::Postgres::default().with_version(9);
         let container = docker.run(image);
         let pool = setup_postgres(&container).await;
-        let docker = clients::Cli::default();
-        let image = images::postgres::Postgres::default().with_version(9);
-        let container = docker.run(image);
-        let pool = setup_postgres(&container).await;
         let public_key_service = PublicKeyGrpc { db_pool: Arc::new(pool) };
         let request1 = PublicKeyRequest {
             public_key: Some(PublicKey {
@@ -279,9 +275,9 @@ mod tests {
             Ok(result) => {
                 let result = result.into_inner();
                 assert!(!result.uuid.is_none());
-                assert!(result.uuid == uuid);
-                assert!(result.url != url);
-                assert!(result.url == "http://test2.com");
+                assert_eq!(uuid, result.uuid);
+                assert_ne!(url, result.url);
+                assert_eq!("http://test2.com", result.url);
             }
             _ => unreachable!(),
         };
