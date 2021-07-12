@@ -8,6 +8,8 @@ use std::{sync::Arc, str::FromStr};
 use sqlx::postgres::PgPool;
 use tonic::{Request, Response};
 
+// TODO write test to not mailbox remote_keys
+
 #[derive(Debug)]
 pub struct MailboxGrpc {
     db_pool: Arc<PgPool>,

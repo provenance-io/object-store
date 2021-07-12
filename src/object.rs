@@ -11,6 +11,7 @@ use crate::pb::object_service_server::ObjectService;
 
 use bytes::{BufMut, Bytes, BytesMut};
 use futures_util::StreamExt;
+use linked_hash_map::LinkedHashMap;
 use prost::Message;
 use tokio::sync::mpsc;
 use std::{collections::HashMap, convert::TryInto, sync::{Arc, Mutex}};
@@ -44,7 +45,7 @@ impl ObjectService for ObjectGrpc {
         let mut chunk_buffer = Vec::new();
         let mut byte_buffer = BytesMut::new();
         let mut end = false;
-        let mut properties: HashMap<String, Vec<u8>> = HashMap::new();
+        let mut properties: LinkedHashMap<String, Vec<u8>> = LinkedHashMap::new();
 
         while let Some(chunk) = stream.next().await {
             let mut buffer = BytesMut::with_capacity(chunk.clone()?.encoded_len());
@@ -159,7 +160,7 @@ impl ObjectService for ObjectGrpc {
         let response = if !dime.metadata.contains_key(consts::MAILBOX_KEY) &&
             dime_properties.dime_length > self.config.storage_threshold.into()
         {
-            let response = datastore::put_object(&self.db_pool, &dime, &dime_properties, replication_key_states, None)
+            let response = datastore::put_object(&self.db_pool, &dime, &dime_properties, &properties, replication_key_states, None)
                 .await?;
             let storage_path = StoragePath {
                 dir: response.directory.clone(),
@@ -170,7 +171,7 @@ impl ObjectService for ObjectGrpc {
                 .map_err(Into::<OsError>::into)?;
             response.to_response(&self.config)?
         } else {
-            datastore::put_object(&self.db_pool, &dime, &dime_properties, replication_key_states, Some(&raw_dime))
+            datastore::put_object(&self.db_pool, &dime, &dime_properties, &properties, replication_key_states, Some(&raw_dime))
                 .await?
                 .to_response(&self.config)?
         };
@@ -507,7 +508,7 @@ pub mod tests {
     #[tokio::test]
     #[serial(grpc_server)]
     async fn simple_put() {
-        start_server().await;
+        let db = start_server().await;
 
         let (audience, signature) = party_1();
         let dime = generate_dime(vec![audience], vec![signature]);
@@ -520,10 +521,18 @@ pub mod tests {
         match response {
             Ok(response) => {
                 let response = response.into_inner();
+                let uuid = response.uuid.unwrap().value;
+                let uuid_typed = uuid::Uuid::from_str(uuid.as_str()).unwrap();
+                let object = datastore::get_object_by_uuid(&db, &uuid_typed).await.unwrap();
+                let mut properties = LinkedHashMap::new();
+                properties.insert(HASH_FIELD_NAME.to_owned(), base64::decode(object.hash).unwrap());
+                properties.insert(SIGNATURE_FIELD_NAME.to_owned(), "signature".as_bytes().to_owned());
+                properties.insert(SIGNATURE_PUBLIC_KEY_FIELD_NAME.to_owned(), "signature public key".as_bytes().to_owned());
 
-                assert_ne!(response.uuid.unwrap().value, dime_uuid);
+                assert_ne!(uuid, dime_uuid);
                 assert_eq!(response.name, NOT_STORAGE_BACKED);
                 assert_eq!(response.metadata.unwrap().content_length, payload_len);
+                assert_eq!(object.properties, properties)
             },
             _ => assert_eq!(format!("{:?}", response), ""),
         }

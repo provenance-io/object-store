@@ -378,7 +378,7 @@ mod tests {
             p8e_public_key: Some(PublicKey {
                 key: Some(Key::Secp256k1(vec![4u8, 5u8, 6u8])),
             }),
-            url: "".to_owned(),
+            url: String::default(),
             metadata: None,
         };
         let response = public_key_service.add(Request::new(request)).await;

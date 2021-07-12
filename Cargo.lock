@@ -747,6 +747,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5600b4e6efc5421841a2138a6b082e07fe12f9aaa12783d50e5d13325b26b4fc"
 
 [[package]]
+name = "linked-hash-map"
+version = "0.5.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7fb9b38af92608140b86b693604b9ffcc5824240a484d1ecd4795bacb2fe88f3"
+dependencies = [
+ "serde",
+ "serde_test",
+]
+
+[[package]]
 name = "lock_api"
 version = "0.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -886,6 +896,7 @@ dependencies = [
  "futures",
  "futures-util",
  "hex",
+ "linked-hash-map",
  "log",
  "prost",
  "prost-types",
@@ -1261,8 +1272,18 @@ version = "1.0.64"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "799e97dc9fdae36a5c8b8f2cae9ce2ee9fdce2058c57a93e6099d919fd982f79"
 dependencies = [
+ "indexmap",
  "itoa",
  "ryu",
+ "serde",
+]
+
+[[package]]
+name = "serde_test"
+version = "1.0.126"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bd1055d1c20532080b9da5040ec8e27425f4d4573d8e29eb19ba4ff1e4b9da2d"
+dependencies = [
  "serde",
 ]
 
@@ -1430,6 +1451,7 @@ dependencies = [
  "once_cell",
  "proc-macro2",
  "quote",
+ "serde_json",
  "sha2",
  "sqlx-core",
  "sqlx-rt",

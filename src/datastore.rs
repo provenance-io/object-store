@@ -7,6 +7,7 @@ use crate::types::{Result, OsError};
 use bytes::Bytes;
 use chrono::prelude::*;
 use futures_util::TryStreamExt;
+use linked_hash_map::LinkedHashMap;
 use sqlx::Acquire;
 use sqlx::postgres::{PgConnection, PgPool, PgQueryResult};
 use sqlx::{FromRow, Row};
@@ -28,7 +29,7 @@ impl From<PgQueryResult> for UpsertOutcome {
     }
 }
 
-#[derive(FromRow, Debug)]
+#[derive(Debug)]
 pub struct Object {
     pub uuid: uuid::Uuid,
     pub dime_uuid: uuid::Uuid,
@@ -39,7 +40,29 @@ pub struct Object {
     pub directory: String,
     pub name: String,
     pub payload: Option<Vec<u8>>,
+    pub properties: LinkedHashMap<String, Vec<u8>>,
     pub created_at: DateTime<Utc>,
+}
+
+impl FromRow<'_, sqlx::postgres::PgRow> for Object {
+    fn from_row(row: &sqlx::postgres::PgRow) -> std::result::Result<Self, sqlx::Error> {
+        let response = Object {
+            uuid: row.try_get::<uuid::Uuid, _>("uuid")?,
+            dime_uuid: row.try_get::<uuid::Uuid, _>("dime_uuid")?,
+            hash: row.try_get("hash")?,
+            unique_hash: row.try_get("unique_hash")?,
+            content_length: row.try_get("content_length")?,
+            dime_length: row.try_get("dime_length")?,
+            directory: row.try_get("directory")?,
+            name: row.try_get("name")?,
+            payload: row.try_get("payload")?,
+            properties: serde_json::from_str(&row.try_get::<String, _>("properties")?)
+                .map_err(|e| sqlx::Error::ColumnDecode { index: String::from("properties"), source: Box::new(e) })?,
+            created_at: row.try_get("created_at")?,
+        };
+
+        Ok(response)
+    }
 }
 
 #[derive(FromRow, Debug)]
@@ -95,7 +118,7 @@ pub async fn get_object_by_uuid(db: &PgPool, uuid: &uuid::Uuid) -> Result<Object
     Ok(result)
 }
 
-async fn maybe_put_replication_objects(conn: &mut PgConnection, object_uuid: uuid::Uuid, dime: &Dime, replication_key_states: Vec<(String, PublicKeyState)>) -> Result<()> {
+async fn maybe_put_replication_objects(conn: &mut PgConnection, object_uuid: uuid::Uuid, replication_key_states: Vec<(String, PublicKeyState)>) -> Result<()> {
     let mut replication_uuids: Vec<uuid::Uuid> = Vec::new();
     let mut replication_object_uuids: Vec<uuid::Uuid> = Vec::new();
     let mut replication_public_keys: Vec<String> = Vec::new();
@@ -192,7 +215,7 @@ SELECT uuid, object_uuid FROM object_replication
 pub async fn stream_mailbox_public_keys(db: &PgPool, public_key: &str, limit: i32) -> Result<Vec<(uuid::Uuid, Object)>> {
     let mut result = Vec::new();
     let query_str = r#"
-SELECT mpk.uuid mpk_uuid, o.uuid, o.dime_uuid, hash, unique_hash, content_length, dime_length, directory, name, payload, o.created_at
+SELECT mpk.uuid mpk_uuid, o.uuid, o.dime_uuid, hash, unique_hash, content_length, dime_length, directory, name, payload, properties, o.created_at
   FROM object AS o
   JOIN mailbox_public_key AS mpk
   ON o.uuid = mpk.object_uuid
@@ -300,22 +323,22 @@ UPDATE mailbox_public_key SET acked_at = $1 WHERE uuid = $2
     Ok(rows_affected > 0)
 }
 
-pub async fn put_object(db: &PgPool, dime: &Dime, properties: &DimeProperties, replication_key_states: Vec<(String, PublicKeyState)>, raw_dime: Option<&Bytes>) -> Result<Object> {
+pub async fn put_object(db: &PgPool, dime: &Dime, dime_properties: &DimeProperties, properties: &LinkedHashMap<String, Vec<u8>>, replication_key_states: Vec<(String, PublicKeyState)>, raw_dime: Option<&Bytes>) -> Result<Object> {
     let mut unique_hash = dime.unique_audience_base64()?;
     unique_hash.sort_unstable();
-    unique_hash.insert(0, String::from(&properties.hash));
+    unique_hash.insert(0, String::from(&dime_properties.hash));
     let unique_hash = unique_hash.join(";");
 
     let query_str = if raw_dime.is_some() {
         r#"
-INSERT INTO object (uuid, dime_uuid, hash, unique_hash, content_length, dime_length, directory, name, payload)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+INSERT INTO object (uuid, dime_uuid, hash, unique_hash, content_length, dime_length, directory, name, properties, payload)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 ON CONFLICT DO NOTHING
         "#
     } else {
         r#"
-INSERT INTO object (uuid, dime_uuid, hash, unique_hash, content_length, dime_length, name)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
+INSERT INTO object (uuid, dime_uuid, hash, unique_hash, content_length, dime_length, name, properties)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 ON CONFLICT DO NOTHING
         "#
     };
@@ -324,28 +347,34 @@ ON CONFLICT DO NOTHING
     let query = sqlx::query(query_str)
         .bind(&uuid)
         .bind(&dime.uuid)
-        .bind(&properties.hash)
+        .bind(&dime_properties.hash)
         .bind(&unique_hash)
-        .bind(&properties.content_length)
-        .bind(&properties.dime_length);
+        .bind(&dime_properties.content_length)
+        .bind(&dime_properties.dime_length);
     let query = if let Some(raw_dime) = raw_dime {
         query.bind(NOT_STORAGE_BACKED)
             .bind(NOT_STORAGE_BACKED)
+            .bind(serde_json::to_string(properties)
+                .map_err(|e| sqlx::Error::Protocol(format!("Error serializing \"properties\" {:?}", e)))?
+            )
             .bind(raw_dime.to_vec())
     } else {
         query.bind(&uuid)
+            .bind(serde_json::to_string(properties)
+                .map_err(|e| sqlx::Error::Protocol(format!("Error serializing \"properties\" {:?}", e)))?
+            )
     };
 
     let mut tx = db.begin().await?;
     let result = query.execute(&mut tx).await?.into();
     match result {
         UpsertOutcome::Created => {
-            put_object_public_keys(&mut tx, uuid, dime, properties).await?;
+            put_object_public_keys(&mut tx, uuid, dime, dime_properties).await?;
             maybe_put_mailbox_public_keys(&mut tx, uuid, dime).await?;
 
             // objects that are saved via replication should not attempt to replicate again
             if dime.metadata.get(SOURCE_KEY) != Some(&SOURCE_REPLICATION.to_owned()) {
-                maybe_put_replication_objects(&mut tx, uuid, dime, replication_key_states).await?;
+                maybe_put_replication_objects(&mut tx, uuid, replication_key_states).await?;
             }
         },
         UpsertOutcome::Noop => (),
