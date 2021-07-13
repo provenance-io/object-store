@@ -19,7 +19,7 @@ use crate::public_key::PublicKeyGrpc;
 use crate::mailbox::MailboxGrpc;
 use crate::types::{OsError, Result};
 use crate::storage::FileSystem;
-use crate::replication::{replicate, ReplicationState};
+use crate::replication::{reap_unknown_keys, replicate, ReplicationState};
 
 use std::sync::{Arc, Mutex};
 use sqlx::{migrate::Migrator, postgres::{PgPool, PgPoolOptions}, Executor};
@@ -105,6 +105,8 @@ async fn main() -> Result<()> {
 
     // start replication
     tokio::spawn(replicate(replication_state));
+    // start unknown reaper - removes replication objects for public_keys that moved from Unkown -> Local
+    tokio::spawn(reap_unknown_keys(Arc::clone(&pool), Arc::clone(&cache)));
 
     log::info!("Starting server on {:?}", &config.url);
 

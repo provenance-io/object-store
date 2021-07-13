@@ -1,6 +1,6 @@
 use crate::{cache::Cache, config::Config};
 use crate::consts;
-use crate::datastore;
+use crate::datastore::{self, reap_object_replication, replication_object_uuids};
 use crate::storage::{FileSystem, StoragePath};
 use crate::pb::object_service_client::ObjectServiceClient;
 use crate::proto_helpers::{create_data_chunk, create_multi_stream_header, create_stream_header_field, create_stream_end};
@@ -12,7 +12,6 @@ use chrono::prelude::*;
 use futures::stream;
 use sqlx::postgres::PgPool;
 
-// TODO need to reap replication objects that were really local
 // TODO backoff failed connections
 // TODO fix unwraps
 // TODO implement client connection cache
@@ -119,6 +118,36 @@ pub async fn replicate(mut inner: ReplicationState) {
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 
         replicate_iteration(&mut inner).await;
+    }
+}
+
+pub async fn reap_unknown_keys_iteration(db_pool: &Arc<PgPool>, cache: &Arc<Mutex<Cache>>) {
+    let local_public_keys = cache.lock().unwrap().local_public_keys.clone();
+
+    for public_key in local_public_keys {
+        let result = replication_object_uuids(&db_pool, &public_key, 1).await;
+
+        match result {
+            Ok(result) => {
+                if !result.is_empty() {
+                    match reap_object_replication(&db_pool, &public_key).await {
+                        Ok(rows_affected) => log::info!("Reaping public_key {} - rows_affected {}", &public_key, rows_affected),
+                        Err(e) => log::error!("Reaper - reap_object_replication for {} - {:?}", &public_key, &e),
+                    }
+                }
+            },
+            Err(e) => log::error!("Reaper - replication_object_uuids for {} - {:?}", &public_key, &e),
+        }
+    }
+}
+
+pub async fn reap_unknown_keys(db_pool: Arc<PgPool>, cache: Arc<Mutex<Cache>>) {
+    loop {
+        tokio::time::sleep(std::time::Duration::from_secs(60 * 60)).await;
+
+        log::trace!("Reaping previously unknown keys");
+
+        reap_unknown_keys_iteration(&db_pool, &cache).await;
     }
 }
 
@@ -413,6 +442,56 @@ pub mod tests {
     #[tokio::test]
     #[serial(grpc_server)]
     async fn late_local_url_can_cleanup() {
+        let state_one = start_server_one().await;
+
+        let (audience1, signature1) = party_1();
+        let (audience3, signature3) = party_3();
+
+        // put 3 objects for party_1, party_3
+        let dime = generate_dime(vec![audience1.clone(), audience3.clone()], vec![signature1.clone(), signature3.clone()]);
+        let payload: bytes::Bytes = "testing small payload 2".as_bytes().into();
+        let chunk_size = 500; // full payload in one packet
+        let response = put_helper(dime, payload, chunk_size, HashMap::default()).await;
+
+        match response {
+            Ok(_) => (),
+            _ => assert_eq!(format!("{:?}", response), ""),
+        }
+
+        let dime = generate_dime(vec![audience1.clone(), audience3.clone()], vec![signature1.clone(), signature3.clone()]);
+        let payload: bytes::Bytes = "testing small payload 3".as_bytes().into();
+        let response = put_helper(dime, payload, chunk_size, HashMap::default()).await;
+
+        match response {
+            Ok(_) => (),
+            _ => assert_eq!(format!("{:?}", response), ""),
+        }
+
+        let dime = generate_dime(vec![audience1.clone(), audience3.clone()], vec![signature1.clone(), signature3.clone()]);
+        let payload: bytes::Bytes = "testing small payload 4".as_bytes().into();
+        let response = put_helper(dime, payload.clone(), chunk_size, HashMap::default()).await;
+
+        match response {
+            Ok(_) => {
+                assert_eq!(replication_object_uuids(&state_one.db_pool, String::from_utf8(audience1.public_key.clone()).unwrap().as_str(), 50).await.unwrap().len(), 0);
+                assert_eq!(replication_object_uuids(&state_one.db_pool, String::from_utf8(audience3.public_key.clone()).unwrap().as_str(), 50).await.unwrap().len(), 3);
+            },
+            _ => assert_eq!(format!("{:?}", response), ""),
+        }
+
+        // set unknown key to local and reap
+        let cache = state_one.cache.clone();
+
+        {
+            let mut cache = cache.lock().unwrap();
+
+            cache.add_local_public_key(String::from_utf8(audience3.public_key.clone()).unwrap());
+        }
+
+        reap_unknown_keys_iteration(&state_one.db_pool, &cache).await;
+
+        assert_eq!(replication_object_uuids(&state_one.db_pool, String::from_utf8(audience1.public_key.clone()).unwrap().as_str(), 50).await.unwrap().len(), 0);
+        assert_eq!(replication_object_uuids(&state_one.db_pool, String::from_utf8(audience3.public_key.clone()).unwrap().as_str(), 50).await.unwrap().len(), 0);
     }
 
     #[tokio::test]

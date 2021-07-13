@@ -886,7 +886,7 @@ pub mod tests {
         let (audience1, signature1) = party_1();
         let (audience2, signature2) = party_2();
         let (audience3, signature3) = party_3();
-        let mut dime = generate_dime(vec![audience1.clone(), audience2.clone(), audience3.clone()], vec![signature1, signature2, signature3]);
+        let dime = generate_dime(vec![audience1.clone(), audience2.clone(), audience3.clone()], vec![signature1, signature2, signature3]);
         let mut extra_properties = HashMap::new();
         extra_properties.insert(SOURCE_KEY.to_owned(), String::from("standard key"));
         let payload: bytes::Bytes = "testing small payload".as_bytes().into();
@@ -917,7 +917,7 @@ pub mod tests {
         let (audience1, signature1) = party_1();
         let (audience2, signature2) = party_2();
         let (audience3, signature3) = party_3();
-        let mut dime = generate_dime(vec![audience2.clone(), audience1.clone(), audience3.clone()], vec![signature2, signature1, signature3]);
+        let dime = generate_dime(vec![audience2.clone(), audience1.clone(), audience3.clone()], vec![signature2, signature1, signature3]);
         let mut extra_properties = HashMap::new();
         extra_properties.insert(SOURCE_KEY.to_owned(), String::from("standard key"));
         let payload: bytes::Bytes = "testing small payload".as_bytes().into();
@@ -948,7 +948,7 @@ pub mod tests {
         let (audience1, signature1) = party_1();
         let (audience2, signature2) = party_2();
         let (audience3, signature3) = party_3();
-        let mut dime = generate_dime(vec![audience1.clone(), audience2.clone(), audience3.clone()], vec![signature1, signature2, signature3]);
+        let dime = generate_dime(vec![audience1.clone(), audience2.clone(), audience3.clone()], vec![signature1, signature2, signature3]);
         let mut extra_properties = HashMap::new();
         extra_properties.insert(SOURCE_KEY.to_owned(), SOURCE_REPLICATION.to_owned());
         let payload: bytes::Bytes = "testing small payload".as_bytes().into();

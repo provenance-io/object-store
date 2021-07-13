@@ -190,6 +190,22 @@ UPDATE object_replication SET replicated_at = $1 WHERE uuid = $2
     Ok(rows_affected > 0)
 }
 
+pub async fn reap_object_replication(db: &PgPool, public_key: &str) -> Result<u64> {
+    let query_str = r#"
+UPDATE object_replication SET replicated_at = $1
+  WHERE public_key = $2 AND replicated_at IS NULL
+    "#;
+
+    let rows_affected = sqlx::query(query_str)
+        .bind(Utc::now())
+        .bind(public_key)
+        .execute(db)
+        .await?
+        .rows_affected();
+
+    Ok(rows_affected)
+}
+
 pub async fn replication_object_uuids(db: &PgPool, public_key: &str, limit: i32) -> Result<Vec<(uuid::Uuid, uuid::Uuid)>> {
     let mut result = Vec::new();
     let query_str = r#"
