@@ -106,11 +106,13 @@ pub async fn replicate_iteration(inner: &mut ReplicationState) {
             inner.snapshot_cache = (Utc::now(), snapshot_cache);
         }
 
-        // TODO change to creating all of these tasks at once
-        // TODO remove need for clone
+        let mut futures = Vec::new();
+
         for (public_key, url) in &inner.snapshot_cache.1.remote_public_keys {
-            replicate_public_key(&inner, public_key, url.clone()).await;
+            futures.push(replicate_public_key(&inner, public_key, url.clone()));
         }
+
+        futures::future::join_all(futures).await;
 }
 
 pub async fn replicate(mut inner: ReplicationState) {
