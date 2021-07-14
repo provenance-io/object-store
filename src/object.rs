@@ -48,9 +48,18 @@ impl ObjectService for ObjectGrpc {
         let mut properties: LinkedHashMap<String, Vec<u8>> = LinkedHashMap::new();
 
         while let Some(chunk) = stream.next().await {
-            let mut buffer = BytesMut::with_capacity(chunk.clone()?.encoded_len());
-            chunk.clone()?.encode(&mut buffer).unwrap();
-            chunk_buffer.push(chunk?);
+            match chunk {
+                Ok(chunk) => {
+                    let mut buffer = BytesMut::with_capacity(chunk.encoded_len());
+                    chunk.clone().encode(&mut buffer).unwrap();
+                    chunk_buffer.push(chunk);
+                },
+                Err(e) => {
+                    let message = format!("Error received instead of ChunkBidi - {:?}", e);
+
+                    return Err(Status::invalid_argument(message))
+                },
+            }
         }
 
         // check validity of stream header
