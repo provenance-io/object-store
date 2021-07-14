@@ -200,12 +200,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e70cc2f62c6ce1868963827bd677764c62d07c3d9a3e1fb1177ee1a9ab199eb2"
 
 [[package]]
-name = "cesu8"
-version = "1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6d43a04d8753f35258c91f8ec639f792891f748a1edbd759cf1dcea3382ad83c"
-
-[[package]]
 name = "cfg-if"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -334,25 +328,6 @@ name = "dotenv"
 version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "77c90badedccf4105eca100756a0b1289e191f6fcbdadd3cee1d2f614f97da8f"
-
-[[package]]
-name = "ducc"
-version = "0.1.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "41bc1f8a30712eb6a7454f85747f218d9dfb41d173bb223a8c4f18daff829207"
-dependencies = [
- "cesu8",
- "ducc-sys",
-]
-
-[[package]]
-name = "ducc-sys"
-version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0cdea834bf6a0fde522374db4404695c5f0465fc0ee814f2878d76eaabd4ffed"
-dependencies = [
- "cc",
-]
 
 [[package]]
 name = "either"
@@ -898,7 +873,6 @@ dependencies = [
  "base64",
  "bytes",
  "chrono",
- "ducc",
  "env_logger",
  "futures",
  "futures-util",

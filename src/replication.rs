@@ -1,5 +1,4 @@
-use crate::{cache::Cache, config::Config};
-use crate::consts;
+use crate::{cache::Cache, config::Config, consts, types::OsError};
 use crate::datastore::{self, reap_object_replication, replication_object_uuids};
 use crate::storage::{FileSystem, StoragePath};
 use crate::pb::object_service_client::ObjectServiceClient;
@@ -11,9 +10,26 @@ use bytes::Bytes;
 use chrono::prelude::*;
 use futures::stream;
 use sqlx::postgres::PgPool;
+use quick_error::quick_error;
+
+quick_error! {
+    #[derive(Debug)]
+    enum ReplicationError {
+        CrateError(err: OsError) {
+            from()
+        }
+        TonicTransportError(err: tonic::transport::Error) {
+            from()
+        }
+        TonicStatusError(err: tonic::Status) {
+            from()
+        }
+    }
+}
+
+type Result<T> = std::result::Result<T, ReplicationError>;
 
 // TODO backoff failed connections
-// TODO fix unwraps
 // TODO implement client connection cache
 // TODO implement remaining tests
 
@@ -36,21 +52,13 @@ impl ReplicationState {
     }
 }
 
-// TODO return Err in case we can't replicate to the remote
-// this will allow replicate_iteration to clean up the working cache of connections and backoff
-// for that key
-pub async fn replicate_public_key(inner: &ReplicationState, public_key: &String, url: String) {
-    // X - fetch batch of replication objects
-    // pull objects and create requests
-    // replicate to the remote - take in this connection as an added parameter
-    // X - mark replication object as replicated
-
-    // TODO move to ? for all await
-    let batch = datastore::replication_object_uuids(&inner.db_pool, public_key, inner.config.replication_batch_size).await.unwrap();
-    let mut client = ObjectServiceClient::connect(url).await.unwrap();
+async fn replicate_public_key(inner: &ReplicationState, public_key: &String, url: String) -> Result<usize> {
+    let batch = datastore::replication_object_uuids(&inner.db_pool, public_key, inner.config.replication_batch_size).await?;
+    let batch_size = batch.len();
+    let mut client = ObjectServiceClient::connect(url).await?;
 
     for (uuid, object_uuid) in batch.iter() {
-        let object = datastore::get_object_by_uuid(&inner.db_pool, &object_uuid).await.unwrap();
+        let object = datastore::get_object_by_uuid(&inner.db_pool, &object_uuid).await?;
         let payload = if let Some(payload) = &object.payload {
             Bytes::copy_from_slice(payload.as_slice())
         } else {
@@ -58,8 +66,8 @@ pub async fn replicate_public_key(inner: &ReplicationState, public_key: &String,
                 dir: object.directory.clone(),
                 file: object.name.clone(),
             };
-            let payload = inner.storage.fetch(&storage_path, object.dime_length as u64).await.unwrap();
-                // .map_err(Into::<OsError>::into)?;
+            let payload = inner.storage.fetch(&storage_path, object.dime_length as u64).await
+                .map_err(Into::<OsError>::into)?;
 
             Bytes::copy_from_slice(payload.as_slice())
         };
@@ -90,13 +98,15 @@ pub async fn replicate_public_key(inner: &ReplicationState, public_key: &String,
 
         let stream = stream::iter(packets);
 
-        client.put(tonic::Request::new(stream)).await.unwrap();
+        client.put(tonic::Request::new(stream)).await?;
 
-        datastore::ack_object_replication(&inner.db_pool, &uuid).await.unwrap();
+        datastore::ack_object_replication(&inner.db_pool, &uuid).await?;
     }
+
+    Ok(batch_size)
 }
 
-pub async fn replicate_iteration(inner: &mut ReplicationState) {
+async fn replicate_iteration(inner: &mut ReplicationState) {
         // update snapshot cache every 5 minutes
         let last_cache_update = &inner.snapshot_cache.0;
         if last_cache_update.time() + chrono::Duration::minutes(5) < Utc::now().time() {
@@ -106,13 +116,34 @@ pub async fn replicate_iteration(inner: &mut ReplicationState) {
             inner.snapshot_cache = (Utc::now(), snapshot_cache);
         }
 
+        let mut keys = Vec::new();
         let mut futures = Vec::new();
 
         for (public_key, url) in &inner.snapshot_cache.1.remote_public_keys {
+            keys.push(public_key);
             futures.push(replicate_public_key(&inner, public_key, url.clone()));
         }
 
-        futures::future::join_all(futures).await;
+        let results = futures::future::join_all(futures).await;
+
+        for (public_key, result) in keys.iter().zip(results) {
+            match result {
+                Ok(count) => log::trace!("Replicated {} items for {}", count, &public_key),
+                Err(e) => {
+                    match e {
+                        ReplicationError::CrateError(_) => {
+                            log::error!("Failed replication for {} - {:?}", public_key, e)
+                        },
+                        ReplicationError::TonicStatusError(_) => {
+                            log::error!("Failed replication for {} - {:?}", public_key, e)
+                        },
+                        ReplicationError::TonicTransportError(e) => {
+                            log::trace!("Failed replication for {} - {:?}", public_key, e)
+                        },
+                    }
+                },
+            }
+        }
 }
 
 pub async fn replicate(mut inner: ReplicationState) {
@@ -123,7 +154,7 @@ pub async fn replicate(mut inner: ReplicationState) {
     }
 }
 
-pub async fn reap_unknown_keys_iteration(db_pool: &Arc<PgPool>, cache: &Arc<Mutex<Cache>>) {
+async fn reap_unknown_keys_iteration(db_pool: &Arc<PgPool>, cache: &Arc<Mutex<Cache>>) {
     let local_public_keys = cache.lock().unwrap().local_public_keys.clone();
 
     for public_key in local_public_keys {
