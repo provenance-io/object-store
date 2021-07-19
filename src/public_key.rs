@@ -8,13 +8,11 @@ use chrono::prelude::*;
 use prost::Message;
 use std::{io::Error, io::ErrorKind, sync::{Arc, Mutex}, time::SystemTime};
 use sqlx::{postgres::PgPool, Row};
-use tonic::{Request, Response};
+use tonic::{Request, Response, Status};
 use url::Url;
 
 // TODO add models to domain and sql functions to datastore
 // TODO convert ErrorKind into local errors
-// TODO move key from key/p8e to signing/encryption?
-// TODO base64 encode keys instead of hex so that it matches existing objects
 // TODO background process that updates cache on occasion
 
 #[derive(Debug)]
@@ -31,7 +29,37 @@ impl PublicKeyGrpc {
         Self { cache, db_pool }
     }
 
+    async fn update_public_key(&self, public_key: PublicKeyRequest) -> Result<PublicKeyResponse> {
+        let metadata = if let Some(metadata) = public_key.metadata {
+            let mut buffer = BytesMut::with_capacity(metadata.encoded_len());
+            metadata.encode(&mut buffer)?;
+            buffer
+        } else {
+            BytesMut::default()
+        };
+        // TODO change to compile time validated
+        let record = sqlx::query_as(
+            r#"
+UPDATE public_key SET url = $3, metadata = $4
+WHERE public_key = $1 AND signing_public_key = $2
+RETURNING uuid, public_key, public_key_type, signing_public_key, signing_public_key_type, url, metadata, created_at, updated_at
+            "#)
+            .bind(match public_key.public_key.unwrap().key.unwrap() {
+                Key::Secp256k1(data) => base64::encode(data),
+            })
+            .bind(match public_key.signing_public_key.unwrap().key.unwrap() {
+                Key::Secp256k1(data) => base64::encode(data),
+            })
+            .bind(public_key.url)
+            .bind(metadata.as_ref())
+            .fetch_one(self.db_pool.as_ref())
+            .await?;
+
+        Ok(record)
+    }
+
     async fn add_public_key(&self, public_key: PublicKeyRequest) -> Result<PublicKeyResponse> {
+        let public_key_clone = public_key.clone();
         let metadata = if let Some(metadata) = public_key.metadata {
             let mut buffer = BytesMut::with_capacity(metadata.encoded_len());
             metadata.encode(&mut buffer)?;
@@ -44,24 +72,33 @@ impl PublicKeyGrpc {
             r#"
 INSERT INTO public_key (uuid, public_key, public_key_type, signing_public_key, signing_public_key_type, url, metadata)
 VALUES ($1, $2, $3::key_type, $4, $5::key_type, $6, $7)
-ON CONFLICT (public_key) DO UPDATE set url = $6, metadata = $7
-RETURNING uuid, public_key, public_key_type, url, metadata, created_at, updated_at
+RETURNING uuid, public_key, public_key_type, signing_public_key, signing_public_key_type, url, metadata, created_at, updated_at
             "#)
             .bind(uuid::Uuid::new_v4())
             .bind(match public_key.public_key.unwrap().key.unwrap() {
-                Key::Secp256k1(data) => hex::encode(data),
+                Key::Secp256k1(data) => base64::encode(data),
             })
             .bind("secp256k1")
-            .bind(match public_key.p8e_public_key.unwrap().key.unwrap() {
-                Key::Secp256k1(data) => hex::encode(data),
+            .bind(match public_key.signing_public_key.unwrap().key.unwrap() {
+                Key::Secp256k1(data) => base64::encode(data),
             })
             .bind("secp256k1")
-            .bind(public_key.url)
+            .bind(&public_key.url)
             .bind(metadata.as_ref())
             .fetch_one(self.db_pool.as_ref())
-            .await?;
+            .await;
 
-        Ok(record)
+        match record {
+            Ok(record) => Ok(record),
+            Err(sqlx::Error::Database(e)) => {
+                if e.code() == Some(std::borrow::Cow::Borrowed("23505")) {
+                    self.update_public_key(public_key_clone).await
+                } else {
+                    Err(sqlx::Error::Database(e)).map_err(Into::<OsError>::into)
+                }
+            },
+            Err(e) => Err(e).map_err(Into::<OsError>::into),
+        }
     }
 }
 
@@ -81,11 +118,10 @@ impl PublicKeyService for PublicKeyGrpc {
         } else {
             return Err(Error::new(ErrorKind::InvalidInput, "must specify public key").into());
         }
-<<<<<<< HEAD
 
-        // validate p8e public_key
-        if let Some(ref p8e_public_key) = request.p8e_public_key {
-            if p8e_public_key.key.is_none() {
+        // validate signing public_key
+        if let Some(ref signing_public_key) = request.signing_public_key {
+            if signing_public_key.key.is_none() {
                 return Err(Error::new(ErrorKind::InvalidInput, "must specify p8e key type").into());
             }
         } else {
@@ -93,8 +129,6 @@ impl PublicKeyService for PublicKeyGrpc {
         }
 
         // validate url if it is not empty
-=======
->>>>>>> fix/empty-public-keys
         if !request.url.is_empty() {
             Url::parse(&request.url)
                 .map_err(|err| Error::new(ErrorKind::InvalidInput, err))?;
@@ -130,14 +164,14 @@ enum KeyType { Secp256k1 }
 
 impl sqlx::FromRow<'_, sqlx::postgres::PgRow> for PublicKeyResponse {
     fn from_row(row: &sqlx::postgres::PgRow) -> std::result::Result<Self, sqlx::Error> {
-        let key_bytes: Vec<u8> = hex::decode(row.try_get::<&str, _>("public_key")?)
+        let key_bytes: Vec<u8> = base64::decode(row.try_get::<&str, _>("public_key")?)
             .map_err(|err| sqlx::Error::Decode(Box::new(err)))?;
         let public_key = match row.try_get::<KeyType, _>("public_key_type")? {
             KeyType::Secp256k1 => Key::Secp256k1(key_bytes),
         };
-        let p8e_key_bytes: Vec<u8> = hex::decode(row.try_get::<&str, _>("p8e_public_key")?)
+        let p8e_key_bytes: Vec<u8> = base64::decode(row.try_get::<&str, _>("signing_public_key")?)
             .map_err(|err| sqlx::Error::Decode(Box::new(err)))?;
-        let p8e_public_key = match row.try_get::<KeyType, _>("p8e_public_key_type")? {
+        let signing_public_key = match row.try_get::<KeyType, _>("signing_public_key_type")? {
             KeyType::Secp256k1 => Key::Secp256k1(p8e_key_bytes),
         };
         let created_at: SystemTime = row.try_get::<DateTime<Utc>, _>("created_at")?.into();
@@ -155,7 +189,7 @@ impl sqlx::FromRow<'_, sqlx::postgres::PgRow> for PublicKeyResponse {
                 value: row.try_get::<uuid::Uuid, _>("uuid")?.to_hyphenated().to_string()
             }),
             public_key: Some(PublicKey { key: Some(public_key) }),
-            p8e_public_key: Some(PublicKey { key: Some(p8e_public_key) }),
+            signing_public_key: Some(PublicKey { key: Some(signing_public_key) }),
             url: row.try_get("url")?,
             metadata,
             created_at: Some(created_at.into()),
@@ -182,7 +216,6 @@ mod tests {
         );
 
         let pool = PgPoolOptions::new()
-            // TODO add more config fields
             .max_connections(5)
             .connect(&connection_string)
             .await
@@ -205,7 +238,7 @@ mod tests {
             public_key: Some(PublicKey {
                 key: Some(Key::Secp256k1(vec![])),
             }),
-            p8e_public_key: Some(PublicKey {
+            signing_public_key: Some(PublicKey {
                 key: Some(Key::Secp256k1(vec![])),
             }),
             url: "invalidurl.com".to_owned(),
@@ -227,17 +260,22 @@ mod tests {
         let docker = clients::Cli::default();
         let image = images::postgres::Postgres::default().with_version(9);
         let container = docker.run(image);
+        let cache = Mutex::new(Cache::default());
         let pool = setup_postgres(&container).await;
-        let public_key_service = PublicKeyGrpc { db_pool: Arc::new(pool) };
+        let public_key_service = PublicKeyGrpc { cache: Arc::new(cache), db_pool: Arc::new(pool) };
         let request = PublicKeyRequest {
             public_key: Some(PublicKey {
                 key: Some(Key::Secp256k1(vec![1u8, 2u8, 3u8])),
             }),
+            signing_public_key: Some(PublicKey {
+                key: Some(Key::Secp256k1(vec![])),
+            }),
             url: String::default(),
             metadata: None,
         };
+        let response = public_key_service.add(Request::new(request)).await;
 
-        match public_key_service.add(Request::new(request)).await {
+        match response {
             Ok(result) => {
                 let result = result.into_inner();
                 assert!(!result.uuid.is_none());
@@ -247,7 +285,9 @@ mod tests {
                 assert!(!result.created_at.is_none());
                 assert!(!result.updated_at.is_none());
             },
-            _ => unreachable!(),
+            _ => {
+                assert_eq!(format!("{:?}", response), "");
+            }
         }
     }
 
@@ -261,7 +301,7 @@ mod tests {
         let public_key_service = PublicKeyGrpc { cache: Arc::new(cache), db_pool: Arc::new(pool) };
         let request = PublicKeyRequest {
             public_key: None,
-            p8e_public_key: Some(PublicKey {
+            signing_public_key: Some(PublicKey {
                 key: Some(Key::Secp256k1(vec![1u8, 2u8, 3u8])),
             }),
             url: "http://test.com".to_owned(),
@@ -279,7 +319,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn missing_p8e_public_key() {
+    async fn missing_signing_public_key() {
         let docker = clients::Cli::default();
         let image = images::postgres::Postgres::default().with_version(9);
         let container = docker.run(image);
@@ -290,7 +330,7 @@ mod tests {
             public_key: Some(PublicKey {
                 key: Some(Key::Secp256k1(vec![1u8, 2u8, 3u8])),
             }),
-            p8e_public_key: None,
+            signing_public_key: None,
             url: "http://test.com".to_owned(),
             metadata: None,
         };
@@ -315,7 +355,7 @@ mod tests {
         let public_key_service = PublicKeyGrpc { cache: Arc::new(cache), db_pool: Arc::new(pool) };
         let request = PublicKeyRequest {
             public_key: Some(PublicKey { key: None }),
-            p8e_public_key: Some(PublicKey {
+            signing_public_key: Some(PublicKey {
                 key: Some(Key::Secp256k1(vec![1u8, 2u8, 3u8])),
             }),
             url: "http://test.com".to_owned(),
@@ -344,7 +384,7 @@ mod tests {
             public_key: Some(PublicKey {
                 key: Some(Key::Secp256k1(vec![1u8, 2u8, 3u8])),
             }),
-            p8e_public_key: Some(PublicKey { key: None }),
+            signing_public_key: Some(PublicKey { key: None }),
             url: "http://test.com".to_owned(),
             metadata: None,
         };
@@ -364,10 +404,14 @@ mod tests {
         let docker = clients::Cli::default();
         let image = images::postgres::Postgres::default().with_version(9);
         let container = docker.run(image);
+        let cache = Mutex::new(Cache::default());
         let pool = setup_postgres(&container).await;
-        let public_key_service = PublicKeyGrpc { db_pool: Arc::new(pool) };
+        let public_key_service = PublicKeyGrpc { cache: Arc::new(cache), db_pool: Arc::new(pool) };
         let request1 = PublicKeyRequest {
             public_key: Some(PublicKey {
+                key: Some(Key::Secp256k1(vec![1u8, 2u8, 3u8])),
+            }),
+            signing_public_key: Some(PublicKey {
                 key: Some(Key::Secp256k1(vec![1u8, 2u8, 3u8])),
             }),
             url: "http://test.com".to_owned(),
@@ -377,20 +421,29 @@ mod tests {
             public_key: Some(PublicKey {
                 key: Some(Key::Secp256k1(vec![1u8, 2u8, 3u8])),
             }),
+            signing_public_key: Some(PublicKey {
+                key: Some(Key::Secp256k1(vec![1u8, 2u8, 3u8])),
+            }),
             url: "http://test2.com".to_owned(),
             metadata: None,
         };
+        let response = public_key_service.add(Request::new(request1)).await;
 
-        let (uuid, url) = match public_key_service.add(Request::new(request1)).await {
+        let (uuid, url) = match response {
             Ok(result) => {
                 let result = result.into_inner();
                 assert!(!result.uuid.is_none());
                 (result.uuid, result.url)
             },
-            _ => unreachable!(),
+            _ => {
+                assert_eq!(format!("{:?}", response), "");
+                unreachable!();
+            },
         };
 
-        match public_key_service.add(Request::new(request2)).await {
+        let response = public_key_service.add(Request::new(request2)).await;
+
+        match response {
             Ok(result) => {
                 let result = result.into_inner();
                 assert!(!result.uuid.is_none());
@@ -398,7 +451,56 @@ mod tests {
                 assert_ne!(url, result.url);
                 assert_eq!("http://test2.com", result.url);
             }
-            _ => unreachable!(),
+            _ => assert_eq!(format!("{:?}", response), ""),
+        };
+    }
+
+    #[tokio::test]
+    async fn cannot_update_when_both_keys_do_not_match() {
+        let docker = clients::Cli::default();
+        let image = images::postgres::Postgres::default().with_version(9);
+        let container = docker.run(image);
+        let cache = Mutex::new(Cache::default());
+        let pool = setup_postgres(&container).await;
+        let public_key_service = PublicKeyGrpc { cache: Arc::new(cache), db_pool: Arc::new(pool) };
+        let request1 = PublicKeyRequest {
+            public_key: Some(PublicKey {
+                key: Some(Key::Secp256k1(vec![1u8, 2u8, 3u8])),
+            }),
+            signing_public_key: Some(PublicKey {
+                key: Some(Key::Secp256k1(vec![1u8, 2u8, 3u8])),
+            }),
+            url: "http://test.com".to_owned(),
+            metadata: None,
+        };
+        let request2 = PublicKeyRequest {
+            public_key: Some(PublicKey {
+                key: Some(Key::Secp256k1(vec![1u8, 2u8, 3u8, 4u8])),
+            }),
+            signing_public_key: Some(PublicKey {
+                key: Some(Key::Secp256k1(vec![1u8, 2u8, 3u8])),
+            }),
+            url: "http://test2.com".to_owned(),
+            metadata: None,
+        };
+        let response = public_key_service.add(Request::new(request1)).await;
+
+        match response {
+            Ok(result) => {
+                let result = result.into_inner();
+                assert!(!result.uuid.is_none());
+            },
+            _ => {
+                assert_eq!(format!("{:?}", response), "");
+                unreachable!();
+            },
+        };
+
+        let response = public_key_service.add(Request::new(request2)).await;
+
+        match &response {
+            Ok(_) => assert_eq!(format!("{:?}", &response), ""),
+            Err(e) => assert_eq!(e.message(), "SqlError(RowNotFound)"),
         };
     }
 
@@ -415,7 +517,7 @@ mod tests {
             public_key: Some(PublicKey {
                 key: Some(Key::Secp256k1(vec![1u8, 2u8, 3u8])),
             }),
-            p8e_public_key: Some(PublicKey {
+            signing_public_key: Some(PublicKey {
                 key: Some(Key::Secp256k1(vec![4u8, 5u8, 6u8])),
             }),
             url: "http://test.com".to_owned(),
@@ -428,7 +530,7 @@ mod tests {
                 let result = result.into_inner();
                 assert!(!result.uuid.is_none());
                 assert_eq!(result.public_key.unwrap().key.unwrap(), Key::Secp256k1(vec![1u8, 2u8, 3u8]));
-                assert_eq!(result.p8e_public_key.unwrap().key.unwrap(), Key::Secp256k1(vec![4u8, 5u8, 6u8]));
+                assert_eq!(result.signing_public_key.unwrap().key.unwrap(), Key::Secp256k1(vec![4u8, 5u8, 6u8]));
                 assert_eq!(result.url, String::from("http://test.com"));
                 assert!(result.metadata.is_none());
                 assert!(!result.created_at.is_none());
@@ -450,7 +552,7 @@ mod tests {
             public_key: Some(PublicKey {
                 key: Some(Key::Secp256k1(vec![1u8, 2u8, 3u8])),
             }),
-            p8e_public_key: Some(PublicKey {
+            signing_public_key: Some(PublicKey {
                 key: Some(Key::Secp256k1(vec![4u8, 5u8, 6u8])),
             }),
             url: String::default(),
@@ -482,7 +584,7 @@ mod tests {
             public_key: Some(PublicKey {
                 key: Some(Key::Secp256k1(vec![1u8, 2u8, 3u8])),
             }),
-            p8e_public_key: Some(PublicKey {
+            signing_public_key: Some(PublicKey {
                 key: Some(Key::Secp256k1(vec![4u8, 5u8, 6u8])),
             }),
             url: "http://test.com".to_owned(),
