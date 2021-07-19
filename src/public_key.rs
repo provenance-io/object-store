@@ -8,7 +8,7 @@ use chrono::prelude::*;
 use prost::Message;
 use std::{io::Error, io::ErrorKind, sync::{Arc, Mutex}, time::SystemTime};
 use sqlx::{postgres::PgPool, Row};
-use tonic::{Request, Response, Status};
+use tonic::{Request, Response};
 use url::Url;
 
 // TODO add models to domain and sql functions to datastore
@@ -39,13 +39,13 @@ impl PublicKeyGrpc {
         } else {
             BytesMut::default()
         };
-        // TODO change to upsert
         // TODO change to compile time validated
         let record = sqlx::query_as(
             r#"
-INSERT INTO public_key (uuid, public_key, public_key_type, p8e_public_key, p8e_public_key_type, url, metadata)
+INSERT INTO public_key (uuid, public_key, public_key_type, signing_public_key, signing_public_key_type, url, metadata)
 VALUES ($1, $2, $3::key_type, $4, $5::key_type, $6, $7)
-RETURNING uuid, public_key, public_key_type, p8e_public_key, p8e_public_key_type, url, metadata, created_at, updated_at
+ON CONFLICT (public_key) DO UPDATE set url = $6, metadata = $7
+RETURNING uuid, public_key, public_key_type, url, metadata, created_at, updated_at
             "#)
             .bind(uuid::Uuid::new_v4())
             .bind(match public_key.public_key.unwrap().key.unwrap() {
@@ -81,6 +81,7 @@ impl PublicKeyService for PublicKeyGrpc {
         } else {
             return Err(Error::new(ErrorKind::InvalidInput, "must specify public key").into());
         }
+<<<<<<< HEAD
 
         // validate p8e public_key
         if let Some(ref p8e_public_key) = request.p8e_public_key {
@@ -92,6 +93,8 @@ impl PublicKeyService for PublicKeyGrpc {
         }
 
         // validate url if it is not empty
+=======
+>>>>>>> fix/empty-public-keys
         if !request.url.is_empty() {
             Url::parse(&request.url)
                 .map_err(|err| Error::new(ErrorKind::InvalidInput, err))?;
@@ -220,6 +223,35 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn empty_url() {
+        let docker = clients::Cli::default();
+        let image = images::postgres::Postgres::default().with_version(9);
+        let container = docker.run(image);
+        let pool = setup_postgres(&container).await;
+        let public_key_service = PublicKeyGrpc { db_pool: Arc::new(pool) };
+        let request = PublicKeyRequest {
+            public_key: Some(PublicKey {
+                key: Some(Key::Secp256k1(vec![1u8, 2u8, 3u8])),
+            }),
+            url: String::default(),
+            metadata: None,
+        };
+
+        match public_key_service.add(Request::new(request)).await {
+            Ok(result) => {
+                let result = result.into_inner();
+                assert!(!result.uuid.is_none());
+                assert_eq!(result.public_key.unwrap().key.unwrap(), Key::Secp256k1(vec![1u8, 2u8, 3u8]));
+                assert!(result.url.is_empty());
+                assert!(result.metadata.is_none());
+                assert!(!result.created_at.is_none());
+                assert!(!result.updated_at.is_none());
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    #[tokio::test]
     async fn missing_public_key() {
         let docker = clients::Cli::default();
         let image = images::postgres::Postgres::default().with_version(9);
@@ -325,6 +357,49 @@ mod tests {
             },
             _ => assert_eq!(format!("{:?}", response), ""),
         }
+    }
+
+    #[tokio::test]
+    async fn duplicate_key() {
+        let docker = clients::Cli::default();
+        let image = images::postgres::Postgres::default().with_version(9);
+        let container = docker.run(image);
+        let pool = setup_postgres(&container).await;
+        let public_key_service = PublicKeyGrpc { db_pool: Arc::new(pool) };
+        let request1 = PublicKeyRequest {
+            public_key: Some(PublicKey {
+                key: Some(Key::Secp256k1(vec![1u8, 2u8, 3u8])),
+            }),
+            url: "http://test.com".to_owned(),
+            metadata: None,
+        };
+        let request2 = PublicKeyRequest {
+            public_key: Some(PublicKey {
+                key: Some(Key::Secp256k1(vec![1u8, 2u8, 3u8])),
+            }),
+            url: "http://test2.com".to_owned(),
+            metadata: None,
+        };
+
+        let (uuid, url) = match public_key_service.add(Request::new(request1)).await {
+            Ok(result) => {
+                let result = result.into_inner();
+                assert!(!result.uuid.is_none());
+                (result.uuid, result.url)
+            },
+            _ => unreachable!(),
+        };
+
+        match public_key_service.add(Request::new(request2)).await {
+            Ok(result) => {
+                let result = result.into_inner();
+                assert!(!result.uuid.is_none());
+                assert_eq!(uuid, result.uuid);
+                assert_ne!(url, result.url);
+                assert_eq!("http://test2.com", result.url);
+            }
+            _ => unreachable!(),
+        };
     }
 
     #[tokio::test]
