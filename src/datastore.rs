@@ -61,8 +61,12 @@ impl FromRow<'_, sqlx::postgres::PgRow> for Object {
             directory: row.try_get("directory")?,
             name: row.try_get("name")?,
             payload: row.try_get("payload")?,
-            properties: serde_json::from_str(&row.try_get::<String, _>("properties")?)
-                .map_err(|e| sqlx::Error::ColumnDecode { index: String::from("properties"), source: Box::new(e) })?,
+            properties: if let Some(properties) = &row.try_get::<Option<String>, _>("properties")? {
+                serde_json::from_str(properties)
+                    .map_err(|e| sqlx::Error::ColumnDecode { index: String::from("properties"), source: Box::new(e) })?
+            } else {
+                LinkedHashMap::default()
+            },
             created_at: row.try_get("created_at")?,
         };
 

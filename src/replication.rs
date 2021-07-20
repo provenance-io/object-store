@@ -92,10 +92,6 @@ async fn replicate_public_key(inner: &ReplicationState, public_key: &String, url
 
         packets.push(create_stream_end());
 
-        for packet in &packets {
-            println!("packet = {:?}", packet);
-        }
-
         let stream = stream::iter(packets);
 
         client.put(tonic::Request::new(stream)).await?;

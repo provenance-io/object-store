@@ -504,6 +504,18 @@ pub mod tests {
         result
     }
 
+    pub async fn delete_properties(db: &PgPool, object_uuid: &uuid::Uuid) -> u64 {
+        let query_str = "UPDATE object SET properties = null WHERE uuid = $1";
+        let rows_affected = sqlx::query(&query_str)
+            .bind(object_uuid)
+            .execute(db)
+            .await
+            .unwrap()
+            .rows_affected();
+
+        rows_affected
+    }
+
     pub async fn get_mailbox_keys_by_object(db: &PgPool, object_uuid: &uuid::Uuid) -> Vec<MailboxPublicKey> {
         let query_str = "SELECT * FROM mailbox_public_key WHERE object_uuid = $1";
         let mut result = Vec::new();
@@ -975,6 +987,87 @@ pub mod tests {
                 assert_eq!(replication_object_uuids(&db, base64::encode(audience1.public_key).as_str(), 50).await.unwrap().len(), 0);
                 assert_eq!(replication_object_uuids(&db, base64::encode(audience2.public_key).as_str(), 50).await.unwrap().len(), 0);
                 assert_eq!(replication_object_uuids(&db, base64::encode(audience3.public_key).as_str(), 50).await.unwrap().len(), 0);
+            },
+            _ => assert_eq!(format!("{:?}", response), ""),
+        }
+    }
+
+    #[tokio::test]
+    #[serial(grpc_server)]
+    async fn get_object_no_properties() {
+        let db = start_server().await;
+
+        let (audience, signature) = party_1();
+        let dime = generate_dime(vec![audience.clone()], vec![signature]);
+        let payload: bytes::Bytes = "testing small payload".as_bytes().into();
+        let chunk_size = 500; // full payload in one packet
+        let response = put_helper(dime, payload.clone(), chunk_size, HashMap::default()).await;
+
+        match response {
+            Ok(response) => {
+                let response = response.into_inner();
+                let uuid = response.uuid.unwrap().value;
+                let uuid = uuid::Uuid::from_str(uuid.as_str()).unwrap();
+
+                assert_eq!(response.name, NOT_STORAGE_BACKED);
+                assert_eq!(delete_properties(&db, &uuid).await, 1);
+            },
+            _ => assert_eq!(format!("{:?}", response), ""),
+        }
+
+        let mut client = pb::object_service_client::ObjectServiceClient::connect("tcp://0.0.0.0:6789").await.unwrap();
+        let public_key = base64::decode(audience.public_key).unwrap();
+        let request = HashRequest { hash: hash(payload), public_key };
+        let response = client.get(Request::new(request)).await;
+
+        match response {
+            Ok(response) => {
+                let mut response = response.into_inner();
+
+                // multi stream header
+                let msg = response.message().await.unwrap();
+                if let Some(msg) = msg {
+                    match msg.r#impl {
+                        Some(MultiStreamHeaderEnum(stream_header)) => {
+                            assert_eq!(stream_header.stream_count, 1);
+                        },
+                        _ => assert_eq!(format!("{:?}", msg), ""),
+                    }
+                } else {
+                    assert_eq!(format!("{:?}", msg), "");
+                }
+
+                // data chunk
+                let msg = response.message().await.unwrap();
+                if let Some(msg) = msg {
+                    match msg.clone().r#impl {
+                        Some(ChunkEnum(chunk)) => {
+                            match chunk.r#impl {
+                                Some(Data(_)) => (),
+                                _ => assert_eq!(format!("{:?}", msg), ""),
+                            }
+                        },
+                        _ => assert_eq!(format!("{:?}", msg), ""),
+                    }
+                } else {
+                    assert_eq!(format!("{:?}", msg), "");
+                }
+
+                // end chunk
+                let msg = response.message().await.unwrap();
+                if let Some(msg) = msg {
+                    match msg.clone().r#impl {
+                        Some(ChunkEnum(chunk)) => {
+                            match chunk.r#impl {
+                                Some(End(_)) => (),
+                                _ => assert_eq!(format!("{:?}", msg), ""),
+                            }
+                        },
+                        _ => assert_eq!(format!("{:?}", msg), ""),
+                    }
+                } else {
+                    assert_eq!(format!("{:?}", msg), "");
+                }
             },
             _ => assert_eq!(format!("{:?}", response), ""),
         }
