@@ -1,18 +1,14 @@
 use crate::cache::Cache;
-use crate::types::{GrpcResult, OsError, Result};
-use crate::pb::{public_key::Key, PublicKey, PublicKeyRequest, PublicKeyResponse, Uuid};
+use crate::datastore;
+use crate::types::{GrpcResult, OsError};
+use crate::pb::{public_key::Key, PublicKeyRequest, PublicKeyResponse};
 use crate::pb::public_key_service_server::PublicKeyService;
 
-use bytes::BytesMut;
-use chrono::prelude::*;
-use prost::Message;
-use std::{io::Error, io::ErrorKind, sync::{Arc, Mutex}, time::SystemTime};
-use sqlx::{postgres::PgPool, Row};
+use std::sync::{Arc, Mutex};
+use sqlx::{postgres::PgPool};
 use tonic::{Request, Response, Status};
 use url::Url;
 
-// TODO add models to domain and sql functions to datastore
-// TODO convert ErrorKind into local errors
 // TODO background process that updates cache on occasion
 
 #[derive(Debug)]
@@ -28,78 +24,6 @@ impl PublicKeyGrpc {
     pub fn new(cache: Arc<Mutex<Cache>>, db_pool: Arc<PgPool>) -> Self {
         Self { cache, db_pool }
     }
-
-    async fn update_public_key(&self, public_key: PublicKeyRequest) -> Result<PublicKeyResponse> {
-        let metadata = if let Some(metadata) = public_key.metadata {
-            let mut buffer = BytesMut::with_capacity(metadata.encoded_len());
-            metadata.encode(&mut buffer)?;
-            buffer
-        } else {
-            BytesMut::default()
-        };
-        // TODO change to compile time validated
-        let record = sqlx::query_as(
-            r#"
-UPDATE public_key SET url = $3, metadata = $4
-WHERE public_key = $1 AND signing_public_key = $2
-RETURNING uuid, public_key, public_key_type, signing_public_key, signing_public_key_type, url, metadata, created_at, updated_at
-            "#)
-            .bind(match public_key.public_key.unwrap().key.unwrap() {
-                Key::Secp256k1(data) => base64::encode(data),
-            })
-            .bind(match public_key.signing_public_key.unwrap().key.unwrap() {
-                Key::Secp256k1(data) => base64::encode(data),
-            })
-            .bind(public_key.url)
-            .bind(metadata.as_ref())
-            .fetch_one(self.db_pool.as_ref())
-            .await?;
-
-        Ok(record)
-    }
-
-    async fn add_public_key(&self, public_key: PublicKeyRequest) -> Result<PublicKeyResponse> {
-        let public_key_clone = public_key.clone();
-        let metadata = if let Some(metadata) = public_key.metadata {
-            let mut buffer = BytesMut::with_capacity(metadata.encoded_len());
-            metadata.encode(&mut buffer)?;
-            buffer
-        } else {
-            BytesMut::default()
-        };
-        // TODO change to compile time validated
-        let record = sqlx::query_as(
-            r#"
-INSERT INTO public_key (uuid, public_key, public_key_type, signing_public_key, signing_public_key_type, url, metadata)
-VALUES ($1, $2, $3::key_type, $4, $5::key_type, $6, $7)
-RETURNING uuid, public_key, public_key_type, signing_public_key, signing_public_key_type, url, metadata, created_at, updated_at
-            "#)
-            .bind(uuid::Uuid::new_v4())
-            .bind(match public_key.public_key.unwrap().key.unwrap() {
-                Key::Secp256k1(data) => base64::encode(data),
-            })
-            .bind("secp256k1")
-            .bind(match public_key.signing_public_key.unwrap().key.unwrap() {
-                Key::Secp256k1(data) => base64::encode(data),
-            })
-            .bind("secp256k1")
-            .bind(&public_key.url)
-            .bind(metadata.as_ref())
-            .fetch_one(self.db_pool.as_ref())
-            .await;
-
-        match record {
-            Ok(record) => Ok(record),
-            Err(sqlx::Error::Database(e)) => {
-                if e.code() == Some(std::borrow::Cow::Borrowed("23505")) {
-                    self.update_public_key(public_key_clone).await
-                } else {
-                    Err(sqlx::Error::Database(e)).map_err(Into::<OsError>::into)
-                }
-            },
-            Err(e) => Err(e).map_err(Into::<OsError>::into),
-        }
-    }
 }
 
 #[tonic::async_trait]
@@ -113,28 +37,28 @@ impl PublicKeyService for PublicKeyGrpc {
         // validate public_key
         if let Some(ref public_key) = request.public_key {
             if public_key.key.is_none() {
-                return Err(Error::new(ErrorKind::InvalidInput, "must specify key type").into());
+                return Err(Status::invalid_argument("must specify key type"))
             }
         } else {
-            return Err(Error::new(ErrorKind::InvalidInput, "must specify public key").into());
+            return Err(Status::invalid_argument("must specify public key"))
         }
 
         // validate signing public_key
         if let Some(ref signing_public_key) = request.signing_public_key {
             if signing_public_key.key.is_none() {
-                return Err(Error::new(ErrorKind::InvalidInput, "must specify p8e key type").into());
+                return Err(Status::invalid_argument("must specify signing key type"))
             }
         } else {
-            return Err(Error::new(ErrorKind::InvalidInput, "must specify p8e public key").into());
+            return Err(Status::invalid_argument("must specify signing public key"))
         }
 
         // validate url if it is not empty
         if !request.url.is_empty() {
             Url::parse(&request.url)
-                .map_err(|err| Error::new(ErrorKind::InvalidInput, err))?;
+                .map_err(|e| Status::invalid_argument(format!("Unable to parse url {} - {:?}", &request.url, e)))?;
         }
 
-        let response = self.add_public_key(request).await?;
+        let response = datastore::add_public_key(&self.db_pool, request).await?;
         let key_bytes = match response.public_key.clone().unwrap().key.unwrap() {
             Key::Secp256k1(data) => data,
         };
@@ -158,52 +82,12 @@ impl PublicKeyService for PublicKeyGrpc {
     }
 }
 
-#[derive(sqlx::Type)]
-#[sqlx(type_name = "key_type", rename_all = "lowercase")]
-enum KeyType { Secp256k1 }
-
-impl sqlx::FromRow<'_, sqlx::postgres::PgRow> for PublicKeyResponse {
-    fn from_row(row: &sqlx::postgres::PgRow) -> std::result::Result<Self, sqlx::Error> {
-        let key_bytes: Vec<u8> = base64::decode(row.try_get::<&str, _>("public_key")?)
-            .map_err(|err| sqlx::Error::Decode(Box::new(err)))?;
-        let public_key = match row.try_get::<KeyType, _>("public_key_type")? {
-            KeyType::Secp256k1 => Key::Secp256k1(key_bytes),
-        };
-        let p8e_key_bytes: Vec<u8> = base64::decode(row.try_get::<&str, _>("signing_public_key")?)
-            .map_err(|err| sqlx::Error::Decode(Box::new(err)))?;
-        let signing_public_key = match row.try_get::<KeyType, _>("signing_public_key_type")? {
-            KeyType::Secp256k1 => Key::Secp256k1(p8e_key_bytes),
-        };
-        let created_at: SystemTime = row.try_get::<DateTime<Utc>, _>("created_at")?.into();
-        let updated_at: SystemTime = row.try_get::<DateTime<Utc>, _>("updated_at")?.into();
-        let metadata: Vec<u8> = row.try_get("metadata")?;
-        let metadata = if !metadata.is_empty() {
-            let message = prost_types::Any::decode(metadata.as_slice())
-                .map_err(|err| sqlx::Error::Decode(Box::new(err)))?;
-            Some(message)
-        } else {
-            None
-        };
-        let response = PublicKeyResponse {
-            uuid: Some(Uuid {
-                value: row.try_get::<uuid::Uuid, _>("uuid")?.to_hyphenated().to_string()
-            }),
-            public_key: Some(PublicKey { key: Some(public_key) }),
-            signing_public_key: Some(PublicKey { key: Some(signing_public_key) }),
-            url: row.try_get("url")?,
-            metadata,
-            created_at: Some(created_at.into()),
-            updated_at: Some(updated_at.into()),
-        };
-
-        Ok(response)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use crate::*;
     use crate::public_key::*;
+
+    use crate::pb::PublicKey;
 
     use testcontainers::*;
     use testcontainers::images::postgres::Postgres;
@@ -249,7 +133,7 @@ mod tests {
         match response {
             Err(err) => {
                 assert_eq!(err.code(), tonic::Code::InvalidArgument);
-                assert_eq!(err.message(), "relative URL without a base".to_owned());
+                assert_eq!(err.message(), "Unable to parse url invalidurl.com - RelativeUrlWithoutBase".to_owned());
             },
             _ => assert_eq!(format!("{:?}", response), ""),
         }
@@ -339,7 +223,7 @@ mod tests {
         match response {
             Err(err) => {
                 assert_eq!(err.code(), tonic::Code::InvalidArgument);
-                assert_eq!(err.message(), "must specify p8e public key".to_owned());
+                assert_eq!(err.message(), "must specify signing public key".to_owned());
             },
             _ => assert_eq!(format!("{:?}", response), ""),
         }
@@ -393,7 +277,7 @@ mod tests {
         match response {
             Err(err) => {
                 assert_eq!(err.code(), tonic::Code::InvalidArgument);
-                assert_eq!(err.message(), "must specify p8e key type".to_owned());
+                assert_eq!(err.message(), "must specify signing key type".to_owned());
             },
             _ => assert_eq!(format!("{:?}", response), ""),
         }

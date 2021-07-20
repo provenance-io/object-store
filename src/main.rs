@@ -63,7 +63,7 @@ async fn health_status(mut reporter: tonic_health::server::HealthReporter, db: A
 async fn main() -> Result<()> {
     env_logger::init();
 
-    let cache = Cache::default();
+    let mut cache = Cache::default();
     let config = Config::new();
     let storage = match config.storage_type.as_str() {
         "file_system" => Ok(FileSystem::new(config.storage_base_path.as_str())),
@@ -82,14 +82,22 @@ async fn main() -> Result<()> {
         .max_connections(config.db_connection_pool_size.into())
         .connect(config.db_connection_string().as_ref())
         .await?;
+
+    // populate initial cache
+    for (public_key, url) in datastore::get_all_public_keys(&pool).await? {
+        if let Some(url) = url {
+            cache.add_remote_public_key(public_key, url);
+        } else {
+            cache.add_local_public_key(public_key);
+        }
+    }
+
     let pool = Arc::new(pool);
     let cache = Arc::new(Mutex::new(cache));
     let config = Arc::new(config);
     let storage = Arc::new(storage);
 
     MIGRATOR.run(&*pool).await?;
-
-    // TODO initial cache populate
 
     let (mut health_reporter, health_service) = tonic_health::server::health_reporter();
     let public_key_service = PublicKeyGrpc::new(Arc::clone(&cache), Arc::clone(&pool));

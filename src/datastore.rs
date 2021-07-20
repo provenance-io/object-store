@@ -2,15 +2,20 @@ use crate::cache::PublicKeyState;
 use crate::consts::*;
 use crate::dime::Dime;
 use crate::domain::DimeProperties;
+use crate::pb::{public_key::Key, PublicKey, PublicKeyRequest, PublicKeyResponse, Uuid};
 use crate::types::{Result, OsError};
 
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use chrono::prelude::*;
 use futures_util::TryStreamExt;
 use linked_hash_map::LinkedHashMap;
+use prost::Message;
+use std::time::SystemTime;
 use sqlx::Acquire;
 use sqlx::postgres::{PgConnection, PgPool, PgQueryResult};
 use sqlx::{FromRow, Row};
+
+// TODO model public keys like the other objects and don't use grpc types directly
 
 #[derive(Debug)]
 enum UpsertOutcome {
@@ -81,6 +86,62 @@ pub struct MailboxPublicKey {
     pub message_type: String,
     pub created_at: DateTime<Utc>,
     pub acked_at: Option<DateTime<Utc>>,
+}
+
+// #[derive(Debug)]
+// pub struct PublicKey {
+//     pub uuid: uuid::Uuid,
+//     pub dime_uuid: uuid::Uuid,
+//     pub public_key: String,
+//     pub public_key_type: String,
+//     pub signing_public_key: String,
+//     pub signing_public_key_type: String,
+//     pub url: String,
+//     pub metadata: Vec<u8>,
+//     pub created_at: DateTime<Utc>,
+//     pub updated_at: DateTime<Utc>,
+// }
+
+#[derive(sqlx::Type)]
+#[sqlx(type_name = "key_type", rename_all = "lowercase")]
+enum KeyType { Secp256k1 }
+
+impl sqlx::FromRow<'_, sqlx::postgres::PgRow> for PublicKeyResponse {
+    fn from_row(row: &sqlx::postgres::PgRow) -> std::result::Result<Self, sqlx::Error> {
+        let key_bytes: Vec<u8> = base64::decode(row.try_get::<&str, _>("public_key")?)
+            .map_err(|err| sqlx::Error::Decode(Box::new(err)))?;
+        let public_key = match row.try_get::<KeyType, _>("public_key_type")? {
+            KeyType::Secp256k1 => Key::Secp256k1(key_bytes),
+        };
+        let p8e_key_bytes: Vec<u8> = base64::decode(row.try_get::<&str, _>("signing_public_key")?)
+            .map_err(|err| sqlx::Error::Decode(Box::new(err)))?;
+        let signing_public_key = match row.try_get::<KeyType, _>("signing_public_key_type")? {
+            KeyType::Secp256k1 => Key::Secp256k1(p8e_key_bytes),
+        };
+        let created_at: SystemTime = row.try_get::<DateTime<Utc>, _>("created_at")?.into();
+        let updated_at: SystemTime = row.try_get::<DateTime<Utc>, _>("updated_at")?.into();
+        let metadata: Vec<u8> = row.try_get("metadata")?;
+        let metadata = if !metadata.is_empty() {
+            let message = prost_types::Any::decode(metadata.as_slice())
+                .map_err(|err| sqlx::Error::Decode(Box::new(err)))?;
+            Some(message)
+        } else {
+            None
+        };
+        let response = PublicKeyResponse {
+            uuid: Some(Uuid {
+                value: row.try_get::<uuid::Uuid, _>("uuid")?.to_hyphenated().to_string()
+            }),
+            public_key: Some(PublicKey { key: Some(public_key) }),
+            signing_public_key: Some(PublicKey { key: Some(signing_public_key) }),
+            url: row.try_get("url")?,
+            metadata,
+            created_at: Some(created_at.into()),
+            updated_at: Some(updated_at.into()),
+        };
+
+        Ok(response)
+    }
 }
 
 pub async fn get_public_key_object_uuid(db: &PgPool, hash: &str, public_key: &str) -> Result<uuid::Uuid> {
@@ -400,6 +461,94 @@ ON CONFLICT DO NOTHING
     let object = get_object_by_unique_hash(db, unique_hash.as_str()).await?;
 
     Ok(object)
+}
+
+// TODO refactor
+pub async fn update_public_key(db: &PgPool, public_key: PublicKeyRequest) -> Result<PublicKeyResponse> {
+    let metadata = if let Some(metadata) = public_key.metadata {
+        let mut buffer = BytesMut::with_capacity(metadata.encoded_len());
+        metadata.encode(&mut buffer)?;
+        buffer
+    } else {
+        BytesMut::default()
+    };
+    // TODO change to compile time validated
+    let record = sqlx::query_as(
+        r#"
+UPDATE public_key SET url = $3, metadata = $4
+WHERE public_key = $1 AND signing_public_key = $2
+RETURNING uuid, public_key, public_key_type, signing_public_key, signing_public_key_type, url, metadata, created_at, updated_at
+        "#)
+        .bind(match public_key.public_key.unwrap().key.unwrap() {
+            Key::Secp256k1(data) => base64::encode(data),
+        })
+        .bind(match public_key.signing_public_key.unwrap().key.unwrap() {
+            Key::Secp256k1(data) => base64::encode(data),
+        })
+        .bind(public_key.url)
+        .bind(metadata.as_ref())
+        .fetch_one(db)
+        .await?;
+
+    Ok(record)
+}
+
+// TODO refactor
+pub async fn add_public_key(db: &PgPool, public_key: PublicKeyRequest) -> Result<PublicKeyResponse> {
+    let public_key_clone = public_key.clone();
+    let metadata = if let Some(metadata) = public_key.metadata {
+        let mut buffer = BytesMut::with_capacity(metadata.encoded_len());
+        metadata.encode(&mut buffer)?;
+        buffer
+    } else {
+        BytesMut::default()
+    };
+    // TODO change to compile time validated
+    let record = sqlx::query_as(
+        r#"
+INSERT INTO public_key (uuid, public_key, public_key_type, signing_public_key, signing_public_key_type, url, metadata)
+VALUES ($1, $2, $3::key_type, $4, $5::key_type, $6, $7)
+RETURNING uuid, public_key, public_key_type, signing_public_key, signing_public_key_type, url, metadata, created_at, updated_at
+        "#)
+        .bind(uuid::Uuid::new_v4())
+        .bind(match public_key.public_key.unwrap().key.unwrap() {
+            Key::Secp256k1(data) => base64::encode(data),
+        })
+        .bind("secp256k1")
+        .bind(match public_key.signing_public_key.unwrap().key.unwrap() {
+            Key::Secp256k1(data) => base64::encode(data),
+        })
+        .bind("secp256k1")
+        .bind(&public_key.url)
+        .bind(metadata.as_ref())
+        .fetch_one(db)
+        .await;
+
+    match record {
+        Ok(record) => Ok(record),
+        Err(sqlx::Error::Database(e)) => {
+            if e.code() == Some(std::borrow::Cow::Borrowed("23505")) {
+                update_public_key(&db, public_key_clone).await
+            } else {
+                Err(sqlx::Error::Database(e)).map_err(Into::<OsError>::into)
+            }
+        },
+        Err(e) => Err(e).map_err(Into::<OsError>::into),
+    }
+}
+
+pub async fn get_all_public_keys(db: &PgPool) -> Result<Vec<(String, Option<String>)>> {
+    let mut result = Vec::new();
+    let mut query_result = sqlx::query("SELECT public_key, url FROM public_key")
+        .fetch(db);
+
+    while let Some(row) = query_result.try_next().await? {
+        let public_key = row.try_get("public_key")?;
+        let url = row.try_get("url")?;
+        result.push((public_key, url));
+    }
+
+    Ok(result)
 }
 
 pub async fn health_check(db: &PgPool) -> Result<()> {
