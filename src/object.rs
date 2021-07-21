@@ -1,4 +1,4 @@
-use crate::{config::Config, dime::{Dime, Signature, format_dime_bytes}, storage::{Storage, StoragePath}};
+use crate::{cache::Cache, config::Config, dime::{Dime, Signature, format_dime_bytes}, storage::{FileSystem, StoragePath}};
 use crate::consts;
 use crate::datastore;
 use crate::domain::{DimeProperties, ObjectApiResponse};
@@ -11,34 +11,32 @@ use crate::pb::object_service_server::ObjectService;
 
 use bytes::{BufMut, Bytes, BytesMut};
 use futures_util::StreamExt;
+use linked_hash_map::LinkedHashMap;
 use prost::Message;
 use tokio::sync::mpsc;
-use std::{collections::HashMap, convert::TryInto, sync::Arc};
+use std::{collections::HashMap, convert::TryInto, sync::{Arc, Mutex}};
 use sqlx::postgres::PgPool;
 use tonic::{Request, Response, Status, Streaming};
 
-pub struct ObjectGrpc<S>
-    where S: Storage,
-{
-    pub db_pool: Arc<PgPool>,
+// TODO add flag for whether object-replication can be ignored for a PUT
+// TODO move test packet generation to helper functions
+
+pub struct ObjectGrpc {
+    pub cache: Arc<Mutex<Cache>>,
     pub config: Arc<Config>,
-    pub storage: S,
+    pub db_pool: Arc<PgPool>,
+    pub storage: Arc<FileSystem>,
 }
 
-impl<S> ObjectGrpc<S>
-    where S: Storage,
-{
-    pub fn new(db_pool: Arc<PgPool>, config: Arc<Config>, storage: S) -> Self
+impl ObjectGrpc {
+    pub fn new(cache: Arc<Mutex<Cache>>, config: Arc<Config>, db_pool: Arc<PgPool>, storage: Arc<FileSystem>) -> Self
     {
-        Self { db_pool, config, storage }
+        Self { cache, config, db_pool, storage }
     }
 }
 
 #[tonic::async_trait]
-impl<S> ObjectService for ObjectGrpc<S>
-    where S: Storage + Send + Sync + 'static,
-{
-
+impl ObjectService for ObjectGrpc {
     async fn put(
         &self,
         request: Request<Streaming<ChunkBidi>>,
@@ -47,12 +45,21 @@ impl<S> ObjectService for ObjectGrpc<S>
         let mut chunk_buffer = Vec::new();
         let mut byte_buffer = BytesMut::new();
         let mut end = false;
-        let mut properties: HashMap<String, Vec<u8>> = HashMap::new();
+        let mut properties: LinkedHashMap<String, Vec<u8>> = LinkedHashMap::new();
 
         while let Some(chunk) = stream.next().await {
-            let mut buffer = BytesMut::with_capacity(chunk.clone()?.encoded_len());
-            chunk.clone()?.encode(&mut buffer).unwrap();
-            chunk_buffer.push(chunk?);
+            match chunk {
+                Ok(chunk) => {
+                    let mut buffer = BytesMut::with_capacity(chunk.encoded_len());
+                    chunk.clone().encode(&mut buffer).unwrap();
+                    chunk_buffer.push(chunk);
+                },
+                Err(e) => {
+                    let message = format!("Error received instead of ChunkBidi - {:?}", e);
+
+                    return Err(Status::invalid_argument(message))
+                },
+            }
         }
 
         // check validity of stream header
@@ -143,13 +150,24 @@ impl<S> ObjectService for ObjectGrpc<S>
             content_length: header_chunk_header.content_length,
             dime_length: raw_dime.len() as i64,
         };
+        let mut replication_key_states = Vec::new();
+
+        {
+            let audience = dime.unique_audience_without_owner_base64()
+                .map_err(|_| Status::invalid_argument("Invalid Dime proto - audience list"))?;
+            let cache = self.cache.lock().unwrap();
+
+            for ref party in audience {
+                replication_key_states.push((party.clone(), cache.get_public_key_state(party)));
+            }
+        }
 
         // mail items should be under any reasonable threshold set, but explicitly check for
         // mail and always used database storage
         let response = if !dime.metadata.contains_key(consts::MAILBOX_KEY) &&
             dime_properties.dime_length > self.config.storage_threshold.into()
         {
-            let response = datastore::put_object(&self.db_pool, &dime, &dime_properties, None)
+            let response = datastore::put_object(&self.db_pool, &dime, &dime_properties, &properties, replication_key_states, None)
                 .await?;
             let storage_path = StoragePath {
                 dir: response.directory.clone(),
@@ -160,7 +178,7 @@ impl<S> ObjectService for ObjectGrpc<S>
                 .map_err(Into::<OsError>::into)?;
             response.to_response(&self.config)?
         } else {
-            datastore::put_object(&self.db_pool, &dime, &dime_properties, Some(&raw_dime))
+            datastore::put_object(&self.db_pool, &dime, &dime_properties, &properties, replication_key_states, Some(&raw_dime))
                 .await?
                 .to_response(&self.config)?
         };
@@ -242,11 +260,10 @@ pub mod tests {
 
     use crate::MIGRATOR;
     use crate::consts::*;
-    use crate::datastore::{MailboxPublicKey, ObjectPublicKey};
+    use crate::datastore::{replication_object_uuids, MailboxPublicKey, ObjectPublicKey};
     use crate::dime::Signature;
     use crate::pb::{self, Audience, Dime as DimeProto, ObjectResponse};
     use crate::object::*;
-    use crate::storage::FileSystem;
 
     use futures::stream;
     use futures_util::TryStreamExt;
@@ -272,6 +289,7 @@ pub mod tests {
             storage_type: "file_system".to_owned(),
             storage_base_path: "/tmp".to_owned(),
             storage_threshold: 5000,
+            replication_batch_size: 2,
         }
     }
 
@@ -296,6 +314,10 @@ pub mod tests {
         let (tx, mut rx) = tokio::sync::mpsc::channel(1);
 
         tokio::spawn(async move {
+            let mut cache = Cache::default();
+            cache.add_local_public_key(std::str::from_utf8(&party_1().0.public_key).unwrap().to_owned());
+            cache.add_remote_public_key(std::str::from_utf8(&party_2().0.public_key).unwrap().to_owned(), String::from("tcp://party2:8080"));
+            let cache = Mutex::new(cache);
             let config = test_config();
             let url = config.url.clone();
             let docker = clients::Cli::default();
@@ -304,9 +326,10 @@ pub mod tests {
             let pool = setup_postgres(&container).await;
             let storage = FileSystem::new(config.storage_base_path.as_str());
             let object_service = ObjectGrpc {
-                db_pool: Arc::new(pool),
+                cache: Arc::new(cache),
                 config: Arc::new(config),
-                storage,
+                db_pool: Arc::new(pool),
+                storage: Arc::new(storage),
             };
 
             tx.send(object_service.db_pool.clone()).await.unwrap();
@@ -390,7 +413,7 @@ pub mod tests {
         hash.to_be_bytes().to_vec()
     }
 
-    pub async fn put_helper(dime: Dime, payload: bytes::Bytes, chunk_size: usize) -> GrpcResult<Response<ObjectResponse>> {
+    pub async fn put_helper(dime: Dime, payload: bytes::Bytes, chunk_size: usize, extra_properties: HashMap<String, String>) -> GrpcResult<Response<ObjectResponse>> {
         let mut packets = Vec::new();
 
         let mut metadata = HashMap::new();
@@ -447,6 +470,13 @@ pub mod tests {
         let msg = ChunkBidi { r#impl: Some(ChunkEnum(value_chunk)) };
         packets.push(msg);
 
+        for (key, value) in extra_properties {
+            let header = StreamHeader { name: key, content_length: 0 };
+            let value_chunk = Chunk { header: Some(header), r#impl: Some(Value(value.as_bytes().to_owned())) };
+            let msg = ChunkBidi { r#impl: Some(ChunkEnum(value_chunk)) };
+            packets.push(msg);
+        }
+
         let end = Chunk { header: None, r#impl: Some(End(ChunkEnd::default())) };
         let msg = ChunkBidi { r#impl: Some(ChunkEnum(end)) };
         packets.push(msg);
@@ -474,6 +504,18 @@ pub mod tests {
         result
     }
 
+    pub async fn delete_properties(db: &PgPool, object_uuid: &uuid::Uuid) -> u64 {
+        let query_str = "UPDATE object SET properties = null WHERE uuid = $1";
+        let rows_affected = sqlx::query(&query_str)
+            .bind(object_uuid)
+            .execute(db)
+            .await
+            .unwrap()
+            .rows_affected();
+
+        rows_affected
+    }
+
     pub async fn get_mailbox_keys_by_object(db: &PgPool, object_uuid: &uuid::Uuid) -> Vec<MailboxPublicKey> {
         let query_str = "SELECT * FROM mailbox_public_key WHERE object_uuid = $1";
         let mut result = Vec::new();
@@ -493,7 +535,7 @@ pub mod tests {
     #[tokio::test]
     #[serial(grpc_server)]
     async fn simple_put() {
-        start_server().await;
+        let db = start_server().await;
 
         let (audience, signature) = party_1();
         let dime = generate_dime(vec![audience], vec![signature]);
@@ -501,15 +543,23 @@ pub mod tests {
         let payload: bytes::Bytes = "testing small payload".as_bytes().into();
         let payload_len = payload.len() as i64;
         let chunk_size = 500; // full payload in one packet
-        let response = put_helper(dime, payload, chunk_size).await;
+        let response = put_helper(dime, payload, chunk_size, HashMap::default()).await;
 
         match response {
             Ok(response) => {
                 let response = response.into_inner();
+                let uuid = response.uuid.unwrap().value;
+                let uuid_typed = uuid::Uuid::from_str(uuid.as_str()).unwrap();
+                let object = datastore::get_object_by_uuid(&db, &uuid_typed).await.unwrap();
+                let mut properties = LinkedHashMap::new();
+                properties.insert(HASH_FIELD_NAME.to_owned(), base64::decode(object.hash).unwrap());
+                properties.insert(SIGNATURE_FIELD_NAME.to_owned(), "signature".as_bytes().to_owned());
+                properties.insert(SIGNATURE_PUBLIC_KEY_FIELD_NAME.to_owned(), "signature public key".as_bytes().to_owned());
 
-                assert_ne!(response.uuid.unwrap().value, dime_uuid);
+                assert_ne!(uuid, dime_uuid);
                 assert_eq!(response.name, NOT_STORAGE_BACKED);
                 assert_eq!(response.metadata.unwrap().content_length, payload_len);
+                assert_eq!(object.properties, properties)
             },
             _ => assert_eq!(format!("{:?}", response), ""),
         }
@@ -526,7 +576,7 @@ pub mod tests {
         let payload: bytes::Bytes = "testing larger payload ".repeat(250).into_bytes().into();
         let payload_len = payload.len() as i64;
         let chunk_size = 100; // split payload into packets
-        let response = put_helper(dime, payload, chunk_size).await;
+        let response = put_helper(dime, payload, chunk_size, HashMap::default()).await;
 
         match response {
             Ok(response) => {
@@ -551,7 +601,7 @@ pub mod tests {
         let dime = generate_dime(vec![audience1, audience2, audience3], vec![signature1, signature2, signature3]);
         let payload: bytes::Bytes = "testing small payload".as_bytes().into();
         let chunk_size = 500; // full payload in one packet
-        let response = put_helper(dime, payload, chunk_size).await;
+        let response = put_helper(dime, payload, chunk_size, HashMap::default()).await;
 
         match response {
             Ok(response) => {
@@ -578,7 +628,7 @@ pub mod tests {
         dime.metadata.insert(MAILBOX_KEY.to_owned(), MAILBOX_FRAGMENT_REQUEST.to_owned());
         let payload: bytes::Bytes = "testing small payload".as_bytes().into();
         let chunk_size = 500; // full payload in one packet
-        let response = put_helper(dime, payload, chunk_size).await;
+        let response = put_helper(dime, payload, chunk_size, HashMap::default()).await;
 
         match response {
             Ok(response) => {
@@ -606,7 +656,7 @@ pub mod tests {
         dime.metadata.insert(MAILBOX_KEY.to_owned(), MAILBOX_FRAGMENT_REQUEST.to_owned());
         let payload: bytes::Bytes = "testing larger payload ".repeat(250).into_bytes().into();
         let chunk_size = 100; // split payload into packets
-        let response = put_helper(dime, payload, chunk_size).await;
+        let response = put_helper(dime, payload, chunk_size, HashMap::default()).await;
 
         match response {
             Ok(response) => {
@@ -631,7 +681,7 @@ pub mod tests {
         let dime = generate_dime(vec![audience.clone()], vec![signature]);
         let payload: bytes::Bytes = "testing small payload".as_bytes().into();
         let chunk_size = 500; // full payload in one packet
-        let response = put_helper(dime, payload.clone(), chunk_size).await;
+        let response = put_helper(dime, payload.clone(), chunk_size, HashMap::default()).await;
 
         match response {
             Ok(response) => {
@@ -709,7 +759,7 @@ pub mod tests {
         let dime = generate_dime(vec![audience.clone()], vec![signature]);
         let payload: bytes::Bytes = "testing larger payload ".repeat(250).into_bytes().into();
         let chunk_size = 100; // split payload into packets
-        let response = put_helper(dime, payload.clone(), chunk_size).await;
+        let response = put_helper(dime, payload.clone(), chunk_size, HashMap::default()).await;
 
         match response {
             Ok(response) => {
@@ -742,7 +792,7 @@ pub mod tests {
         let dime = generate_dime(vec![audience1, audience2, audience3.clone()], vec![signature1, signature2, signature3]);
         let payload: bytes::Bytes = "testing small payload".as_bytes().into();
         let chunk_size = 500; // full payload in one packet
-        let response = put_helper(dime, payload.clone(), chunk_size).await;
+        let response = put_helper(dime, payload.clone(), chunk_size, HashMap::default()).await;
 
         match response {
             Ok(_) => (),
@@ -768,8 +818,8 @@ pub mod tests {
         let dime = generate_dime(vec![audience], vec![signature]);
         let payload: bytes::Bytes = "testing small payload".as_bytes().into();
         let chunk_size = 500; // full payload in one packet
-        let response = put_helper(dime.clone(), payload.clone(), chunk_size).await;
-        let response_dupe = put_helper(dime, payload, chunk_size).await;
+        let response = put_helper(dime.clone(), payload.clone(), chunk_size, HashMap::default()).await;
+        let response_dupe = put_helper(dime, payload, chunk_size, HashMap::default()).await;
 
         assert!(response.is_ok() && response_dupe.is_ok());
 
@@ -790,8 +840,8 @@ pub mod tests {
         let dime2 = generate_dime(vec![audience, audience2], vec![signature, signature2]);
         let payload: bytes::Bytes = "testing small payload".as_bytes().into();
         let chunk_size = 500; // full payload in one packet
-        let response = put_helper(dime.clone(), payload.clone(), chunk_size).await;
-        let response_dupe = put_helper(dime2, payload, chunk_size).await;
+        let response = put_helper(dime.clone(), payload.clone(), chunk_size, HashMap::default()).await;
+        let response_dupe = put_helper(dime2, payload, chunk_size, HashMap::default()).await;
 
         assert!(response.is_ok() && response_dupe.is_ok());
 
@@ -812,7 +862,7 @@ pub mod tests {
         let dime = generate_dime(vec![audience1, audience2], vec![signature1, signature2]);
         let payload: bytes::Bytes = "testing small payload".as_bytes().into();
         let chunk_size = 500; // full payload in one packet
-        let response = put_helper(dime, payload.clone(), chunk_size).await;
+        let response = put_helper(dime, payload.clone(), chunk_size, HashMap::default()).await;
 
         match response {
             Ok(_) => (),
@@ -843,6 +893,182 @@ pub mod tests {
 
         match response {
             Err(err) => assert_eq!(err.code(), tonic::Code::NotFound),
+            _ => assert_eq!(format!("{:?}", response), ""),
+        }
+    }
+
+    // TODO add test for local cache with non owner - make owner the unknown one
+
+    #[tokio::test]
+    #[serial(grpc_server)]
+    async fn put_with_replication() {
+        let db = start_server().await;
+
+        let (audience1, signature1) = party_1();
+        let (audience2, signature2) = party_2();
+        let (audience3, signature3) = party_3();
+        let dime = generate_dime(vec![audience1.clone(), audience2.clone(), audience3.clone()], vec![signature1, signature2, signature3]);
+        let mut extra_properties = HashMap::new();
+        extra_properties.insert(SOURCE_KEY.to_owned(), String::from("standard key"));
+        let payload: bytes::Bytes = "testing small payload".as_bytes().into();
+        let chunk_size = 500; // full payload in one packet
+        let response = put_helper(dime, payload, chunk_size, extra_properties).await;
+
+        match response {
+            Ok(response) => {
+                let response = response.into_inner();
+                let uuid = response.uuid.unwrap().value;
+                let uuid = uuid::Uuid::from_str(uuid.as_str()).unwrap();
+
+                assert_eq!(response.name, NOT_STORAGE_BACKED);
+                assert_eq!(get_public_keys_by_object(&db, &uuid).await.len(), 3);
+                assert_eq!(replication_object_uuids(&db, String::from_utf8(audience1.public_key).unwrap().as_str(), 50).await.unwrap().len(), 0);
+                assert_eq!(replication_object_uuids(&db, String::from_utf8(audience2.public_key).unwrap().as_str(), 50).await.unwrap().len(), 1);
+                assert_eq!(replication_object_uuids(&db, String::from_utf8(audience3.public_key).unwrap().as_str(), 50).await.unwrap().len(), 1);
+            },
+            _ => assert_eq!(format!("{:?}", response), ""),
+        }
+    }
+
+    #[tokio::test]
+    #[serial(grpc_server)]
+    async fn put_with_replication_different_owner() {
+        let db = start_server().await;
+
+        let (audience1, signature1) = party_1();
+        let (audience2, signature2) = party_2();
+        let (audience3, signature3) = party_3();
+        let dime = generate_dime(vec![audience2.clone(), audience1.clone(), audience3.clone()], vec![signature2, signature1, signature3]);
+        let mut extra_properties = HashMap::new();
+        extra_properties.insert(SOURCE_KEY.to_owned(), String::from("standard key"));
+        let payload: bytes::Bytes = "testing small payload".as_bytes().into();
+        let chunk_size = 500; // full payload in one packet
+        let response = put_helper(dime, payload, chunk_size, extra_properties).await;
+
+        match response {
+            Ok(response) => {
+                let response = response.into_inner();
+                let uuid = response.uuid.unwrap().value;
+                let uuid = uuid::Uuid::from_str(uuid.as_str()).unwrap();
+
+                assert_eq!(response.name, NOT_STORAGE_BACKED);
+                assert_eq!(get_public_keys_by_object(&db, &uuid).await.len(), 3);
+                assert_eq!(replication_object_uuids(&db, String::from_utf8(audience1.public_key).unwrap().as_str(), 50).await.unwrap().len(), 0);
+                assert_eq!(replication_object_uuids(&db, String::from_utf8(audience2.public_key).unwrap().as_str(), 50).await.unwrap().len(), 0);
+                assert_eq!(replication_object_uuids(&db, String::from_utf8(audience3.public_key).unwrap().as_str(), 50).await.unwrap().len(), 1);
+            },
+            _ => assert_eq!(format!("{:?}", response), ""),
+        }
+    }
+
+    #[tokio::test]
+    #[serial(grpc_server)]
+    async fn put_with_double_replication() {
+        let db = start_server().await;
+
+        let (audience1, signature1) = party_1();
+        let (audience2, signature2) = party_2();
+        let (audience3, signature3) = party_3();
+        let dime = generate_dime(vec![audience1.clone(), audience2.clone(), audience3.clone()], vec![signature1, signature2, signature3]);
+        let mut extra_properties = HashMap::new();
+        extra_properties.insert(SOURCE_KEY.to_owned(), SOURCE_REPLICATION.to_owned());
+        let payload: bytes::Bytes = "testing small payload".as_bytes().into();
+        let chunk_size = 500; // full payload in one packet
+        let response = put_helper(dime, payload, chunk_size, extra_properties).await;
+
+        match response {
+            Ok(response) => {
+                let response = response.into_inner();
+                let uuid = response.uuid.unwrap().value;
+                let uuid = uuid::Uuid::from_str(uuid.as_str()).unwrap();
+
+                assert_eq!(response.name, NOT_STORAGE_BACKED);
+                assert_eq!(get_public_keys_by_object(&db, &uuid).await.len(), 3);
+                assert_eq!(replication_object_uuids(&db, base64::encode(audience1.public_key).as_str(), 50).await.unwrap().len(), 0);
+                assert_eq!(replication_object_uuids(&db, base64::encode(audience2.public_key).as_str(), 50).await.unwrap().len(), 0);
+                assert_eq!(replication_object_uuids(&db, base64::encode(audience3.public_key).as_str(), 50).await.unwrap().len(), 0);
+            },
+            _ => assert_eq!(format!("{:?}", response), ""),
+        }
+    }
+
+    #[tokio::test]
+    #[serial(grpc_server)]
+    async fn get_object_no_properties() {
+        let db = start_server().await;
+
+        let (audience, signature) = party_1();
+        let dime = generate_dime(vec![audience.clone()], vec![signature]);
+        let payload: bytes::Bytes = "testing small payload".as_bytes().into();
+        let chunk_size = 500; // full payload in one packet
+        let response = put_helper(dime, payload.clone(), chunk_size, HashMap::default()).await;
+
+        match response {
+            Ok(response) => {
+                let response = response.into_inner();
+                let uuid = response.uuid.unwrap().value;
+                let uuid = uuid::Uuid::from_str(uuid.as_str()).unwrap();
+
+                assert_eq!(response.name, NOT_STORAGE_BACKED);
+                assert_eq!(delete_properties(&db, &uuid).await, 1);
+            },
+            _ => assert_eq!(format!("{:?}", response), ""),
+        }
+
+        let mut client = pb::object_service_client::ObjectServiceClient::connect("tcp://0.0.0.0:6789").await.unwrap();
+        let public_key = base64::decode(audience.public_key).unwrap();
+        let request = HashRequest { hash: hash(payload), public_key };
+        let response = client.get(Request::new(request)).await;
+
+        match response {
+            Ok(response) => {
+                let mut response = response.into_inner();
+
+                // multi stream header
+                let msg = response.message().await.unwrap();
+                if let Some(msg) = msg {
+                    match msg.r#impl {
+                        Some(MultiStreamHeaderEnum(stream_header)) => {
+                            assert_eq!(stream_header.stream_count, 1);
+                        },
+                        _ => assert_eq!(format!("{:?}", msg), ""),
+                    }
+                } else {
+                    assert_eq!(format!("{:?}", msg), "");
+                }
+
+                // data chunk
+                let msg = response.message().await.unwrap();
+                if let Some(msg) = msg {
+                    match msg.clone().r#impl {
+                        Some(ChunkEnum(chunk)) => {
+                            match chunk.r#impl {
+                                Some(Data(_)) => (),
+                                _ => assert_eq!(format!("{:?}", msg), ""),
+                            }
+                        },
+                        _ => assert_eq!(format!("{:?}", msg), ""),
+                    }
+                } else {
+                    assert_eq!(format!("{:?}", msg), "");
+                }
+
+                // end chunk
+                let msg = response.message().await.unwrap();
+                if let Some(msg) = msg {
+                    match msg.clone().r#impl {
+                        Some(ChunkEnum(chunk)) => {
+                            match chunk.r#impl {
+                                Some(End(_)) => (),
+                                _ => assert_eq!(format!("{:?}", msg), ""),
+                            }
+                        },
+                        _ => assert_eq!(format!("{:?}", msg), ""),
+                    }
+                } else {
+                    assert_eq!(format!("{:?}", msg), "");
+                }
+            },
             _ => assert_eq!(format!("{:?}", response), ""),
         }
     }

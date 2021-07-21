@@ -8,6 +8,8 @@ use std::{sync::Arc, str::FromStr};
 use sqlx::postgres::PgPool;
 use tonic::{Request, Response};
 
+// TODO write test to not mailbox remote_keys
+
 #[derive(Debug)]
 pub struct MailboxGrpc {
     db_pool: Arc<PgPool>,
@@ -81,9 +83,11 @@ impl MailboxService for MailboxGrpc {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
     use std::str::FromStr;
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
 
+    use crate::cache::Cache;
     use crate::consts::*;
     use crate::pb::{self, AckRequest, Audience, GetRequest, mailbox_service_client::MailboxServiceClient};
     use crate::mailbox::*;
@@ -106,14 +110,16 @@ mod tests {
             let docker = clients::Cli::default();
             let image = images::postgres::Postgres::default().with_version(9);
             let container = docker.run(image);
+            let cache = Mutex::new(Cache::default());
             let pool = setup_postgres(&container).await;
             let pool = Arc::new(pool);
             let storage = FileSystem::new(config.storage_base_path.as_str());
             let mailbox_service = MailboxGrpc { db_pool: pool.clone() };
             let object_service = ObjectGrpc {
-                db_pool: pool.clone(),
+                cache: Arc::new(cache),
                 config: Arc::new(config),
-                storage,
+                db_pool: pool.clone(),
+                storage: Arc::new(storage),
             };
 
             tx.send(pool.clone()).await.unwrap();
@@ -180,7 +186,7 @@ mod tests {
         dime.metadata.insert(MAILBOX_KEY.to_owned(), MAILBOX_FRAGMENT_REQUEST.to_owned());
         let payload: bytes::Bytes = "fragment request envelope".as_bytes().into();
         let chunk_size = 500; // full payload in one packet
-        let response = put_helper(dime, payload, chunk_size).await;
+        let response = put_helper(dime, payload, chunk_size, HashMap::default()).await;
 
         match response {
             Ok(response) => {
@@ -205,7 +211,7 @@ mod tests {
         dime.metadata.insert(MAILBOX_KEY.to_owned(), MAILBOX_FRAGMENT_RESPONSE.to_owned());
         let payload: bytes::Bytes = "fragment response envelope".as_bytes().into();
         let chunk_size = 500; // full payload in one packet
-        let response = put_helper(dime, payload, chunk_size).await;
+        let response = put_helper(dime, payload, chunk_size, HashMap::default()).await;
 
         match response {
             Ok(response) => {
@@ -230,7 +236,7 @@ mod tests {
         dime.metadata.insert(MAILBOX_KEY.to_owned(), MAILBOX_ERROR_RESPONSE.to_owned());
         let payload: bytes::Bytes = "error envelope".as_bytes().into();
         let chunk_size = 500; // full payload in one packet
-        let response = put_helper(dime, payload, chunk_size).await;
+        let response = put_helper(dime, payload, chunk_size, HashMap::default()).await;
 
         match response {
             Ok(response) => {
@@ -270,7 +276,7 @@ mod tests {
         let chunk_size = 500; // full payload in one packet
 
         for _ in 0..10 {
-            let response = put_helper(dime.clone(), payload.clone(), chunk_size).await;
+            let response = put_helper(dime.clone(), payload.clone(), chunk_size, HashMap::default()).await;
 
             match response {
                 Ok(_) => (),
@@ -281,7 +287,7 @@ mod tests {
         dime.metadata.insert(MAILBOX_KEY.to_owned(), MAILBOX_ERROR_RESPONSE.to_owned());
 
         for _ in 0..10 {
-            let response = put_helper(dime.clone(), payload.clone(), chunk_size).await;
+            let response = put_helper(dime.clone(), payload.clone(), chunk_size, HashMap::default()).await;
 
             match response {
                 Ok(_) => (),
@@ -306,7 +312,7 @@ mod tests {
 
         for _ in 0..10 {
             let payload: bytes::Bytes = uuid::Uuid::new_v4().to_hyphenated().to_string().into_bytes().into();
-            let response = put_helper(dime.clone(), payload, chunk_size).await;
+            let response = put_helper(dime.clone(), payload, chunk_size, HashMap::default()).await;
 
             match response {
                 Ok(_) => (),
@@ -318,7 +324,7 @@ mod tests {
 
         for _ in 0..10 {
             let payload: bytes::Bytes = uuid::Uuid::new_v4().to_hyphenated().to_string().into_bytes().into();
-            let response = put_helper(dime.clone(), payload.clone(), chunk_size).await;
+            let response = put_helper(dime.clone(), payload.clone(), chunk_size, HashMap::default()).await;
 
             match response {
                 Ok(_) => (),

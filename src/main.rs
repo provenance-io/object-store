@@ -1,22 +1,27 @@
+mod cache;
 mod consts;
 mod config;
-mod types;
-mod dime;
 mod datastore;
+mod dime;
 mod domain;
-mod storage;
+mod mailbox;
 mod object;
 mod public_key;
-mod mailbox;
+mod proto_helpers;
+mod replication;
+mod storage;
+mod types;
 
+use crate::cache::Cache;
 use crate::config::Config;
 use crate::object::ObjectGrpc;
 use crate::public_key::PublicKeyGrpc;
 use crate::mailbox::MailboxGrpc;
 use crate::types::{OsError, Result};
 use crate::storage::FileSystem;
+use crate::replication::{reap_unknown_keys, replicate, ReplicationState};
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use sqlx::{migrate::Migrator, postgres::{PgPool, PgPoolOptions}, Executor};
 use tonic::transport::Server;
 
@@ -58,6 +63,7 @@ async fn health_status(mut reporter: tonic_health::server::HealthReporter, db: A
 async fn main() -> Result<()> {
     env_logger::init();
 
+    let mut cache = Cache::default();
     let config = Config::new();
     let storage = match config.storage_type.as_str() {
         "file_system" => Ok(FileSystem::new(config.storage_base_path.as_str())),
@@ -76,21 +82,45 @@ async fn main() -> Result<()> {
         .max_connections(config.db_connection_pool_size.into())
         .connect(config.db_connection_string().as_ref())
         .await?;
+
+    // populate initial cache
+    for (public_key, url) in datastore::get_all_public_keys(&pool).await? {
+        if let Some(url) = url {
+            log::trace!("Adding remote public key - {} {}", &public_key, &url);
+
+            cache.add_remote_public_key(public_key, url);
+        } else {
+            log::trace!("Adding local public key - {}", &public_key);
+
+            cache.add_local_public_key(public_key);
+        }
+    }
+
+    log::debug!("Seeded public keys - remote: {} local: {}", cache.remote_public_keys.len(), cache.local_public_keys.len());
+
     let pool = Arc::new(pool);
+    let cache = Arc::new(Mutex::new(cache));
     let config = Arc::new(config);
+    let storage = Arc::new(storage);
 
     MIGRATOR.run(&*pool).await?;
 
     let (mut health_reporter, health_service) = tonic_health::server::health_reporter();
-    let public_key_service = PublicKeyGrpc::new(Arc::clone(&pool));
+    let public_key_service = PublicKeyGrpc::new(Arc::clone(&cache), Arc::clone(&pool));
     let mailbox_service = MailboxGrpc::new(Arc::clone(&pool));
-    let object_service = ObjectGrpc::new(Arc::clone(&pool), Arc::clone(&config), storage);
+    let object_service = ObjectGrpc::new(Arc::clone(&cache), Arc::clone(&config), Arc::clone(&pool), Arc::clone(&storage));
+    let replication_state = ReplicationState::new(Arc::clone(&cache), Arc::clone(&config), Arc::clone(&pool), Arc::clone(&storage));
 
     // set initial health status and start a background
     health_reporter
         .set_service_status("", tonic_health::ServingStatus::NotServing)
         .await;
     tokio::spawn(health_status(health_reporter, Arc::clone(&pool)));
+
+    // start replication
+    tokio::spawn(replicate(replication_state));
+    // start unknown reaper - removes replication objects for public_keys that moved from Unkown -> Local
+    tokio::spawn(reap_unknown_keys(Arc::clone(&pool), Arc::clone(&cache)));
 
     log::info!("Starting server on {:?}", &config.url);
 

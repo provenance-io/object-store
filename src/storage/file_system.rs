@@ -3,8 +3,9 @@ use std::path::PathBuf;
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt;
 
-use crate::storage::{Result, Storage, StorageError, StoragePath};
+use crate::storage::{Result, StorageError, StoragePath};
 
+#[derive(Debug)]
 pub struct FileSystem {
     base_url: PathBuf,
 }
@@ -48,12 +49,9 @@ impl FileSystem {
             }
         }
     }
-}
 
-#[async_trait::async_trait]
-impl Storage for FileSystem {
-
-    async fn store(&self, path: &StoragePath, content_length: u64, data: &[u8]) -> Result<()> {
+    #[async_recursion::async_recursion]
+    pub async fn store(&self, path: &StoragePath, content_length: u64, data: &[u8]) -> Result<()> {
         if let Err(e) = self.validate_content_length(&path, content_length, &data) {
             log::warn!("{:?}", e);
         }
@@ -80,7 +78,7 @@ impl Storage for FileSystem {
         }
     }
 
-    async fn fetch(&self, path: &StoragePath, content_length: u64) -> Result<Vec<u8>> {
+    pub async fn fetch(&self, path: &StoragePath, content_length: u64) -> Result<Vec<u8>> {
         let data = tokio::fs::read(self.get_path(path)).await
             .map_err(|e| StorageError::IoError(format!("{:?}", e)))?;
 

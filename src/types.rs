@@ -23,7 +23,7 @@ quick_error! {
         DimeError(err: crate::dime::DimeError) {
             from()
         }
-        Utf8Error(err: std::string::FromUtf8Error) {
+        Utf8Error(err: std::str::Utf8Error) {
             from()
         }
         Base64DecodeError(err: base64::DecodeError) {
