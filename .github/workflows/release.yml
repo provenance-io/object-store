@@ -19,6 +19,22 @@ jobs:
           [[ "${{ github.ref }}" == "refs/tags/"* ]] && VERSION=$(echo $VERSION | sed -e 's/^v//')
 
           echo "VERSION=$VERSION" >> $GITHUB_ENV
+      - name: Zip Protos
+        run: zip -r protos-${VERSION}.zip proto
+      - name: Get release
+        id: get_release
+        uses: bruceadams/get-release@v1.2.2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Upload release protos
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.get_release.outputs.upload_url }}
+          asset_path: ./protos-${{ env.VERSION }}.zip
+          asset_name: protos-${{ env.VERSION }}.zip
+          asset_content_type: application/octet-stream
       - name: Docker Build
         run: docker build . --tag object-store:$VERSION
       - name: Push Image
