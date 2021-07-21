@@ -21,9 +21,9 @@ jobs:
           echo "VERSION=$VERSION" >> $GITHUB_ENV
       - name: Zip Protos
         run: zip -r protos-${VERSION}.zip proto
-      - name: Gets latest created release info
-        id: latest_release_info
-        uses: jossef/action-latest-release-info@v1.1.0
+      - name: Get release
+        id: get_release
+        uses: bruceadams/get-release@v1.2.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Upload release protos
@@ -31,7 +31,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          upload_url: ${{ steps.latest_release_info.outputs.upload_url }}
+          upload_url: ${{ steps.get_release.outputs.upload_url }}
           asset_path: ./protos-${{ env.VERSION }}.zip
           asset_name: protos-${{ env.VERSION }}.zip
           asset_content_type: application/octet-stream
