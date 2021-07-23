@@ -5,12 +5,19 @@ use crate::pb::object_service_client::ObjectServiceClient;
 use crate::proto_helpers::{create_data_chunk, create_multi_stream_header, create_stream_header_field, create_stream_end};
 
 use std::sync::{Arc, Mutex};
+use std::collections::HashMap;
+use std::collections::hash_map::Entry;
+use std::future::Future;
 
+use backoff::{self, ExponentialBackoff};
+use backoff::future::retry;
 use bytes::Bytes;
 use chrono::prelude::*;
 use futures::stream;
 use sqlx::postgres::PgPool;
 use quick_error::quick_error;
+use futures_locks::{MutexGuard, Mutex as MutexF};
+use uuid::Uuid;
 
 quick_error! {
     #[derive(Debug)]
@@ -29,8 +36,6 @@ quick_error! {
 
 type Result<T> = std::result::Result<T, ReplicationError>;
 
-// TODO backoff failed connections
-// TODO implement client connection cache
 // TODO implement remaining tests
 
 #[derive(Debug)]
@@ -40,22 +45,73 @@ pub struct ReplicationState {
     snapshot_cache: (DateTime<Utc>, Cache),
     db_pool: Arc<PgPool>,
     storage: Arc<FileSystem>,
-    // clients: Arc<HashMap<String, ObjectServiceClient<tonic::transport::Channel>>>,
+    clients: MutexF<HashMap<String, CachedClient<ObjectServiceClient<tonic::transport::Channel>>>>
 }
+
+#[derive(Clone, Debug)]
+struct CachedClient<T> {
+    id: String,
+    client: MutexF<T>
+}
+
+impl <T> CachedClient<T> {
+    pub fn new(client: T) -> Self {
+        Self {
+            id: Uuid::new_v4().to_string(),
+            client: MutexF::new(client)
+        }
+    }
+
+    pub fn id(&self) -> &String {
+         &self.id
+    }
+
+    pub fn lock(&self) -> impl Future<Output = MutexGuard<T>> {
+        self.client.lock()
+    }
+}
+
 
 impl ReplicationState {
     pub fn new(cache: Arc<Mutex<Cache>>, config: Arc<Config>, db_pool: Arc<PgPool>, storage: Arc<FileSystem>) -> Self {
         let snapshot_cache = cache.lock().unwrap().clone();
         let snapshot_cache = (Utc::now(), snapshot_cache);
 
-        Self { cache, config, snapshot_cache, db_pool, storage }
+        Self { cache, config, snapshot_cache, db_pool, storage, clients: MutexF::new(HashMap::new()) }
+    }
+
+    async fn cached_client(&self, url: &String) -> Result<CachedClient<ObjectServiceClient<tonic::transport::Channel>>> {
+        let cc = {
+            let mut guard = self.clients.lock().await;
+            let connect_url = url.clone();
+            match guard.entry(url.clone()) {
+                Entry::Occupied(entry) => (*entry.get()).clone(),
+                Entry::Vacant(entry) => {
+                    let client = ObjectServiceClient::connect(connect_url)
+                        .await
+                        .map_err(ReplicationError::TonicTransportError)?;
+                    entry.insert(CachedClient::new(client)).clone()
+                }
+            }
+        };
+        Ok(cc)
     }
 }
 
 async fn replicate_public_key(inner: &ReplicationState, public_key: &String, url: String) -> Result<usize> {
     let batch = datastore::replication_object_uuids(&inner.db_pool, public_key, inner.config.replication_batch_size).await?;
     let batch_size = batch.len();
-    let mut client = ObjectServiceClient::connect(url).await?;
+    let backoff_strategy = ExponentialBackoff::default();
+
+    // Retry the attempt to connect up to 10 times (the default with the `backoff` crate) with exponential backoff.
+    let cached_client = retry(backoff_strategy, || async {
+        inner.cached_client(&url).await.map_err(|e| {
+            match e {
+                ReplicationError::TonicTransportError(_) => backoff::Error::Transient(e),
+                err => backoff::Error::Permanent(err)
+            }
+        })
+    }).await?;
 
     for (uuid, object_uuid) in batch.iter() {
         let object = datastore::get_object_by_uuid(&inner.db_pool, &object_uuid).await?;
@@ -94,7 +150,7 @@ async fn replicate_public_key(inner: &ReplicationState, public_key: &String, url
 
         let stream = stream::iter(packets);
 
-        client.put(tonic::Request::new(stream)).await?;
+        cached_client.lock().await.put(tonic::Request::new(stream)).await?;
 
         datastore::ack_object_replication(&inner.db_pool, &uuid).await?;
     }
@@ -358,6 +414,20 @@ pub mod tests {
     async fn end_to_end_replication() {
         let mut state_one = start_server_one().await;
         let state_two = start_server_two().await;
+
+        let client_url_1 = test_config_one().url;
+        let client_url_2 = test_config_two().url;
+
+        // Check that ReplicationState connection caching works when given the same URL:
+        let client_copy_1 = state_one.cached_client(&format!("tcp://{}", client_url_1)).await.unwrap();
+        let client_copy_2 = state_one.cached_client(&format!("tcp://{}", client_url_1)).await.unwrap();
+        assert_eq!(client_copy_1.id(), client_copy_2.id());
+
+        let client_copy_1 = state_one.cached_client(&format!("tcp://{}", client_url_1)).await.unwrap();
+        let client_copy_2 = state_one.cached_client(&format!("tcp://{}", client_url_2)).await.unwrap();
+        assert_ne!(client_copy_1.id(), client_copy_2.id());
+
+        ////
 
         let (audience1, signature1) = party_1();
         let (audience2, signature2) = party_2();
