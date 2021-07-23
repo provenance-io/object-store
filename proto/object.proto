@@ -2,6 +2,9 @@ syntax = "proto3";
 
 package objectstore;
 
+option java_package = "io.provenance.objectstore.proto";
+option java_outer_classname = "Objects";
+
 import "google/protobuf/timestamp.proto";
 import "util.proto";
 
