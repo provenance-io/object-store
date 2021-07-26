@@ -11,9 +11,11 @@ mod proto_helpers;
 mod replication;
 mod storage;
 mod types;
+mod minitrace_grpc;
 
 use crate::cache::Cache;
 use crate::config::Config;
+use crate::minitrace_grpc::{MinitraceGrpcMiddlewareLayer};
 use crate::object::ObjectGrpc;
 use crate::public_key::PublicKeyGrpc;
 use crate::mailbox::MailboxGrpc;
@@ -126,6 +128,7 @@ async fn main() -> Result<()> {
 
     // TODO add server fields that make sense
     Server::builder()
+        .layer(MinitraceGrpcMiddlewareLayer::default())
         .add_service(health_service)
         .add_service(PublicKeyServiceServer::new(public_key_service))
         .add_service(MailboxServiceServer::new(mailbox_service))
