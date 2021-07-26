@@ -16,6 +16,7 @@ pub struct Config {
     pub storage_base_path: String,
     pub storage_threshold: u32,
     pub replication_batch_size: i32,
+    pub backoff_retry_timeout: u64,
 }
 
 impl Config {
@@ -51,8 +52,26 @@ impl Config {
             .unwrap_or("10".to_owned())
             .parse()
             .expect("REPLICATION_BATCH_SIZE could not be parsed into a u32");
+        let backoff_retry_timeout = env::var("BACKOFF_RETRY_TIMEOUT")
+            .unwrap_or("10".to_owned())
+            .parse()
+            .expect("BACKOFF_RETRY_TIMEOUT could not be parsed into a u32");
 
-        Self { url, uri_host, db_connection_pool_size, db_host, db_port, db_user, db_password, db_database, db_schema, storage_type, storage_base_path, storage_threshold, replication_batch_size }
+        Self {
+            url,
+            uri_host,
+            db_connection_pool_size,
+            db_host, db_port,
+            db_user,
+            db_password,
+            db_database,
+            db_schema,
+            storage_type,
+            storage_base_path,
+            storage_threshold,
+            replication_batch_size,
+            backoff_retry_timeout
+        }
     }
 
     pub fn db_connection_string(&self) -> String {
