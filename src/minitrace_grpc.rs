@@ -63,7 +63,7 @@ where
             let trace_id_header = headers.get("x-datadog-trace-id")
                 .unwrap_or(&default_trace_id_header_value).to_str();
             let trace_id: u64 = trace_id_header.unwrap().parse::<u64>().unwrap();
-            let span_id_prefix: u32 = rand; // todo: what should this be?
+            let span_id_prefix: u32 = 0;
             let default_parent_span_id_header_value = HeaderValue::from_str(&rand.to_string()).unwrap();
             let parent_span_id_header = headers.get("x-datadog-parent-id")
                 .unwrap_or(&default_parent_span_id_header_value).to_str();
