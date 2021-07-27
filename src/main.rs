@@ -39,7 +39,6 @@ use pb::mailbox_service_server::MailboxServiceServer;
 static MIGRATOR: Migrator = sqlx::migrate!();
 
 // TODO add logging in Trace middleware
-// TODO datadog apm integration
 // TODO implement checksum in filestore
 
 async fn health_status(mut reporter: tonic_health::server::HealthReporter, db: Arc<PgPool>) {

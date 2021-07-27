@@ -214,6 +214,9 @@ pub mod tests {
             storage_base_path: "/tmp".to_owned(),
             storage_threshold: 5000,
             replication_batch_size: 2,
+            dd_agent_host: "127.0.0.1".parse().unwrap(),
+            dd_agent_port: 8126,
+            dd_service_name: "object-store".to_owned(),
         }
     }
 
@@ -232,6 +235,9 @@ pub mod tests {
             storage_base_path: "/tmp".to_owned(),
             storage_threshold: 5000,
             replication_batch_size: 2,
+            dd_agent_host: "127.0.0.1".parse().unwrap(),
+            dd_agent_port: 8126,
+            dd_service_name: "object-store".to_owned(),
         }
     }
 
