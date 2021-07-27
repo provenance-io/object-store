@@ -290,7 +290,8 @@ pub mod tests {
             storage_base_path: "/tmp".to_owned(),
             storage_threshold: 5000,
             replication_batch_size: 2,
-            backoff_retry_timeout: 10
+            backoff_min_wait: 1,
+            backoff_max_wait: 1
         }
     }
 
