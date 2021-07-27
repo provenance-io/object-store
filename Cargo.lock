@@ -1079,7 +1079,7 @@ dependencies = [
 [[package]]
 name = "minitrace-macro"
 version = "0.1.0"
-source = "git+https://github.com/piercetrey-figure/minitrace-rust.git#1ab75c3399b07b86d8e142a8e5a81f1f0d1d9f17"
+source = "git+https://github.com/tikv/minitrace-rust.git#6badc9866af3a80219613c2d5c19af41c336d18f"
 dependencies = [
  "proc-macro-error",
  "quote",
