@@ -29,7 +29,7 @@ tonic-health = "0.4"
 tower = "0.4.8"
 minitrace = { git = "https://github.com/tikv/minitrace-rust.git" }
 minitrace-macro = { git = "https://github.com/piercetrey-figure/minitrace-rust.git" } # todo: switch back to tikv once PR merged
-minitrace-jaeger = { git = "https://github.com/tikv/minitrace-rust.git" }
+minitrace-datadog = { git = "https://github.com/tikv/minitrace-rust.git" }
 # TODO can we upgrade this?
 tokio = { version = "1.0", features = ["macros", "rt-multi-thread", "sync"] }
 tokio-stream = "0.1"

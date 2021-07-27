@@ -15,7 +15,7 @@ mod minitrace_grpc;
 
 use crate::cache::Cache;
 use crate::config::Config;
-use crate::minitrace_grpc::{MinitraceGrpcMiddlewareLayer};
+use crate::minitrace_grpc::{MinitraceGrpcMiddlewareLayer, MinitraceSpans, report_datadog_traces};
 use crate::object::ObjectGrpc;
 use crate::public_key::PublicKeyGrpc;
 use crate::mailbox::MailboxGrpc;
@@ -23,6 +23,7 @@ use crate::types::{OsError, Result};
 use crate::storage::FileSystem;
 use crate::replication::{reap_unknown_keys, replicate, ReplicationState};
 
+use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex};
 use sqlx::{migrate::Migrator, postgres::{PgPool, PgPoolOptions}, Executor};
 use tonic::transport::Server;
@@ -123,12 +124,15 @@ async fn main() -> Result<()> {
     tokio::spawn(replicate(replication_state));
     // start unknown reaper - removes replication objects for public_keys that moved from Unkown -> Local
     tokio::spawn(reap_unknown_keys(Arc::clone(&pool), Arc::clone(&cache)));
+    // start datadog reporter
+    let (datadog_sender, datadog_receiver) = channel::<MinitraceSpans>();
+    tokio::spawn(report_datadog_traces(datadog_receiver, config.dd_agent_host.clone(), config.dd_agent_port, config.dd_service_name.clone()));
 
     log::info!("Starting server on {:?}", &config.url);
 
     // TODO add server fields that make sense
     Server::builder()
-        .layer(MinitraceGrpcMiddlewareLayer::default())
+        .layer(MinitraceGrpcMiddlewareLayer { sender: datadog_sender })
         .add_service(health_service)
         .add_service(PublicKeyServiceServer::new(public_key_service))
         .add_service(MailboxServiceServer::new(mailbox_service))

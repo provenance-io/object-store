@@ -1,5 +1,5 @@
 use std::env;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 
 #[derive(Debug)]
 pub struct Config {
@@ -16,6 +16,9 @@ pub struct Config {
     pub storage_base_path: String,
     pub storage_threshold: u32,
     pub replication_batch_size: i32,
+    pub dd_agent_host: IpAddr,
+    pub dd_agent_port: u16,
+    pub dd_service_name: String,
 }
 
 impl Config {
@@ -51,8 +54,18 @@ impl Config {
             .unwrap_or("10".to_owned())
             .parse()
             .expect("REPLICATION_BATCH_SIZE could not be parsed into a u32");
+        let dd_agent_host = env::var("DD_AGENT_HOST")
+            .unwrap_or("127.0.0.1".to_owned())
+            .parse()
+            .expect("DD_AGENT_HOST could not be parsed into an ip address");
+        let dd_agent_port = env::var("DD_AGENT_PORT")
+            .unwrap_or("8126".to_owned())
+            .parse()
+            .expect("DD_AGENT_PORT could not be parsed into a u16");
+        let dd_service_name = env::var("DD_SERVICE_NAME")
+            .unwrap_or("object-store".to_owned());
 
-        Self { url, uri_host, db_connection_pool_size, db_host, db_port, db_user, db_password, db_database, db_schema, storage_type, storage_base_path, storage_threshold, replication_batch_size }
+        Self { url, uri_host, db_connection_pool_size, db_host, db_port, db_user, db_password, db_database, db_schema, storage_type, storage_base_path, storage_threshold, replication_batch_size, dd_agent_host, dd_agent_port, dd_service_name }
     }
 
     pub fn db_connection_string(&self) -> String {

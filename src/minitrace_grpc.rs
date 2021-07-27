@@ -1,25 +1,30 @@
-use std::{fmt, net::SocketAddr, task::{Context, Poll}};
+use std::{net::{IpAddr, SocketAddr}, sync::mpsc::{Receiver, Sender}, task::{Context, Poll}};
 
 use minitrace::{FutureExt, Span};
-use tonic::{Response, body::BoxBody, transport::Body};
+use minitrace_datadog::Reporter;
+use tonic::{body::BoxBody, codegen::http::HeaderValue, transport::Body};
 use tower::{Layer, Service};
 
-// todo: move trace reporting to separate thread w/ channel for traces
-
-#[derive(Debug, Clone, Default)]
-pub struct MinitraceGrpcMiddlewareLayer;
+#[derive(Debug, Clone)]
+pub struct MinitraceGrpcMiddlewareLayer {
+    pub sender: Sender<MinitraceSpans>,
+}
 
 impl<S> Layer<S> for MinitraceGrpcMiddlewareLayer {
     type Service = MinitraceGrpcMiddleware<S>;
 
     fn layer(&self, service: S) -> Self::Service {
-        MinitraceGrpcMiddleware { inner: service }
+        MinitraceGrpcMiddleware {
+            inner: service,
+            sender: self.sender.clone(),
+        }
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct MinitraceGrpcMiddleware<S> {
     inner: S,
+    sender: Sender<MinitraceSpans>,
 }
 
 impl<S> Service<tonic::codegen::http::Request<Body>> for MinitraceGrpcMiddleware<S>
@@ -42,16 +47,60 @@ where
         let clone = self.inner.clone();
         let mut inner = std::mem::replace(&mut self.inner, clone);
 
+        let sender = self.sender.clone();
+
+        let headers = req.headers().clone();
+
         Box::pin(async move {
-            let (root_span, collector) = Span::root("root2");
+            let (root_span, collector) = Span::root("service_root");
 
             let response = inner.call(req).in_span(root_span).await?;
 
             let spans = collector.collect();
 
-            // todo: set up reporting to DD w/ trace id pulled from headers
+            let rand: u32 = rand::random(); // todo: what is an appropriate default span id if not present in headers, uuid? something other than random number?
+            let default_trace_id_header_value = HeaderValue::from_str(&rand.to_string()).unwrap();
+            let trace_id_header = headers.get("x-datadog-trace-id")
+                .unwrap_or(&default_trace_id_header_value).to_str();
+            let trace_id: u64 = trace_id_header.unwrap().parse::<u64>().unwrap();
+            let span_id_prefix: u32 = rand; // todo: what should this be?
+            let default_parent_span_id_header_value = HeaderValue::from_str(&rand.to_string()).unwrap();
+            let parent_span_id_header = headers.get("x-datadog-parent-id")
+                .unwrap_or(&default_parent_span_id_header_value).to_str();
+            let parent_span_id: u64 = parent_span_id_header.unwrap().parse::<u64>().unwrap();
+
+            sender.send(MinitraceSpans {
+                trace_id,
+                parent_span_id,
+                span_id_prefix,
+                spans: Box::new(spans)
+            }).expect("Failed to send spans to channel");
 
             Ok(response)
         })
+    }
+}
+
+pub struct MinitraceSpans {
+    trace_id: u64,
+    parent_span_id: u64,
+    span_id_prefix: u32,
+    spans: Box<Vec<minitrace::span::Span>>
+}
+
+pub async fn report_datadog_traces(receiver: Receiver<MinitraceSpans>, host: IpAddr, port: u16, service_name: String) {
+    let socket = SocketAddr::new(host, port);
+    loop {
+        let spans = receiver.recv().unwrap();
+
+        let bytes = Reporter::encode(
+            &service_name,
+            spans.trace_id,
+            spans.parent_span_id,
+            spans.span_id_prefix,
+            &*spans.spans,
+        )
+        .expect("encode error");
+        Reporter::report_blocking(socket, bytes).expect("report error");
     }
 }
