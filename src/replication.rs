@@ -161,11 +161,11 @@ impl ClientCache {
     }
 }
 
-/// `ClientState` is used to encode a state machine for a `CacheEntry`
-/// can be in at a given time:
+/// `ClientState` is used to describe the state  a `CacheEntry` can be in at
+/// a given time:
 ///
 /// - it is waiting to attempt to create a new service client instance
-/// - a client has been created, but taken,
+/// - a client has been created, but taken
 /// - the client is present in the map
 #[derive(Debug)]
 enum ClientState<T> {
@@ -621,7 +621,8 @@ pub mod tests {
         // we should get an instance again:
         let client_one = client_cache.request(&url_one).await.unwrap().unwrap();
         let client_one_id_second = client_one.id().clone();
-        // and the IDs of the the two clients should be the same:
+        // The IDs of the the two clients should be the same, since they originated from the
+        // same URL:
         assert_eq!(client_one_id_first, client_one_id_second);
 
         // Client 2:
