@@ -16,7 +16,6 @@ use chrono::prelude::*;
 use futures::stream;
 use sqlx::postgres::PgPool;
 use quick_error::quick_error;
-use futures_locks::{Mutex as MutexF};
 use uuid::Uuid;
 
 quick_error! {
@@ -47,8 +46,7 @@ pub struct ReplicationState {
     config: Arc<Config>,
     snapshot_cache: (DateTime<Utc>, Cache),
     db_pool: Arc<PgPool>,
-    storage: Arc<FileSystem>,
-    clients: MutexF<HashMap<String, CachedClient<ID<ObjectServiceClient<tonic::transport::Channel>>>>>
+    storage: Arc<FileSystem>
 }
 
 struct ReplicationResult {
@@ -65,6 +63,110 @@ impl ReplicationResult {
     }
 }
 
+#[derive(Debug)]
+struct ClientCache {
+    clients: HashMap<String, CachedClient<ID<ObjectServiceClient<tonic::transport::Channel>>>>,
+    backoff_min_wait: i64,
+    backoff_max_wait: i64
+}
+
+impl ClientCache {
+    fn new(backoff_min_wait: i64, backoff_max_wait: i64) -> Self {
+        Self {
+            clients: HashMap::new(),
+            backoff_min_wait,
+            backoff_max_wait
+        }
+    }
+
+    /// Request a service client
+    ///
+    /// This assumes a one-to-one exclusive mapping between a url and an instance
+    /// of `ObjectServiceClient`. Calls to `request` should be paired
+    /// with an accompanying call to `restore`, which returns the client
+    /// instance to the `clients` map.
+    ///
+    /// Potential TODO: expire clients beyond a certain age to force reconnection.
+    async fn request(&mut self, url: &String) -> Result<Option<ID<ObjectServiceClient<tonic::transport::Channel>>>> {
+        let error_url = url.clone();
+        let min_wait_time = self.backoff_min_wait;
+        let max_wait_time = self.backoff_max_wait;
+
+        match self.clients.entry(url.clone()) {
+            // A client was already marked as being created for the given url.
+            // If it was returned via `restore`, take the client instance from
+            // the cache entry and return it immediately. Otherwise, try to create a
+            // new instance. If that fails, timestamp the attempt and increase the wait period.
+            Entry::Occupied(mut entry) => {
+                let cache_entry = entry.get_mut();
+                match cache_entry.take() {
+                    Some(client) => Ok(Some(client)),
+                    None => {
+                        // if enough time has elapsed, we can try to create another client:
+                        if cache_entry.ready_to_try() {
+                            match ObjectServiceClient::connect(url.clone()).await {
+                                Ok(client) => {
+                                    // mark the client in the entry as used and return it:
+                                    cache_entry.used();
+                                    Ok(Some(ID::new(client)))
+                                },
+                                Err(e) => {
+                                    log::error!("Failed to create client for {} - {:?}", error_url, e);
+                                    cache_entry.wait_longer();
+                                    // not ready, wait more:
+                                    Ok(None)
+                                }
+                            }
+                        } else {
+                            Ok(None) // still waiting or the client is in use
+                        }
+                    }
+                }
+            },
+            // If no client is present, attempt to create a new instance and
+            // a new cache entry. If the client was successfully created,
+            // return it immediately, otherwise record the attempt and
+            // signal the initial waiting period should begin before attempting
+            // to create a client again.
+            Entry::Vacant(entry) => {
+                match ObjectServiceClient::connect(url.clone()).await {
+                    Ok(client) => {
+                        entry.insert(CachedClient::using());
+                        Ok(Some(ID::new(client)))
+                    },
+                    Err(e) => {
+                        log::error!("Failed to create client for {} - {:?}", error_url, e);
+                        entry.insert(CachedClient::waiting(min_wait_time, max_wait_time));
+                        Ok(None)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Return/restore a service client
+    ///
+    /// The corresponding function to `request` that returns a client
+    /// to the `clients` map so it can be reused later.
+    async fn restore(&mut self, url: &String, client: ID<ObjectServiceClient<tonic::transport::Channel>>) -> Result<()> {
+        match self.clients.entry(url.clone()) {
+            Entry::Occupied(mut entry) => {
+                entry.get_mut().replace(client);
+                Ok(())
+            },
+            // Attempting to place a client into the map without having gone through
+            // `request` is an error:
+            Entry::Vacant(_) => Err(ReplicationError::ClientCacheError(url.clone()))
+        }
+    }
+}
+
+/// `ClientState` is used to encode a state machine for a `CacheEntry`
+/// can be in at a given time:
+///
+/// - it is waiting to attempt to create a new service client instance
+/// - a client has been created, but taken,
+/// - the client is present in the map
 #[derive(Debug)]
 enum ClientState<T> {
     Using,
@@ -158,86 +260,7 @@ impl ReplicationState {
         let snapshot_cache = cache.lock().unwrap().clone();
         let snapshot_cache = (Utc::now(), snapshot_cache);
 
-        Self { cache, config, snapshot_cache, db_pool, storage, clients: MutexF::new(HashMap::new()) }
-    }
-
-    /// Request a service client
-    ///
-    /// This assumes a one-to-one exclusive mapping between a url and an instance
-    /// of `ObjectServiceClient`. Calls to `request_client` should be paired
-    /// with an accompanying call to `return_client`, which returns the client
-    /// instance to the `clients` map.
-    ///
-    /// Potential TODO: expire clients beyond a certain age to force reconnection.
-    async fn request_client(&self, url: &String) -> Result<Option<ID<ObjectServiceClient<tonic::transport::Channel>>>> {
-        let error_url = url.clone();
-        let min_wait_time = self.config.backoff_min_wait;
-        let max_wait_time = self.config.backoff_max_wait;
-
-        match self.clients.lock().await.entry(url.clone()) {
-            // A client was already marked as being created for the given url.
-            // If it was returned via `return_client`, take the client instance from
-            // the cache entry and return it immediately. Otherwise, try to create a
-            // new instance. If that fails, timestamp the attempt and increase the wait period.
-            Entry::Occupied(mut entry) => {
-                let cache_entry = entry.get_mut();
-                match cache_entry.take() {
-                    Some(client) => Ok(Some(client)),
-                    None => {
-                        // if enough time has elapsed, we can try to create another client:
-                        if cache_entry.ready_to_try() {
-                            match ObjectServiceClient::connect(url.clone()).await {
-                                Ok(client) => {
-                                    // mark the client in the entry as used and return it:
-                                    cache_entry.used();
-                                    Ok(Some(ID::new(client)))
-                                },
-                                Err(e) => {
-                                    log::error!("Failed to create client for {} - {:?}", error_url, e);
-                                    cache_entry.wait_longer();
-                                    // not ready, wait more:
-                                    Ok(None)
-                                }
-                            }
-                        } else {
-                            Ok(None) // still waiting or the client is in use
-                        }
-                    }
-                }
-            },
-            // If no client is present, attempt to create a new instance and
-            // a new cache entry. If the client was successfully created,
-            // return it immediately, otherwise record the attempt and
-            // signal the initial waiting period should begin before attempting
-            // to create a client again.
-            Entry::Vacant(entry) => {
-                match ObjectServiceClient::connect(url.clone()).await {
-                    Ok(client) => {
-                        entry.insert(CachedClient::using());
-                        Ok(Some(ID::new(client)))
-                    },
-                    Err(e) => {
-                        log::error!("Failed to create client for {} - {:?}", error_url, e);
-                        entry.insert(CachedClient::waiting(min_wait_time, max_wait_time));
-                        Ok(None)
-                    }
-                }
-            }
-        }
-    }
-
-    /// The corresponding function to `request_client` that returns a client
-    /// to the `clients` map so it can be reused later.
-    async fn return_client(&self, url: &String, client: ID<ObjectServiceClient<tonic::transport::Channel>>) -> Result<()> {
-        match self.clients.lock().await.entry(url.clone()) {
-            Entry::Occupied(mut entry) => {
-                entry.get_mut().replace(client);
-                Ok(())
-            },
-            // Attempting to place a client into the map without having gone through
-            // `request_client` is an error:
-            Entry::Vacant(_) => Err(ReplicationError::ClientCacheError(url.clone()))
-        }
+        Self { cache, config, snapshot_cache, db_pool, storage }
     }
 }
 
@@ -287,6 +310,7 @@ async fn replicate_public_key(inner: &ReplicationState, mut client: ID<ObjectSer
         let stream = stream::iter(packets);
 
         if let Err(status) = client.put(tonic::Request::new(stream)).await {
+            // TODO: add failed object IDs to a vec for retry later
             log::error!("Failed to put object {} for key {} - {:?}", object_uuid, public_key, status);
         };
 
@@ -296,7 +320,8 @@ async fn replicate_public_key(inner: &ReplicationState, mut client: ID<ObjectSer
     Ok(ReplicationResult::new(batch_size, client))
 }
 
-async fn replicate_iteration(inner: &mut ReplicationState) {
+async fn replicate_iteration(inner: &mut ReplicationState, client_cache: &mut ClientCache) {
+
         // update snapshot cache every 5 minutes
         let last_cache_update = &inner.snapshot_cache.0;
         if last_cache_update.time() + chrono::Duration::minutes(5) < Utc::now().time() {
@@ -313,7 +338,7 @@ async fn replicate_iteration(inner: &mut ReplicationState) {
 
             keys_and_urls.push((public_key, url));
 
-            match inner.request_client(&url).await {
+            match client_cache.request(&url).await {
                 Ok(Some(client)) => {
                     futures.push(replicate_public_key(&inner, client, public_key));
                 },
@@ -332,7 +357,7 @@ async fn replicate_iteration(inner: &mut ReplicationState) {
             match result {
                 Ok(r) => {
                     log::trace!("Replicated {} items for {}", r.count, &public_key);
-                    if let Err(e) = inner.return_client(url, r.client).await {
+                    if let Err(e) = client_cache.restore(url, r.client).await {
                         log::error!("Failed to return client for {} - {:?}", url, e);
                     }
                 },
@@ -357,10 +382,10 @@ async fn replicate_iteration(inner: &mut ReplicationState) {
 }
 
 pub async fn replicate(mut inner: ReplicationState) {
+    let mut client_cache = ClientCache::new(inner.config.backoff_min_wait, inner.config.backoff_max_wait);
     loop {
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-
-        replicate_iteration(&mut inner).await;
+        replicate_iteration(&mut inner, &mut client_cache).await;
     }
 }
 
@@ -405,8 +430,6 @@ pub mod tests {
     use crate::replication::*;
 
     use std::collections::HashMap;
-    use std::thread::sleep;
-    use std::time::Duration;
 
     use futures::StreamExt;
     use sqlx::postgres::{PgPool, PgPoolOptions};
@@ -576,50 +599,59 @@ pub mod tests {
     #[tokio::test]
     #[serial(grpc_server)]
     async fn client_caching() {
-        let state_one = start_server_one().await;
-        let url_1 = format!("tcp://{}", test_config_one().url);
-        let url_2 = format!("tcp://{}", test_config_two().url);
+        let _state_one = start_server_one().await;
+
+        let config_one = test_config_one();
+        let config_two = test_config_two();
+
+        let url_one = format!("tcp://{}", config_one.url);
+        let url_two = format!("tcp://{}", config_two.url);
+
+        let mut client_cache = ClientCache::new(config_one.backoff_min_wait, config_one.backoff_max_wait);
 
         // Client 1:
 
         // Check that ReplicationState connection caching works when given the same URL:
-        let client_1 = state_one.request_client(&url_1).await.unwrap().unwrap();
+        let client_one = client_cache.request(&url_one).await.unwrap().unwrap();
         // the result from calling again with the same URL should be empty since the client is in use:
-        assert_eq!(state_one.request_client(&url_1).await.unwrap().is_none(), true);
+        assert_eq!(client_cache.request(&url_one).await.unwrap().is_none(), true);
 
-        let client_1_id_first = client_1.id().clone();
-        state_one.return_client(&url_1, client_1).await.unwrap();
+        let client_one_id_first = client_one.id().clone();
+        client_cache.restore(&url_one, client_one).await.unwrap();
         // we should get an instance again:
-        let client_1 = state_one.request_client(&url_1).await.unwrap().unwrap();
-        let client_1_id_second = client_1.id().clone();
+        let client_one = client_cache.request(&url_one).await.unwrap().unwrap();
+        let client_one_id_second = client_one.id().clone();
         // and the IDs of the the two clients should be the same:
-        assert_eq!(client_1_id_first, client_1_id_second);
+        assert_eq!(client_one_id_first, client_one_id_second);
 
         // Client 2:
 
-        let client_2 = state_one.request_client(&url_2).await.unwrap();
+        let client_two = client_cache.request(&url_two).await.unwrap();
         // client 2 should be empty because server two is not running:
-        assert_eq!(client_2.is_none(), true);
+        assert_eq!(client_two.is_none(), true);
 
         let _state_two = start_server_two().await;
-        let client_2 = state_one.request_client(&url_2).await.unwrap();
+        let client_two = client_cache.request(&url_two).await.unwrap();
         // client 2 will still fail even if state_two is ready because there's still time to wait
         // out until the client can attempt to be created again.
-        assert_eq!(client_2.is_none(), true);
+        assert_eq!(client_two.is_none(), true);
 
         // wait a little more and it should work:
-        sleep(Duration::new(3, 500));
-        let client_2 = state_one.request_client(&url_2).await.unwrap().unwrap();
+        tokio::time::sleep(tokio::time::Duration::from_millis(2_000)).await;
 
-        // also client_2 should be distinct from client one:
-        assert_ne!(client_1_id_first, client_2.id().clone());
+        let client_two = client_cache.request(&url_two).await.unwrap().unwrap();
+
+        // also client_two should be distinct from client one:
+        assert_ne!(client_one_id_first, client_two.id().clone());
     }
 
     #[tokio::test]
     #[serial(grpc_server)]
     async fn end_to_end_replication() {
+        let config_one = test_config_one();
         let mut state_one = start_server_one().await;
         let state_two = start_server_two().await;
+        let mut client_cache_one = ClientCache::new(config_one.backoff_min_wait, config_one.backoff_max_wait);
 
         let (audience1, signature1) = party_1();
         let (audience2, signature2) = party_2();
@@ -675,7 +707,7 @@ pub mod tests {
         }
 
         // run replication iteration
-        replicate_iteration(&mut state_one).await;
+        replicate_iteration(&mut state_one, &mut client_cache_one).await;
 
         assert_eq!(replication_object_uuids(&state_one.db_pool, String::from_utf8(audience1.public_key.clone()).unwrap().as_str(), 50).await.unwrap().len(), 0);
         assert_eq!(replication_object_uuids(&state_one.db_pool, String::from_utf8(audience2.public_key.clone()).unwrap().as_str(), 50).await.unwrap().len(), 1);
@@ -685,7 +717,7 @@ pub mod tests {
         assert_eq!(replication_object_uuids(&state_two.db_pool, String::from_utf8(audience2.public_key.clone()).unwrap().as_str(), 50).await.unwrap().len(), 0);
         assert_eq!(replication_object_uuids(&state_two.db_pool, String::from_utf8(audience3.public_key.clone()).unwrap().as_str(), 50).await.unwrap().len(), 0);
 
-        replicate_iteration(&mut state_one).await;
+        replicate_iteration(&mut state_one, &mut client_cache_one).await;
 
         assert_eq!(replication_object_uuids(&state_one.db_pool, String::from_utf8(audience1.public_key.clone()).unwrap().as_str(), 50).await.unwrap().len(), 0);
         assert_eq!(replication_object_uuids(&state_one.db_pool, String::from_utf8(audience2.public_key.clone()).unwrap().as_str(), 50).await.unwrap().len(), 0);
