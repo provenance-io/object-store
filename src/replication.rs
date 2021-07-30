@@ -43,7 +43,6 @@ quick_error! {
 }
 
 type Result<T> = std::result::Result<T, ReplicationError>;
-type ReplicationObject = (Uuid, Uuid);
 
 // ----------------------------------------------------------------------------
 
@@ -547,7 +546,7 @@ pub mod tests {
             storage_threshold: 5000,
             replication_batch_size: 2,
             backoff_min_wait: 5,
-            backoff_max_wait: 1
+            backoff_max_wait: 5
         }
     }
 
@@ -567,7 +566,7 @@ pub mod tests {
             storage_threshold: 5000,
             replication_batch_size: 2,
             backoff_min_wait: 5,
-            backoff_max_wait: 1
+            backoff_max_wait: 5
         }
     }
 
