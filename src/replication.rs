@@ -4,13 +4,25 @@ use crate::storage::{FileSystem, StoragePath};
 use crate::pb::object_service_client::ObjectServiceClient;
 use crate::proto_helpers::{create_data_chunk, create_multi_stream_header, create_stream_header_field, create_stream_end};
 
-use std::sync::{Arc, Mutex};
-
 use bytes::Bytes;
+use std::cmp::min;
+use std::mem;
+use std::ops::{Deref, DerefMut};
+use std::sync::{Arc, Mutex};
+use std::collections::HashMap;
+use std::collections::hash_map::Entry;
+
 use chrono::prelude::*;
 use futures::stream;
 use sqlx::postgres::PgPool;
 use quick_error::quick_error;
+use uuid::Uuid;
+
+// ----------------------------------------------------------------------------
+
+// TODO implement remaining tests
+
+// ----------------------------------------------------------------------------
 
 quick_error! {
     #[derive(Debug)]
@@ -24,14 +36,277 @@ quick_error! {
         TonicStatusError(err: tonic::Status) {
             from()
         }
+        ClientCacheError(url: String) {
+            display("no cached client found for {}", url)
+        }
     }
 }
 
 type Result<T> = std::result::Result<T, ReplicationError>;
 
-// TODO backoff failed connections
-// TODO implement client connection cache
-// TODO implement remaining tests
+// ----------------------------------------------------------------------------
+
+/// Newtype wrapper around string public keys
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+struct PublicKey(String);
+
+impl PublicKey {
+    fn new<S: Into<String>>(key: S) -> Self {
+        Self(key.into())
+    }
+}
+
+impl AsRef<str> for PublicKey {
+    fn as_ref(&self) -> &str {
+        self.0.as_str()
+    }
+}
+
+impl From<PublicKey> for String {
+    fn from(key: PublicKey) -> String {
+        key.0
+    }
+}
+
+impl std::fmt::Display for PublicKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+// ----------------------------------------------------------------------------
+
+struct ReplicationOk {
+    public_key: PublicKey,
+    url: String,
+    count: usize,
+    client: ID<ObjectServiceClient<tonic::transport::Channel>>
+}
+
+impl ReplicationOk {
+    fn new(public_key: PublicKey, url: String, count: usize, client: ID<ObjectServiceClient<tonic::transport::Channel>>) -> Self {
+        Self {
+            public_key,
+            url,
+            count,
+            client
+        }
+    }
+}
+
+struct ReplicationErr {
+    public_key: PublicKey,
+    url: String,
+    error: ReplicationError,
+    client: ID<ObjectServiceClient<tonic::transport::Channel>>
+}
+
+impl ReplicationErr {
+    fn new<E: Into<ReplicationError>>(error: E, public_key: PublicKey, url: String, client: ID<ObjectServiceClient<tonic::transport::Channel>>) -> Self {
+        Self {
+            error: error.into(),
+            public_key,
+            url,
+            client
+        }
+    }
+}
+
+// ----------------------------------------------------------------------------
+
+#[derive(Debug)]
+struct ClientCache {
+    clients: HashMap<String, CachedClient<ID<ObjectServiceClient<tonic::transport::Channel>>>>,
+    backoff_min_wait: i64,
+    backoff_max_wait: i64
+}
+
+impl ClientCache {
+    fn new(backoff_min_wait: i64, backoff_max_wait: i64) -> Self {
+        Self {
+            clients: HashMap::new(),
+            backoff_min_wait,
+            backoff_max_wait
+        }
+    }
+
+    /// Request a service client
+    ///
+    /// This assumes a one-to-one exclusive mapping between a url and an instance
+    /// of `ObjectServiceClient`. Calls to `request` should be paired
+    /// with an accompanying call to `restore`, which returns the client
+    /// instance to the `clients` map.
+    ///
+    /// Potential TODO: expire clients beyond a certain age to force reconnection.
+    async fn request(&mut self, url: &String) -> Result<Option<ID<ObjectServiceClient<tonic::transport::Channel>>>> {
+        let error_url = url.clone();
+        let min_wait_time = self.backoff_min_wait;
+        let max_wait_time = self.backoff_max_wait;
+
+        match self.clients.entry(url.clone()) {
+            // A client was already marked as being created for the given url.
+            // If it was returned via `restore`, take the client instance from
+            // the cache entry and return it immediately. Otherwise, try to create a
+            // new instance. If that fails, timestamp the attempt and increase the wait period.
+            Entry::Occupied(mut entry) => {
+                let cache_entry = entry.get_mut();
+                match cache_entry.take() {
+                    Some(client) => Ok(Some(client)),
+                    None => {
+                        // if enough time has elapsed, we can try to create another client:
+                        if cache_entry.ready_to_try() {
+                            match ObjectServiceClient::connect(url.clone()).await {
+                                Ok(client) => {
+                                    // mark the client in the entry as used and return it:
+                                    cache_entry.used();
+                                    Ok(Some(ID::new(client)))
+                                },
+                                Err(e) => {
+                                    log::error!("Failed to create client for {} - {:?}", error_url, e);
+                                    cache_entry.wait_longer();
+                                    // not ready, wait more:
+                                    Ok(None)
+                                }
+                            }
+                        } else {
+                            Ok(None) // still waiting or the client is in use
+                        }
+                    }
+                }
+            },
+            // If no client is present, attempt to create a new instance and
+            // a new cache entry. If the client was successfully created,
+            // return it immediately, otherwise record the attempt and
+            // signal the initial waiting period should begin before attempting
+            // to create a client again.
+            Entry::Vacant(entry) => {
+                match ObjectServiceClient::connect(url.clone()).await {
+                    Ok(client) => {
+                        entry.insert(CachedClient::using());
+                        Ok(Some(ID::new(client)))
+                    },
+                    Err(e) => {
+                        log::error!("Failed to create client for {} - {:?}", error_url, e);
+                        entry.insert(CachedClient::waiting(min_wait_time, max_wait_time));
+                        Ok(None)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Return/restore a service client
+    ///
+    /// The corresponding function to `request` that returns a client
+    /// to the `clients` map so it can be reused later.
+    async fn restore(&mut self, url: &String, client: ID<ObjectServiceClient<tonic::transport::Channel>>) -> Result<()> {
+        match self.clients.entry(url.clone()) {
+            Entry::Occupied(mut entry) => {
+                entry.get_mut().replace(client);
+                Ok(())
+            },
+            // Attempting to place a client into the map without having gone through
+            // `request` is an error:
+            Entry::Vacant(_) => Err(ReplicationError::ClientCacheError(url.clone()))
+        }
+    }
+}
+
+/// `ClientState` is used to describe the state  a `CacheEntry` can be in at
+/// a given time:
+///
+/// - it is waiting to attempt to create a new service client instance
+/// - a client has been created, but taken
+/// - the client is present in the map
+#[derive(Debug)]
+enum ClientState<T> {
+    Using,
+    Waiting(DateTime<Utc>, i64, i64),
+    Present(T)
+}
+
+#[derive(Debug)]
+struct CachedClient<T> {
+    state: ClientState<T>,
+}
+
+impl <T> CachedClient<T> {
+
+    pub fn using() -> Self {
+        Self { state: ClientState::Using }
+    }
+
+    pub fn waiting(min_wait_time: i64, max_wait_time: i64) -> Self {
+        Self { state: ClientState::Waiting(Utc::now(), min_wait_time, max_wait_time) }
+    }
+
+    pub fn take(&mut self) -> Option<T> {
+        match self.state {
+            ClientState::Present(_) =>
+                if let ClientState::Present(client) = mem::replace(&mut self.state, ClientState::Using) {
+                    Some(client)
+                } else {
+                    None
+                },
+            _ => None
+        }
+    }
+
+    pub fn replace(&mut self, instance: T) {
+        self.state = ClientState::Present(instance);
+    }
+
+    pub fn ready_to_try(&self) -> bool {
+        match self.state {
+            ClientState::Using | ClientState::Present(_) => false,
+            ClientState::Waiting(last_attempt, wait_time, _) => (Utc::now() - last_attempt) >= chrono::Duration::seconds(wait_time)
+        }
+    }
+
+    pub fn used(&mut self) {
+        self.state = ClientState::Using;
+    }
+
+    pub fn wait_longer(&mut self) {
+        match self.state {
+            ClientState::Waiting(_, wait_time, max_wait_time) => {
+                self.state = ClientState::Waiting(Utc::now(), min(wait_time * 2, max_wait_time), max_wait_time)
+            },
+            _ => {}
+        }
+    }
+}
+
+// Grafts on an additional ID associated with the contents, but allows for
+// dereferencing whatever's contained inside and also prevents cloning.
+#[derive(Debug)]
+struct ID<T>(T, Uuid);
+
+impl <T> ID<T> {
+    fn new(contents: T) -> Self {
+        Self(contents, Uuid::new_v4())
+    }
+
+    #[allow(dead_code)]
+    fn id(&self) -> &Uuid {
+        &self.1
+    }
+}
+
+impl <T> Deref for ID<T> {
+    type Target = T;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl <T> DerefMut for ID<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+// ----------------------------------------------------------------------------
 
 #[derive(Debug)]
 pub struct ReplicationState {
@@ -39,8 +314,7 @@ pub struct ReplicationState {
     config: Arc<Config>,
     snapshot_cache: (DateTime<Utc>, Cache),
     db_pool: Arc<PgPool>,
-    storage: Arc<FileSystem>,
-    // clients: Arc<HashMap<String, ObjectServiceClient<tonic::transport::Channel>>>,
+    storage: Arc<FileSystem>
 }
 
 impl ReplicationState {
@@ -52,13 +326,34 @@ impl ReplicationState {
     }
 }
 
-async fn replicate_public_key(inner: &ReplicationState, public_key: &String, url: String) -> Result<usize> {
-    let batch = datastore::replication_object_uuids(&inner.db_pool, public_key, inner.config.replication_batch_size).await?;
+// ----------------------------------------------------------------------------
+
+async fn replicate_public_key(inner: &ReplicationState,
+                              mut client: ID<ObjectServiceClient<tonic::transport::Channel>>,
+                              public_key: PublicKey,
+                              url: &String) -> std::result::Result<ReplicationOk, ReplicationErr> {
+
+    // unfortunately, `?` cannot be used because `client` is considered moved into
+    // `ReplicationResult:err`, whereas, the use of return makes the fact explicit
+    // that client cannot be used beyond the error case.
+    let batch = match datastore::replication_object_uuids(&inner.db_pool, public_key.as_ref(), inner.config.replication_batch_size).await {
+        Ok(data) => data,
+        Err(e) => return Err(ReplicationErr::new(e, public_key, url.clone(), client))
+    };
+
     let batch_size = batch.len();
-    let mut client = ObjectServiceClient::connect(url).await?;
+
+    if batch_size == 0 {
+        return Ok(ReplicationOk::new(public_key, url.clone(), 0, client));
+    }
 
     for (uuid, object_uuid) in batch.iter() {
-        let object = datastore::get_object_by_uuid(&inner.db_pool, &object_uuid).await?;
+
+        let object = match datastore::get_object_by_uuid(&inner.db_pool, object_uuid).await {
+            Ok(data) => data,
+            Err(e) => return Err(ReplicationErr::new(e, public_key, url.clone(), client))
+        };
+
         let payload = if let Some(payload) = &object.payload {
             Bytes::copy_from_slice(payload.as_slice())
         } else {
@@ -66,11 +361,15 @@ async fn replicate_public_key(inner: &ReplicationState, public_key: &String, url
                 dir: object.directory.clone(),
                 file: object.name.clone(),
             };
-            let payload = inner.storage.fetch(&storage_path, object.dime_length as u64).await
-                .map_err(Into::<OsError>::into)?;
+
+            let payload = match inner.storage.fetch(&storage_path, object.dime_length as u64).await {
+                Ok(data) => data,
+                Err(e) => return Err(ReplicationErr::new(Into::<OsError>::into(e), public_key, url.clone(), client))
+            };
 
             Bytes::copy_from_slice(payload.as_slice())
         };
+
         let mut packets = Vec::new();
 
         packets.push(create_multi_stream_header(uuid::Uuid::nil(), 1, true));
@@ -94,59 +393,91 @@ async fn replicate_public_key(inner: &ReplicationState, public_key: &String, url
 
         let stream = stream::iter(packets);
 
-        client.put(tonic::Request::new(stream)).await?;
-
-        datastore::ack_object_replication(&inner.db_pool, &uuid).await?;
-    }
-
-    Ok(batch_size)
-}
-
-async fn replicate_iteration(inner: &mut ReplicationState) {
-        // update snapshot cache every 5 minutes
-        let last_cache_update = &inner.snapshot_cache.0;
-        if last_cache_update.time() + chrono::Duration::minutes(5) < Utc::now().time() {
-            log::trace!("Updating snapshot cache");
-
-            let snapshot_cache = inner.cache.lock().unwrap().clone();
-            inner.snapshot_cache = (Utc::now(), snapshot_cache);
-        }
-
-        let mut keys = Vec::new();
-        let mut futures = Vec::new();
-
-        for (public_key, url) in &inner.snapshot_cache.1.remote_public_keys {
-            keys.push(public_key);
-            futures.push(replicate_public_key(&inner, public_key, url.clone()));
-        }
-
-        let results = futures::future::join_all(futures).await;
-
-        for (public_key, result) in keys.iter().zip(results) {
-            match result {
-                Ok(count) => log::trace!("Replicated {} items for {}", count, &public_key),
-                Err(e) => {
-                    match e {
-                        ReplicationError::CrateError(_) => {
-                            log::error!("Failed replication for {} - {:?}", public_key, e)
-                        },
-                        ReplicationError::TonicStatusError(_) => {
-                            log::error!("Failed replication for {} - {:?}", public_key, e)
-                        },
-                        ReplicationError::TonicTransportError(e) => {
-                            log::trace!("Failed replication for {} - {:?}", public_key, e)
-                        },
-                    }
-                },
+        match client.put(tonic::Request::new(stream)).await {
+            Ok(_) => {
+                match datastore::ack_object_replication(&inner.db_pool, uuid).await {
+                    Ok(data) => data,
+                    Err(e) => return Err(ReplicationErr::new(e, public_key, url.clone(), client))
+                };
+            },
+            Err(status) => {
+                log::error!("Failed to put object {} for key {} - {:?}", object_uuid, public_key, status);
             }
         }
+    }
+
+    Ok(ReplicationOk::new(public_key, url.clone(), batch_size, client))
+}
+
+async fn replicate_iteration(inner: &mut ReplicationState, client_cache: &mut ClientCache) {
+
+    // Update snapshot cache every 5 minutes
+    let last_cache_update = &inner.snapshot_cache.0;
+    if last_cache_update.time() + chrono::Duration::minutes(5) < Utc::now().time() {
+        log::trace!("Updating snapshot cache");
+
+        let snapshot_cache = inner.cache.lock().unwrap().clone();
+        inner.snapshot_cache = (Utc::now(), snapshot_cache);
+    }
+
+    let mut futures = Vec::new();
+
+    for (public_key, url) in &inner.snapshot_cache.1.remote_public_keys {
+
+        let public_key = PublicKey::new(public_key);
+
+        match client_cache.request(&url).await {
+            Ok(Some(client)) => {
+                futures.push(replicate_public_key(&inner, client, public_key.clone(), &url));
+            },
+            Ok(None) => {
+                log::trace!("Waiting to retry for client for {}", url);
+            },
+            Err(e) => {
+                log::error!("Failed to cache service connection {} - {:?}", url, e)
+            }
+        }
+    }
+
+    // TODO: consider using FuturesUnordered instead of join_all
+
+    for result in futures::future::join_all(futures).await {
+
+        let (client, url) = match result {
+            Ok(ReplicationOk { public_key, url, count, client, .. }) => {
+                log::trace!("Replicated {} items for {}", count, public_key);
+                (client, url)
+            },
+            Err(ReplicationErr { error, client, public_key, url }) => {
+                match error {
+                    ReplicationError::ClientCacheError(_) => {
+                        log::error!("Failed replication for {} - {:?}", public_key, error)
+                    },
+                    ReplicationError::CrateError(_) => {
+                        log::error!("Failed replication for {} - {:?}", public_key, error)
+                    },
+                    ReplicationError::TonicStatusError(_) => {
+                        log::error!("Failed replication for {} - {:?}", public_key, error)
+                    },
+                    ReplicationError::TonicTransportError(e) => {
+                        log::trace!("Failed replication for {} - {:?}", public_key, e)
+                    },
+                }
+                (client, url)
+            }
+        };
+
+        if let Err(e) = client_cache.restore(&url, client).await {
+            log::error!("Failed to return client for {} - {:?}", &url, e);
+        }
+    }
 }
 
 pub async fn replicate(mut inner: ReplicationState) {
+    let mut client_cache = ClientCache::new(inner.config.backoff_min_wait, inner.config.backoff_max_wait);
     loop {
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-
-        replicate_iteration(&mut inner).await;
+        replicate_iteration(&mut inner, &mut client_cache).await;
     }
 }
 
@@ -214,6 +545,8 @@ pub mod tests {
             storage_base_path: "/tmp".to_owned(),
             storage_threshold: 5000,
             replication_batch_size: 2,
+            backoff_min_wait: 5,
+            backoff_max_wait: 5
         }
     }
 
@@ -232,6 +565,8 @@ pub mod tests {
             storage_base_path: "/tmp".to_owned(),
             storage_threshold: 5000,
             replication_batch_size: 2,
+            backoff_min_wait: 5,
+            backoff_max_wait: 5
         }
     }
 
@@ -355,9 +690,61 @@ pub mod tests {
 
     #[tokio::test]
     #[serial(grpc_server)]
+    async fn client_caching() {
+        let _state_one = start_server_one().await;
+
+        let config_one = test_config_one();
+        let config_two = test_config_two();
+
+        let url_one = format!("tcp://{}", config_one.url);
+        let url_two = format!("tcp://{}", config_two.url);
+
+        let mut client_cache = ClientCache::new(config_one.backoff_min_wait, config_one.backoff_max_wait);
+
+        // Client 1:
+
+        // Check that ReplicationState connection caching works when given the same URL:
+        let client_one = client_cache.request(&url_one).await.unwrap().unwrap();
+        // the result from calling again with the same URL should be empty since the client is in use:
+        assert_eq!(client_cache.request(&url_one).await.unwrap().is_none(), true);
+
+        let client_one_id_first = client_one.id().clone();
+        client_cache.restore(&url_one, client_one).await.unwrap();
+        // we should get an instance again:
+        let client_one = client_cache.request(&url_one).await.unwrap().unwrap();
+        let client_one_id_second = client_one.id().clone();
+        // The IDs of the the two clients should be the same, since they originated from the
+        // same URL:
+        assert_eq!(client_one_id_first, client_one_id_second);
+
+        // Client 2:
+
+        let client_two = client_cache.request(&url_two).await.unwrap();
+        // client 2 should be empty because server two is not running:
+        assert_eq!(client_two.is_none(), true);
+
+        let _state_two = start_server_two().await;
+        let client_two = client_cache.request(&url_two).await.unwrap();
+        // client 2 will still fail even if state_two is ready because there's still time to wait
+        // out until the client can attempt to be created again.
+        assert_eq!(client_two.is_none(), true);
+
+        // wait a little more and it should work:
+        tokio::time::sleep(tokio::time::Duration::from_millis(2_000)).await;
+
+        let client_two = client_cache.request(&url_two).await.unwrap().unwrap();
+
+        // also client_two should be distinct from client one:
+        assert_ne!(client_one_id_first, client_two.id().clone());
+    }
+
+    #[tokio::test]
+    #[serial(grpc_server)]
     async fn end_to_end_replication() {
+        let config_one = test_config_one();
         let mut state_one = start_server_one().await;
         let state_two = start_server_two().await;
+        let mut client_cache_one = ClientCache::new(config_one.backoff_min_wait, config_one.backoff_max_wait);
 
         let (audience1, signature1) = party_1();
         let (audience2, signature2) = party_2();
@@ -413,7 +800,7 @@ pub mod tests {
         }
 
         // run replication iteration
-        replicate_iteration(&mut state_one).await;
+        replicate_iteration(&mut state_one, &mut client_cache_one).await;
 
         assert_eq!(replication_object_uuids(&state_one.db_pool, String::from_utf8(audience1.public_key.clone()).unwrap().as_str(), 50).await.unwrap().len(), 0);
         assert_eq!(replication_object_uuids(&state_one.db_pool, String::from_utf8(audience2.public_key.clone()).unwrap().as_str(), 50).await.unwrap().len(), 1);
@@ -423,7 +810,7 @@ pub mod tests {
         assert_eq!(replication_object_uuids(&state_two.db_pool, String::from_utf8(audience2.public_key.clone()).unwrap().as_str(), 50).await.unwrap().len(), 0);
         assert_eq!(replication_object_uuids(&state_two.db_pool, String::from_utf8(audience3.public_key.clone()).unwrap().as_str(), 50).await.unwrap().len(), 0);
 
-        replicate_iteration(&mut state_one).await;
+        replicate_iteration(&mut state_one, &mut client_cache_one).await;
 
         assert_eq!(replication_object_uuids(&state_one.db_pool, String::from_utf8(audience1.public_key.clone()).unwrap().as_str(), 50).await.unwrap().len(), 0);
         assert_eq!(replication_object_uuids(&state_one.db_pool, String::from_utf8(audience2.public_key.clone()).unwrap().as_str(), 50).await.unwrap().len(), 0);

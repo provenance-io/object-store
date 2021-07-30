@@ -16,6 +16,8 @@ pub struct Config {
     pub storage_base_path: String,
     pub storage_threshold: u32,
     pub replication_batch_size: i32,
+    pub backoff_min_wait: i64,
+    pub backoff_max_wait: i64,
 }
 
 impl Config {
@@ -51,8 +53,31 @@ impl Config {
             .unwrap_or("10".to_owned())
             .parse()
             .expect("REPLICATION_BATCH_SIZE could not be parsed into a u32");
+        let backoff_min_wait = env::var("BACKOFF_MIN_WAIT")
+            .unwrap_or("30".to_owned()) // 30 seconds
+            .parse()
+            .expect("BACKOFF_MIN_WAIT could not be parsed into a i64");
+        let backoff_max_wait = env::var("BACKOFF_MAX_WAIT")
+            .unwrap_or("1920".to_owned()) // 32 minutes
+            .parse()
+            .expect("BACKOFF_MAX_WAIT could not be parsed into a i64");
 
-        Self { url, uri_host, db_connection_pool_size, db_host, db_port, db_user, db_password, db_database, db_schema, storage_type, storage_base_path, storage_threshold, replication_batch_size }
+        Self {
+            url,
+            uri_host,
+            db_connection_pool_size,
+            db_host, db_port,
+            db_user,
+            db_password,
+            db_database,
+            db_schema,
+            storage_type,
+            storage_base_path,
+            storage_threshold,
+            replication_batch_size,
+            backoff_min_wait,
+            backoff_max_wait
+        }
     }
 
     pub fn db_connection_string(&self) -> String {
