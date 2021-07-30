@@ -18,6 +18,12 @@ use sqlx::postgres::PgPool;
 use quick_error::quick_error;
 use uuid::Uuid;
 
+// ----------------------------------------------------------------------------
+
+// TODO implement remaining tests
+
+// ----------------------------------------------------------------------------
+
 quick_error! {
     #[derive(Debug)]
     enum ReplicationError {
@@ -37,31 +43,77 @@ quick_error! {
 }
 
 type Result<T> = std::result::Result<T, ReplicationError>;
+type ReplicationObject = (Uuid, Uuid);
 
-// TODO implement remaining tests
+// ----------------------------------------------------------------------------
 
-#[derive(Debug)]
-pub struct ReplicationState {
-    cache: Arc<Mutex<Cache>>,
-    config: Arc<Config>,
-    snapshot_cache: (DateTime<Utc>, Cache),
-    db_pool: Arc<PgPool>,
-    storage: Arc<FileSystem>
+/// Newtype wrapper around string public keys
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+struct PublicKey(String);
+
+impl PublicKey {
+    fn new<S: Into<String>>(key: S) -> Self {
+        Self(key.into())
+    }
 }
 
-struct ReplicationResult {
+impl AsRef<str> for PublicKey {
+    fn as_ref(&self) -> &str {
+        self.0.as_str()
+    }
+}
+
+impl From<PublicKey> for String {
+    fn from(key: PublicKey) -> String {
+        key.0
+    }
+}
+
+impl std::fmt::Display for PublicKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+// ----------------------------------------------------------------------------
+
+struct ReplicationOk {
+    public_key: PublicKey,
+    url: String,
     count: usize,
     client: ID<ObjectServiceClient<tonic::transport::Channel>>
 }
 
-impl ReplicationResult {
-    pub fn new(count: usize, client: ID<ObjectServiceClient<tonic::transport::Channel>>) -> Self {
+impl ReplicationOk {
+    fn new(public_key: PublicKey, url: String, count: usize, client: ID<ObjectServiceClient<tonic::transport::Channel>>) -> Self {
         Self {
+            public_key,
+            url,
             count,
             client
         }
     }
 }
+
+struct ReplicationErr {
+    public_key: PublicKey,
+    url: String,
+    error: ReplicationError,
+    client: ID<ObjectServiceClient<tonic::transport::Channel>>
+}
+
+impl ReplicationErr {
+    fn new<E: Into<ReplicationError>>(error: E, public_key: PublicKey, url: String, client: ID<ObjectServiceClient<tonic::transport::Channel>>) -> Self {
+        Self {
+            error: error.into(),
+            public_key,
+            url,
+            client
+        }
+    }
+}
+
+// ----------------------------------------------------------------------------
 
 #[derive(Debug)]
 struct ClientCache {
@@ -255,6 +307,17 @@ impl <T> DerefMut for ID<T> {
     }
 }
 
+// ----------------------------------------------------------------------------
+
+#[derive(Debug)]
+pub struct ReplicationState {
+    cache: Arc<Mutex<Cache>>,
+    config: Arc<Config>,
+    snapshot_cache: (DateTime<Utc>, Cache),
+    db_pool: Arc<PgPool>,
+    storage: Arc<FileSystem>
+}
+
 impl ReplicationState {
     pub fn new(cache: Arc<Mutex<Cache>>, config: Arc<Config>, db_pool: Arc<PgPool>, storage: Arc<FileSystem>) -> Self {
         let snapshot_cache = cache.lock().unwrap().clone();
@@ -264,16 +327,34 @@ impl ReplicationState {
     }
 }
 
-async fn replicate_public_key(inner: &ReplicationState, mut client: ID<ObjectServiceClient<tonic::transport::Channel>>, public_key: &String) -> Result<ReplicationResult> {
-    let batch = datastore::replication_object_uuids(&inner.db_pool, public_key, inner.config.replication_batch_size).await?;
+// ----------------------------------------------------------------------------
+
+async fn replicate_public_key(inner: &ReplicationState,
+                              mut client: ID<ObjectServiceClient<tonic::transport::Channel>>,
+                              public_key: PublicKey,
+                              url: &String) -> std::result::Result<ReplicationOk, ReplicationErr> {
+
+    // unfortunately, `?` cannot be used because `client` is considered moved into
+    // `ReplicationResult:err`, whereas, the use of return makes the fact explicit
+    // that client cannot be used beyond the error case.
+    let batch = match datastore::replication_object_uuids(&inner.db_pool, public_key.as_ref(), inner.config.replication_batch_size).await {
+        Ok(data) => data,
+        Err(e) => return Err(ReplicationErr::new(e, public_key, url.clone(), client))
+    };
+
     let batch_size = batch.len();
 
     if batch_size == 0 {
-        return Ok(ReplicationResult::new(0, client));
+        return Ok(ReplicationOk::new(public_key, url.clone(), 0, client));
     }
 
     for (uuid, object_uuid) in batch.iter() {
-        let object = datastore::get_object_by_uuid(&inner.db_pool, &object_uuid).await?;
+
+        let object = match datastore::get_object_by_uuid(&inner.db_pool, object_uuid).await {
+            Ok(data) => data,
+            Err(e) => return Err(ReplicationErr::new(e, public_key, url.clone(), client))
+        };
+
         let payload = if let Some(payload) = &object.payload {
             Bytes::copy_from_slice(payload.as_slice())
         } else {
@@ -281,11 +362,15 @@ async fn replicate_public_key(inner: &ReplicationState, mut client: ID<ObjectSer
                 dir: object.directory.clone(),
                 file: object.name.clone(),
             };
-            let payload = inner.storage.fetch(&storage_path, object.dime_length as u64).await
-                .map_err(Into::<OsError>::into)?;
+
+            let payload = match inner.storage.fetch(&storage_path, object.dime_length as u64).await {
+                Ok(data) => data,
+                Err(e) => return Err(ReplicationErr::new(Into::<OsError>::into(e), public_key, url.clone(), client))
+            };
 
             Bytes::copy_from_slice(payload.as_slice())
         };
+
         let mut packets = Vec::new();
 
         packets.push(create_multi_stream_header(uuid::Uuid::nil(), 1, true));
@@ -309,76 +394,84 @@ async fn replicate_public_key(inner: &ReplicationState, mut client: ID<ObjectSer
 
         let stream = stream::iter(packets);
 
-        if let Err(status) = client.put(tonic::Request::new(stream)).await {
-            // TODO: add failed object IDs to a vec for retry later
-            log::error!("Failed to put object {} for key {} - {:?}", object_uuid, public_key, status);
-        };
-
-        datastore::ack_object_replication(&inner.db_pool, &uuid).await?;
+        match client.put(tonic::Request::new(stream)).await {
+            Ok(_) => {
+                match datastore::ack_object_replication(&inner.db_pool, uuid).await {
+                    Ok(data) => data,
+                    Err(e) => return Err(ReplicationErr::new(e, public_key, url.clone(), client))
+                };
+            },
+            Err(status) => {
+                log::error!("Failed to put object {} for key {} - {:?}", object_uuid, public_key, status);
+            }
+        }
     }
 
-    Ok(ReplicationResult::new(batch_size, client))
+    Ok(ReplicationOk::new(public_key, url.clone(), batch_size, client))
 }
 
 async fn replicate_iteration(inner: &mut ReplicationState, client_cache: &mut ClientCache) {
 
-        // update snapshot cache every 5 minutes
-        let last_cache_update = &inner.snapshot_cache.0;
-        if last_cache_update.time() + chrono::Duration::minutes(5) < Utc::now().time() {
-            log::trace!("Updating snapshot cache");
+    // Update snapshot cache every 5 minutes
+    let last_cache_update = &inner.snapshot_cache.0;
+    if last_cache_update.time() + chrono::Duration::minutes(5) < Utc::now().time() {
+        log::trace!("Updating snapshot cache");
 
-            let snapshot_cache = inner.cache.lock().unwrap().clone();
-            inner.snapshot_cache = (Utc::now(), snapshot_cache);
-        }
+        let snapshot_cache = inner.cache.lock().unwrap().clone();
+        inner.snapshot_cache = (Utc::now(), snapshot_cache);
+    }
 
-        let mut keys_and_urls = Vec::new();
-        let mut futures = Vec::new();
+    let mut futures = Vec::new();
 
-        for (public_key, url) in &inner.snapshot_cache.1.remote_public_keys {
+    for (public_key, url) in &inner.snapshot_cache.1.remote_public_keys {
 
-            keys_and_urls.push((public_key, url));
+        let public_key = PublicKey::new(public_key);
 
-            match client_cache.request(&url).await {
-                Ok(Some(client)) => {
-                    futures.push(replicate_public_key(&inner, client, public_key));
-                },
-                Ok(None) => {
-                    log::trace!("Waiting to retry for client for {}", url);
-                }
-                Err(e) => {
-                    log::error!("Failed to cache service connection {} - {:?}", url, e)
-                }
+        match client_cache.request(&url).await {
+            Ok(Some(client)) => {
+                futures.push(replicate_public_key(&inner, client, public_key.clone(), &url));
+            },
+            Ok(None) => {
+                log::trace!("Waiting to retry for client for {}", url);
+            },
+            Err(e) => {
+                log::error!("Failed to cache service connection {} - {:?}", url, e)
             }
         }
+    }
 
-        let results = futures::future::join_all(futures).await;
+    // TODO: consider using FuturesUnordered instead of join_all
 
-        for ((public_key, url), result) in keys_and_urls.iter().zip(results) {
-            match result {
-                Ok(r) => {
-                    log::trace!("Replicated {} items for {}", r.count, &public_key);
-                    if let Err(e) = client_cache.restore(url, r.client).await {
-                        log::error!("Failed to return client for {} - {:?}", url, e);
-                    }
-                },
-                Err(e) => {
-                    match e {
-                        ReplicationError::ClientCacheError(_) => {
-                            log::error!("Failed replication for {} - {:?}", public_key, e)
-                        },
-                        ReplicationError::CrateError(_) => {
-                            log::error!("Failed replication for {} - {:?}", public_key, e)
-                        },
-                        ReplicationError::TonicStatusError(_) => {
-                            log::error!("Failed replication for {} - {:?}", public_key, e)
-                        },
-                        ReplicationError::TonicTransportError(e) => {
-                            log::trace!("Failed replication for {} - {:?}", public_key, e)
-                        },
-                    }
-                },
+    for result in futures::future::join_all(futures).await {
+
+        let (client, url) = match result {
+            Ok(ReplicationOk { public_key, url, count, client, .. }) => {
+                log::trace!("Replicated {} items for {}", count, public_key);
+                (client, url)
+            },
+            Err(ReplicationErr { error, client, public_key, url }) => {
+                match error {
+                    ReplicationError::ClientCacheError(_) => {
+                        log::error!("Failed replication for {} - {:?}", public_key, error)
+                    },
+                    ReplicationError::CrateError(_) => {
+                        log::error!("Failed replication for {} - {:?}", public_key, error)
+                    },
+                    ReplicationError::TonicStatusError(_) => {
+                        log::error!("Failed replication for {} - {:?}", public_key, error)
+                    },
+                    ReplicationError::TonicTransportError(e) => {
+                        log::trace!("Failed replication for {} - {:?}", public_key, e)
+                    },
+                }
+                (client, url)
             }
+        };
+
+        if let Err(e) = client_cache.restore(&url, client).await {
+            log::error!("Failed to return client for {} - {:?}", &url, e);
         }
+    }
 }
 
 pub async fn replicate(mut inner: ReplicationState) {
