@@ -131,7 +131,7 @@ async fn main() -> Result<()> {
 
     // TODO add server fields that make sense
     Server::builder()
-        .layer(MinitraceGrpcMiddlewareLayer { sender: datadog_sender })
+        .layer(MinitraceGrpcMiddlewareLayer::new(datadog_sender))
         .add_service(health_service)
         .add_service(PublicKeyServiceServer::new(public_key_service))
         .add_service(MailboxServiceServer::new(mailbox_service))

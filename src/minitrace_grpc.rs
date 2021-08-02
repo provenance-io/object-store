@@ -7,7 +7,13 @@ use tower::{Layer, Service};
 
 #[derive(Debug, Clone)]
 pub struct MinitraceGrpcMiddlewareLayer {
-    pub sender: Sender<MinitraceSpans>,
+    sender: Sender<MinitraceSpans>,
+}
+
+impl MinitraceGrpcMiddlewareLayer {
+    pub fn new(sender: Sender<MinitraceSpans>) -> Self {
+        Self { sender }
+    }
 }
 
 impl<S> Layer<S> for MinitraceGrpcMiddlewareLayer {
