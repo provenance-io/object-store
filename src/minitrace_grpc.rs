@@ -1,7 +1,8 @@
-use std::{net::{IpAddr, SocketAddr}, sync::mpsc::{Receiver, Sender}, task::{Context, Poll}};
+use std::{net::{IpAddr, SocketAddr}, task::{Context, Poll}};
 
 use minitrace::{FutureExt, Span};
 use minitrace_datadog::Reporter;
+use tokio::{net::UdpSocket, sync::mpsc::{Receiver, Sender}};
 use tonic::{body::BoxBody, codegen::http::HeaderValue, transport::Body};
 use tower::{Layer, Service};
 
@@ -80,7 +81,7 @@ where
                 parent_span_id,
                 span_id_prefix,
                 spans: Box::new(spans)
-            }).expect("Failed to send spans to channel");
+            }).await.unwrap_or(());
 
             Ok(response)
         })
@@ -94,19 +95,28 @@ pub struct MinitraceSpans {
     spans: Box<Vec<minitrace::span::Span>>
 }
 
-pub async fn report_datadog_traces(receiver: Receiver<MinitraceSpans>, host: IpAddr, port: u16, service_name: String) {
+pub async fn report_datadog_traces(mut receiver: Receiver<MinitraceSpans>, host: IpAddr, port: u16, service_name: String) {
     let socket = SocketAddr::new(host, port);
-    loop {
-        let spans = receiver.recv().unwrap();
 
-        let bytes = Reporter::encode(
-            &service_name,
-            spans.trace_id,
-            spans.parent_span_id,
-            spans.span_id_prefix,
-            &*spans.spans,
-        )
-        .expect("encode error");
-        Reporter::report_blocking(socket, bytes).expect("report error");
+    loop {
+        let spans = receiver.recv().await;
+
+        if let Some(spans) = spans {
+            let bytes = Reporter::encode(
+                &service_name,
+                spans.trace_id,
+                spans.parent_span_id,
+                spans.span_id_prefix,
+                &*spans.spans,
+            );
+            if let Ok(bytes) = bytes {
+                let response = Reporter::report_blocking(socket, bytes);
+                if let Err(error) = response {
+                    println!("error sending dd trace {:#?}", error);
+                }
+            } else {
+                println!("Error encoding spans");
+            }
+        }
     }
 }

@@ -23,9 +23,9 @@ use crate::types::{OsError, Result};
 use crate::storage::FileSystem;
 use crate::replication::{reap_unknown_keys, replicate, ReplicationState};
 
-use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex};
 use sqlx::{migrate::Migrator, postgres::{PgPool, PgPoolOptions}, Executor};
+use tokio::sync::mpsc::channel;
 use tonic::transport::Server;
 
 mod pb {
@@ -124,7 +124,7 @@ async fn main() -> Result<()> {
     // start unknown reaper - removes replication objects for public_keys that moved from Unkown -> Local
     tokio::spawn(reap_unknown_keys(Arc::clone(&pool), Arc::clone(&cache)));
     // start datadog reporter
-    let (datadog_sender, datadog_receiver) = channel::<MinitraceSpans>();
+    let (datadog_sender, datadog_receiver) = channel::<MinitraceSpans>(10);
     tokio::spawn(report_datadog_traces(datadog_receiver, config.dd_agent_host.clone(), config.dd_agent_port, config.dd_service_name.clone()));
 
     log::info!("Starting server on {:?}", &config.url);
