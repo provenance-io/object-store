@@ -864,6 +864,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "hyper-tls"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d6183ddfa99b85da61a140bea0efc93fdf56ceaa041b37d553518030827f9905"
+dependencies = [
+ "bytes 1.0.1",
+ "hyper 0.14.11",
+ "native-tls",
+ "tokio 1.9.0",
+ "tokio-native-tls",
+]
+
+[[package]]
 name = "idna"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1058,7 +1071,7 @@ dependencies = [
 [[package]]
 name = "minitrace"
 version = "0.1.0"
-source = "git+https://github.com/tikv/minitrace-rust.git#ee6ec8fe2c60518011ffd8cae0b99b6a5a1943d3"
+source = "git+https://github.com/tikv/minitrace-rust.git#6badc9866af3a80219613c2d5c19af41c336d18f"
 dependencies = [
  "crossbeam",
  "minstant",
@@ -1068,10 +1081,10 @@ dependencies = [
 [[package]]
 name = "minitrace-datadog"
 version = "0.1.0"
-source = "git+https://github.com/tikv/minitrace-rust.git#ee6ec8fe2c60518011ffd8cae0b99b6a5a1943d3"
+source = "git+https://github.com/tikv/minitrace-rust.git#6badc9866af3a80219613c2d5c19af41c336d18f"
 dependencies = [
  "minitrace",
- "reqwest",
+ "reqwest 0.10.10",
  "rmp-serde",
  "serde",
 ]
@@ -1258,6 +1271,7 @@ dependencies = [
  "prost-types",
  "quick-error",
  "rand",
+ "reqwest 0.11.4",
  "serde",
  "serde_json",
  "serial_test",
@@ -1657,7 +1671,7 @@ dependencies = [
  "http",
  "http-body 0.3.1",
  "hyper 0.13.10",
- "hyper-tls",
+ "hyper-tls 0.4.3",
  "ipnet",
  "js-sys",
  "lazy_static",
@@ -1671,6 +1685,40 @@ dependencies = [
  "serde_urlencoded",
  "tokio 0.2.25",
  "tokio-tls",
+ "url",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "winreg",
+]
+
+[[package]]
+name = "reqwest"
+version = "0.11.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "246e9f61b9bb77df069a947682be06e31ac43ea37862e244a69f177694ea6d22"
+dependencies = [
+ "base64",
+ "bytes 1.0.1",
+ "encoding_rs",
+ "futures-core",
+ "futures-util",
+ "http",
+ "http-body 0.4.2",
+ "hyper 0.14.11",
+ "hyper-tls 0.5.0",
+ "ipnet",
+ "js-sys",
+ "lazy_static",
+ "log",
+ "mime",
+ "native-tls",
+ "percent-encoding",
+ "pin-project-lite 0.2.7",
+ "serde",
+ "serde_urlencoded",
+ "tokio 1.9.0",
+ "tokio-native-tls",
  "url",
  "wasm-bindgen",
  "wasm-bindgen-futures",
@@ -2205,6 +2253,16 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "tokio-native-tls"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f7d995660bd2b7f8c1568414c1126076c13fbb725c40112dc0120b78eb9b717b"
+dependencies = [
+ "native-tls",
+ "tokio 1.9.0",
 ]
 
 [[package]]

@@ -2,7 +2,8 @@ use std::{net::{IpAddr, SocketAddr}, task::{Context, Poll}};
 
 use minitrace::{FutureExt, Span};
 use minitrace_datadog::Reporter;
-use tokio::{net::UdpSocket, sync::mpsc::{Receiver, Sender}};
+use reqwest::header::HeaderMap;
+use tokio::{sync::mpsc::{Receiver, Sender}};
 use tonic::{body::BoxBody, codegen::http::HeaderValue, transport::Body};
 use tower::{Layer, Service};
 
@@ -97,26 +98,45 @@ pub struct MinitraceSpans {
 
 pub async fn report_datadog_traces(mut receiver: Receiver<MinitraceSpans>, host: IpAddr, port: u16, service_name: String) {
     let socket = SocketAddr::new(host, port);
-
-    loop {
-        let spans = receiver.recv().await;
-
-        if let Some(spans) = spans {
-            let bytes = Reporter::encode(
-                &service_name,
-                spans.trace_id,
-                spans.parent_span_id,
-                spans.span_id_prefix,
-                &*spans.spans,
-            );
-            if let Ok(bytes) = bytes {
-                let response = Reporter::report_blocking(socket, bytes);
-                if let Err(error) = response {
-                    println!("error sending dd trace {:#?}", error);
+    let url = format!("http://{}/v0.4/traces", socket);
+    let mut headers = HeaderMap::new();
+    headers.append("Datadog-Meta-Tracer-Version", "v1.27.0".parse().unwrap());
+    headers.append("Content-Type", "application/msgpack".parse().unwrap());
+    let client = reqwest::Client::builder()
+        .default_headers(headers)
+        .build();
+    
+    match client {
+        Ok(client) => {
+            while let Some(spans) = receiver.recv().await {
+                let bytes = Reporter::encode(
+                    &service_name,
+                    spans.trace_id,
+                    spans.parent_span_id,
+                    spans.span_id_prefix,
+                    &*spans.spans,
+                );
+        
+                match bytes {
+                    Ok(bytes) => {
+                        let response = client.post(&url)
+                            .body(bytes)
+                            .send().await;
+        
+                        if let Err(error) = response {
+                            log::warn!("error sending dd trace {:#?}", error);
+                        }
+                    },
+                    Err(error) => {
+                        log::warn!("Error encoding spans {:#?}", error);
+                    }
                 }
-            } else {
-                println!("Error encoding spans");
             }
+        },
+        Err(error) => {
+            log::warn!("Error creating client for sending datadog traces {:#?}", error);
         }
     }
+        
+    log::info!("Datadog reporting loop is shutting down");
 }
