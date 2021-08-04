@@ -297,6 +297,8 @@ pub mod tests {
             dd_agent_host: "127.0.0.1".parse().unwrap(),
             dd_agent_port: 8126,
             dd_service_name: "object-store".to_owned(),
+            backoff_min_wait: 1,
+            backoff_max_wait: 1,
         }
     }
 
