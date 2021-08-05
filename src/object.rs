@@ -12,6 +12,8 @@ use crate::pb::object_service_server::ObjectService;
 use bytes::{BufMut, Bytes, BytesMut};
 use futures_util::StreamExt;
 use linked_hash_map::LinkedHashMap;
+use minitrace_macro::trace_async;
+use minitrace::{FutureExt};
 use prost::Message;
 use tokio::sync::mpsc;
 use std::{collections::HashMap, convert::TryInto, sync::{Arc, Mutex}};
@@ -37,6 +39,7 @@ impl ObjectGrpc {
 
 #[tonic::async_trait]
 impl ObjectService for ObjectGrpc {
+    #[trace_async("object::put")]
     async fn put(
         &self,
         request: Request<Streaming<ChunkBidi>>,
@@ -188,6 +191,7 @@ impl ObjectService for ObjectGrpc {
 
     type GetStream = tokio_stream::wrappers::ReceiverStream<GrpcResult<ChunkBidi>>;
 
+    #[trace_async("object::get")]
     async fn get(
         &self,
         request: Request<HashRequest>,
@@ -290,8 +294,11 @@ pub mod tests {
             storage_base_path: "/tmp".to_owned(),
             storage_threshold: 5000,
             replication_batch_size: 2,
+            dd_agent_host: "127.0.0.1".parse().unwrap(),
+            dd_agent_port: 8126,
+            dd_service_name: "object-store".to_owned(),
             backoff_min_wait: 1,
-            backoff_max_wait: 1
+            backoff_max_wait: 1,
         }
     }
 
