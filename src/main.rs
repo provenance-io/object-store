@@ -121,7 +121,6 @@ async fn main() -> Result<()> {
         .await;
     tokio::spawn(health_status(health_reporter, Arc::clone(&pool)));
 
-    // TODO remove calls to replication insert when this mode is turned off
     // start replication
     if config.replication_enabled {
         tokio::spawn(replicate(replication_state));
