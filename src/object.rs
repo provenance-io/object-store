@@ -22,6 +22,7 @@ use tonic::{Request, Response, Status, Streaming};
 
 // TODO add flag for whether object-replication can be ignored for a PUT
 // TODO move test packet generation to helper functions
+// TODO implement mailbox only for local and unknown keys - reaper for unknown to remote like replication?
 
 pub struct ObjectGrpc {
     pub cache: Arc<Mutex<Cache>>,
@@ -155,7 +156,7 @@ impl ObjectService for ObjectGrpc {
         };
         let mut replication_key_states = Vec::new();
 
-        {
+        if self.config.replication_enabled {
             let audience = dime.unique_audience_without_owner_base64()
                 .map_err(|_| Status::invalid_argument("Invalid Dime proto - audience list"))?;
             let cache = self.cache.lock().unwrap();
@@ -170,7 +171,7 @@ impl ObjectService for ObjectGrpc {
         let response = if !dime.metadata.contains_key(consts::MAILBOX_KEY) &&
             dime_properties.dime_length > self.config.storage_threshold.into()
         {
-            let response = datastore::put_object(&self.db_pool, &dime, &dime_properties, &properties, replication_key_states, None)
+            let response = datastore::put_object(&self.db_pool, &dime, &dime_properties, &properties, replication_key_states, None, self.config.replication_enabled)
                 .await?;
             let storage_path = StoragePath {
                 dir: response.directory.clone(),
@@ -181,7 +182,7 @@ impl ObjectService for ObjectGrpc {
                 .map_err(Into::<OsError>::into)?;
             response.to_response(&self.config)?
         } else {
-            datastore::put_object(&self.db_pool, &dime, &dime_properties, &properties, replication_key_states, Some(&raw_dime))
+            datastore::put_object(&self.db_pool, &dime, &dime_properties, &properties, replication_key_states, Some(&raw_dime), self.config.replication_enabled)
                 .await?
                 .to_response(&self.config)?
         };
@@ -263,6 +264,7 @@ pub mod tests {
     use std::hash::Hasher;
 
     use crate::MIGRATOR;
+    use crate::config::DatadogConfig;
     use crate::consts::*;
     use crate::datastore::{replication_object_uuids, MailboxPublicKey, ObjectPublicKey};
     use crate::dime::Signature;
@@ -280,6 +282,11 @@ pub mod tests {
     use testcontainers::clients::Cli;
 
     pub fn test_config() -> Config {
+        let dd_config = DatadogConfig {
+            agent_host: "127.0.0.1".parse().unwrap(),
+            agent_port: 8126,
+            service_name: "object-store".to_owned(),
+        };
         Config {
             url: "0.0.0.0:6789".parse().unwrap(),
             uri_host: String::default(),
@@ -293,10 +300,9 @@ pub mod tests {
             storage_type: "file_system".to_owned(),
             storage_base_path: "/tmp".to_owned(),
             storage_threshold: 5000,
+            replication_enabled: true,
             replication_batch_size: 2,
-            dd_agent_host: "127.0.0.1".parse().unwrap(),
-            dd_agent_port: 8126,
-            dd_service_name: "object-store".to_owned(),
+            dd_config: Some(dd_config),
             backoff_min_wait: 1,
             backoff_max_wait: 1,
         }

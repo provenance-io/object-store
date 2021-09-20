@@ -3,7 +3,7 @@ use std::{net::{IpAddr, SocketAddr}, task::{Context, Poll}};
 use minitrace::{FutureExt, Span};
 use minitrace_datadog::Reporter;
 use reqwest::header::HeaderMap;
-use tokio::{sync::mpsc::{Receiver, Sender}};
+use tokio::sync::mpsc::{Receiver, Sender};
 use tonic::{body::BoxBody, codegen::http::HeaderValue, transport::Body};
 use tower::{Layer, Service};
 
@@ -96,7 +96,14 @@ pub struct MinitraceSpans {
     spans: Box<Vec<minitrace::span::Span>>
 }
 
-pub async fn report_datadog_traces(mut receiver: Receiver<MinitraceSpans>, host: IpAddr, port: u16, service_name: String) {
+pub async fn report_datadog_traces(
+    mut receiver: Receiver<MinitraceSpans>,
+    host: IpAddr,
+    port: u16,
+    service_name: String,
+) {
+    log::info!("Starting Datadog reporting");
+
     let socket = SocketAddr::new(host, port);
     let url = format!("http://{}/v0.4/traces", socket);
     let mut headers = HeaderMap::new();
@@ -105,7 +112,7 @@ pub async fn report_datadog_traces(mut receiver: Receiver<MinitraceSpans>, host:
     let client = reqwest::Client::builder()
         .default_headers(headers)
         .build();
-    
+
     match client {
         Ok(client) => {
             while let Some(spans) = receiver.recv().await {
@@ -116,13 +123,13 @@ pub async fn report_datadog_traces(mut receiver: Receiver<MinitraceSpans>, host:
                     spans.span_id_prefix,
                     &*spans.spans,
                 );
-        
+
                 match bytes {
                     Ok(bytes) => {
                         let response = client.post(&url)
                             .body(bytes)
                             .send().await;
-        
+
                         if let Err(error) = response {
                             log::warn!("error sending dd trace {:#?}", error);
                         }
@@ -137,6 +144,6 @@ pub async fn report_datadog_traces(mut receiver: Receiver<MinitraceSpans>, host:
             log::warn!("Error creating client for sending datadog traces {:#?}", error);
         }
     }
-        
+
     log::info!("Datadog reporting loop is shutting down");
 }

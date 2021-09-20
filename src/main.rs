@@ -42,6 +42,8 @@ static MIGRATOR: Migrator = sqlx::migrate!();
 // TODO implement checksum in filestore
 
 async fn health_status(mut reporter: tonic_health::server::HealthReporter, db: Arc<PgPool>) {
+    log::info!("Starting health status check");
+
     loop {
         tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
 
@@ -119,25 +121,46 @@ async fn main() -> Result<()> {
         .await;
     tokio::spawn(health_status(health_reporter, Arc::clone(&pool)));
 
+    // TODO remove calls to replication insert when this mode is turned off
     // start replication
-    tokio::spawn(replicate(replication_state));
-    // start unknown reaper - removes replication objects for public_keys that moved from Unkown -> Local
-    tokio::spawn(reap_unknown_keys(Arc::clone(&pool), Arc::clone(&cache)));
+    if config.replication_enabled {
+        tokio::spawn(replicate(replication_state));
+        // start unknown reaper - removes replication objects for public_keys that moved from Unknown -> Local
+        tokio::spawn(reap_unknown_keys(Arc::clone(&pool), Arc::clone(&cache)));
+    }
+
     // start datadog reporter
     let (datadog_sender, datadog_receiver) = channel::<MinitraceSpans>(10);
-    tokio::spawn(report_datadog_traces(datadog_receiver, config.dd_agent_host.clone(), config.dd_agent_port, config.dd_service_name.clone()));
+    if let Some(ref dd_config) = config.dd_config {
+        tokio::spawn(report_datadog_traces(
+            datadog_receiver,
+            dd_config.agent_host,
+            dd_config.agent_port,
+            dd_config.service_name.clone(),
+        ));
+    }
 
     log::info!("Starting server on {:?}", &config.url);
 
     // TODO add server fields that make sense
-    Server::builder()
-        .layer(MinitraceGrpcMiddlewareLayer::new(datadog_sender))
-        .add_service(health_service)
-        .add_service(PublicKeyServiceServer::new(public_key_service))
-        .add_service(MailboxServiceServer::new(mailbox_service))
-        .add_service(ObjectServiceServer::new(object_service))
-        .serve(config.url)
-        .await?;
+    if config.dd_config.is_some() {
+        Server::builder()
+            .layer(MinitraceGrpcMiddlewareLayer::new(datadog_sender))
+            .add_service(health_service)
+            .add_service(PublicKeyServiceServer::new(public_key_service))
+            .add_service(MailboxServiceServer::new(mailbox_service))
+            .add_service(ObjectServiceServer::new(object_service))
+            .serve(config.url)
+            .await?;
+    } else {
+        Server::builder()
+            .add_service(health_service)
+            .add_service(PublicKeyServiceServer::new(public_key_service))
+            .add_service(MailboxServiceServer::new(mailbox_service))
+            .add_service(ObjectServiceServer::new(object_service))
+            .serve(config.url)
+            .await?;
+    }
 
     Ok(())
 }

@@ -418,7 +418,15 @@ UPDATE mailbox_public_key SET acked_at = $1 WHERE uuid = $2
 }
 
 #[trace_async("datastore::put_object")]
-pub async fn put_object(db: &PgPool, dime: &Dime, dime_properties: &DimeProperties, properties: &LinkedHashMap<String, Vec<u8>>, replication_key_states: Vec<(String, PublicKeyState)>, raw_dime: Option<&Bytes>) -> Result<Object> {
+pub async fn put_object(
+    db: &PgPool,
+    dime: &Dime,
+    dime_properties: &DimeProperties,
+    properties: &LinkedHashMap<String, Vec<u8>>,
+    replication_key_states: Vec<(String, PublicKeyState)>,
+    raw_dime: Option<&Bytes>,
+    replication_enabled: bool,
+) -> Result<Object> {
     let mut unique_hash = dime.unique_audience_base64()?;
     unique_hash.sort_unstable();
     unique_hash.insert(0, String::from(&dime_properties.hash));
@@ -468,7 +476,7 @@ ON CONFLICT DO NOTHING
             maybe_put_mailbox_public_keys(&mut tx, uuid, dime).await?;
 
             // objects that are saved via replication should not attempt to replicate again
-            if properties.get(SOURCE_KEY) != Some(&SOURCE_REPLICATION.as_bytes().to_owned()) {
+            if replication_enabled && properties.get(SOURCE_KEY) != Some(&SOURCE_REPLICATION.as_bytes().to_owned()) {
                 maybe_put_replication_objects(&mut tx, uuid, replication_key_states).await?;
             }
         },
