@@ -2,6 +2,13 @@ use std::env;
 use std::net::{IpAddr, SocketAddr};
 
 #[derive(Debug)]
+pub struct DatadogConfig {
+    pub agent_host: IpAddr,
+    pub agent_port: u16,
+    pub service_name: String,
+}
+
+#[derive(Debug)]
 pub struct Config {
     pub url: SocketAddr,
     pub uri_host: String,
@@ -15,10 +22,9 @@ pub struct Config {
     pub storage_type: String,
     pub storage_base_path: String,
     pub storage_threshold: u32,
+    pub replication_enabled: bool,
     pub replication_batch_size: i32,
-    pub dd_agent_host: IpAddr,
-    pub dd_agent_port: u16,
-    pub dd_service_name: String,
+    pub dd_config: Option<DatadogConfig>,
     pub backoff_min_wait: i64,
     pub backoff_max_wait: i64,
 }
@@ -56,16 +62,28 @@ impl Config {
             .unwrap_or("10".to_owned())
             .parse()
             .expect("REPLICATION_BATCH_SIZE could not be parsed into a u32");
-        let dd_agent_host = env::var("DD_AGENT_HOST")
-            .unwrap_or("127.0.0.1".to_owned())
+        let dd_agent_enabled: bool = env::var("DD_AGENT_ENABLED")
+            .unwrap_or("false".to_owned())
             .parse()
-            .expect("DD_AGENT_HOST could not be parsed into an ip address");
-        let dd_agent_port = env::var("DD_AGENT_PORT")
-            .unwrap_or("8126".to_owned())
-            .parse()
-            .expect("DD_AGENT_PORT could not be parsed into a u16");
-        let dd_service_name = env::var("DD_SERVICE_NAME")
-            .unwrap_or("object-store".to_owned());
+            .expect("DD_AGENT_ENABLED could not be parsed into a bool");
+
+        let dd_config = if dd_agent_enabled {
+            let agent_host = env::var("DD_AGENT_HOST")
+                .unwrap_or("127.0.0.1".to_owned())
+                .parse()
+                .expect("DD_AGENT_HOST could not be parsed into an ip address");
+            let agent_port = env::var("DD_AGENT_PORT")
+                .unwrap_or("8126".to_owned())
+                .parse()
+                .expect("DD_AGENT_PORT could not be parsed into a u16");
+            let service_name = env::var("DD_SERVICE_NAME")
+                .unwrap_or("object-store".to_owned());
+
+            Some(DatadogConfig { agent_host, agent_port, service_name })
+        } else {
+            None
+        };
+
         let backoff_min_wait = env::var("BACKOFF_MIN_WAIT")
             .unwrap_or("30".to_owned()) // 30 seconds
             .parse()
@@ -74,6 +92,10 @@ impl Config {
             .unwrap_or("1920".to_owned()) // 32 minutes
             .parse()
             .expect("BACKOFF_MAX_WAIT could not be parsed into a i64");
+        let replication_enabled: bool = env::var("REPLICATION_ENABLED")
+            .unwrap_or("false".to_owned())
+            .parse()
+            .expect("REPLICATION_ENABLED could not be parsed into a bool");
 
         Self {
             url,
@@ -88,11 +110,10 @@ impl Config {
             storage_base_path,
             storage_threshold,
             replication_batch_size,
-            dd_agent_host,
-            dd_agent_port,
-            dd_service_name,
+            dd_config,
             backoff_min_wait,
             backoff_max_wait,
+            replication_enabled,
         }
     }
 

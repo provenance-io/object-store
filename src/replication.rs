@@ -474,6 +474,8 @@ async fn replicate_iteration(inner: &mut ReplicationState, client_cache: &mut Cl
 }
 
 pub async fn replicate(mut inner: ReplicationState) {
+    log::info!("Starting replication");
+
     let mut client_cache = ClientCache::new(inner.config.backoff_min_wait, inner.config.backoff_max_wait);
     loop {
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
@@ -502,6 +504,8 @@ async fn reap_unknown_keys_iteration(db_pool: &Arc<PgPool>, cache: &Arc<Mutex<Ca
 }
 
 pub async fn reap_unknown_keys(db_pool: Arc<PgPool>, cache: Arc<Mutex<Cache>>) {
+    log::info!("Starting reap unknown keys");
+
     loop {
         tokio::time::sleep(std::time::Duration::from_secs(60 * 60)).await;
 
@@ -514,7 +518,7 @@ pub async fn reap_unknown_keys(db_pool: Arc<PgPool>, cache: Arc<Mutex<Cache>>) {
 #[cfg(test)]
 pub mod tests {
     use crate::MIGRATOR;
-    use crate::config::Config;
+    use crate::config::{Config, DatadogConfig};
     use crate::datastore::replication_object_uuids;
     use crate::object::*;
     use crate::object::tests::*;
@@ -544,10 +548,31 @@ pub mod tests {
             storage_type: "file_system_one".to_owned(),
             storage_base_path: "/tmp".to_owned(),
             storage_threshold: 5000,
+            replication_enabled: true,
             replication_batch_size: 2,
-            dd_agent_host: "127.0.0.1".parse().unwrap(),
-            dd_agent_port: 8126,
-            dd_service_name: "object-store".to_owned(),
+            dd_config: None,
+            backoff_min_wait: 5,
+            backoff_max_wait: 5,
+        }
+    }
+
+    pub fn test_config_one_no_replication() -> Config {
+        Config {
+            url: "0.0.0.0:6789".parse().unwrap(),
+            uri_host: String::default(),
+            db_connection_pool_size: 0,
+            db_host: String::default(),
+            db_port: 0,
+            db_user: String::default(),
+            db_password: String::default(),
+            db_database: String::default(),
+            db_schema: String::default(),
+            storage_type: "file_system_one".to_owned(),
+            storage_base_path: "/tmp".to_owned(),
+            storage_threshold: 5000,
+            replication_enabled: false,
+            replication_batch_size: 2,
+            dd_config: None,
             backoff_min_wait: 5,
             backoff_max_wait: 5,
         }
@@ -567,10 +592,9 @@ pub mod tests {
             storage_type: "file_system_two".to_owned(),
             storage_base_path: "/tmp".to_owned(),
             storage_threshold: 5000,
+            replication_enabled: true,
             replication_batch_size: 2,
-            dd_agent_host: "127.0.0.1".parse().unwrap(),
-            dd_agent_port: 8126,
-            dd_service_name: "object-store".to_owned(),
+            dd_config: None,
             backoff_min_wait: 5,
             backoff_max_wait: 5,
         }
@@ -593,7 +617,7 @@ pub mod tests {
         pool
     }
 
-    async fn start_server_one() -> ReplicationState {
+    async fn start_server_one(config_override: Option<Config>) -> ReplicationState {
         let (tx, mut rx) = tokio::sync::mpsc::channel(1);
 
         tokio::spawn(async move {
@@ -601,7 +625,7 @@ pub mod tests {
             cache.add_local_public_key(std::str::from_utf8(&party_1().0.public_key).unwrap().to_owned());
             cache.add_remote_public_key(std::str::from_utf8(&party_2().0.public_key).unwrap().to_owned(), String::from("tcp://0.0.0.0:6790"));
             let cache = Mutex::new(cache);
-            let config = test_config_one();
+            let config = config_override.unwrap_or(test_config_one());
             let url = config.url.clone();
             let docker = clients::Cli::default();
             let image = images::postgres::Postgres::default().with_version(9);
@@ -697,7 +721,7 @@ pub mod tests {
     #[tokio::test]
     #[serial(grpc_server)]
     async fn client_caching() {
-        let _state_one = start_server_one().await;
+        let _state_one = start_server_one(None).await;
 
         let config_one = test_config_one();
         let config_two = test_config_two();
@@ -746,9 +770,52 @@ pub mod tests {
 
     #[tokio::test]
     #[serial(grpc_server)]
+    async fn replication_can_be_disabled() {
+        let state_one = start_server_one(Some(test_config_one_no_replication())).await;
+
+        let (audience1, signature1) = party_1();
+        let (audience2, signature2) = party_2();
+        let (audience3, signature3) = party_3();
+
+        // put 3 objects for party_1, party_2, party_3
+        let dime = generate_dime(vec![audience1.clone(), audience2.clone(), audience3.clone()], vec![signature1.clone(), signature2.clone(), signature3.clone()]);
+        let payload: bytes::Bytes = "testing small payload 2".as_bytes().into();
+        let chunk_size = 500; // full payload in one packet
+        let response = put_helper(dime, payload, chunk_size, HashMap::default()).await;
+
+        match response {
+            Ok(_) => (),
+            _ => assert_eq!(format!("{:?}", response), ""),
+        }
+
+        let dime = generate_dime(vec![audience1.clone(), audience2.clone(), audience3.clone()], vec![signature1.clone(), signature2.clone(), signature3.clone()]);
+        let payload: bytes::Bytes = "testing small payload 3".as_bytes().into();
+        let response = put_helper(dime, payload, chunk_size, HashMap::default()).await;
+
+        match response {
+            Ok(_) => (),
+            _ => assert_eq!(format!("{:?}", response), ""),
+        }
+
+        let dime = generate_dime(vec![audience1.clone(), audience2.clone(), audience3.clone()], vec![signature1.clone(), signature2.clone(), signature3.clone()]);
+        let payload: bytes::Bytes = "testing small payload 4".as_bytes().into();
+        let response = put_helper(dime, payload.clone(), chunk_size, HashMap::default()).await;
+
+        match response {
+            Ok(_) => {
+                assert_eq!(replication_object_uuids(&state_one.db_pool, String::from_utf8(audience1.public_key.clone()).unwrap().as_str(), 50).await.unwrap().len(), 0);
+                assert_eq!(replication_object_uuids(&state_one.db_pool, String::from_utf8(audience2.public_key.clone()).unwrap().as_str(), 50).await.unwrap().len(), 0);
+                assert_eq!(replication_object_uuids(&state_one.db_pool, String::from_utf8(audience3.public_key.clone()).unwrap().as_str(), 50).await.unwrap().len(), 0);
+            }
+            _ => assert_eq!(format!("{:?}", response), ""),
+        }
+    }
+
+    #[tokio::test]
+    #[serial(grpc_server)]
     async fn end_to_end_replication() {
         let config_one = test_config_one();
-        let mut state_one = start_server_one().await;
+        let mut state_one = start_server_one(None).await;
         let state_two = start_server_two().await;
         let mut client_cache_one = ClientCache::new(config_one.backoff_min_wait, config_one.backoff_max_wait);
 
@@ -864,7 +931,7 @@ pub mod tests {
     #[tokio::test]
     #[serial(grpc_server)]
     async fn late_local_url_can_cleanup() {
-        let state_one = start_server_one().await;
+        let state_one = start_server_one(None).await;
 
         let (audience1, signature1) = party_1();
         let (audience3, signature3) = party_3();
