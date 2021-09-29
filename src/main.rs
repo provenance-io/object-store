@@ -87,6 +87,10 @@ async fn main() -> Result<()> {
         .connect(config.db_connection_string().as_ref())
         .await?;
 
+    log::debug!("Running migrations");
+
+    MIGRATOR.run(&pool).await?;
+
     // populate initial cache
     for (public_key, url) in datastore::get_all_public_keys(&pool).await? {
         if let Some(url) = url {
@@ -106,8 +110,6 @@ async fn main() -> Result<()> {
     let cache = Arc::new(Mutex::new(cache));
     let config = Arc::new(config);
     let storage = Arc::new(storage);
-
-    MIGRATOR.run(&*pool).await?;
 
     let (mut health_reporter, health_service) = tonic_health::server::health_reporter();
     let public_key_service = PublicKeyGrpc::new(Arc::clone(&cache), Arc::clone(&pool));
