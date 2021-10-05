@@ -445,7 +445,7 @@ mod tests {
         let cache = cache.lock().unwrap();
         assert_eq!(cache.local_public_keys.len(), 1);
         assert_eq!(cache.remote_public_keys.len(), 0);
-        assert!(cache.local_public_keys.contains(&std::str::from_utf8(&vec![1u8, 2u8, 3u8]).unwrap().to_owned()));
+        assert!(cache.local_public_keys.contains(&base64::encode(&vec![1u8, 2u8, 3u8])));
     }
 
     #[tokio::test]
@@ -477,6 +477,6 @@ mod tests {
         let cache = cache.lock().unwrap();
         assert_eq!(cache.local_public_keys.len(), 0);
         assert_eq!(cache.remote_public_keys.len(), 1);
-        assert!(cache.remote_public_keys.contains_key(&std::str::from_utf8(&vec![1u8, 2u8, 3u8]).unwrap().to_owned()));
+        assert!(cache.remote_public_keys.contains_key(&base64::encode(&vec![1u8, 2u8, 3u8])));
     }
 }
