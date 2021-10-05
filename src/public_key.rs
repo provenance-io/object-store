@@ -59,22 +59,14 @@ impl PublicKeyService for PublicKeyGrpc {
         }
 
         let response = datastore::add_public_key(&self.db_pool, request).await?;
-        let key_bytes = match response.public_key.clone().unwrap().key.unwrap() {
-            Key::Secp256k1(data) => data,
+        let key = match response.public_key.clone().unwrap().key.unwrap() {
+            Key::Secp256k1(data) => base64::encode(data),
         };
-        let key = std::str::from_utf8(&key_bytes)
-            .map_err(Into::<OsError>::into)
-            // TODO remove this when we have public_key RPCs using the OsError across the board
-            .map_err(Into::<Status>::into)?
-            .to_owned();
 
+        let mut cache = self.cache.lock().unwrap();
         if response.url.is_empty() {
-            let mut cache = self.cache.lock().unwrap();
-
             cache.add_local_public_key(key);
         } else {
-            let mut cache = self.cache.lock().unwrap();
-
             cache.add_remote_public_key(key, response.url.clone());
         }
 
