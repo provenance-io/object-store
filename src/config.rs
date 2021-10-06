@@ -27,6 +27,8 @@ pub struct Config {
     pub dd_config: Option<DatadogConfig>,
     pub backoff_min_wait: i64,
     pub backoff_max_wait: i64,
+    pub logging_threshold_seconds: f64,
+    pub trace_header: String,
 }
 
 impl Config {
@@ -96,6 +98,12 @@ impl Config {
             .unwrap_or("false".to_owned())
             .parse()
             .expect("REPLICATION_ENABLED could not be parsed into a bool");
+        let logging_threshold_seconds: i32 = env::var("LOGGING_THRESHOLD_SECONDS")
+            .unwrap_or("3".to_owned())
+            .parse()
+            .expect("LOGGING_THRESHOLD_SECONDS could not be parsed into a i32");
+        let logging_threshold_seconds: f64 = logging_threshold_seconds.into();
+        let trace_header = env::var("TRACE_HEADER").expect("TRACE_HEADER not set");
 
         Self {
             url,
@@ -114,6 +122,8 @@ impl Config {
             backoff_min_wait,
             backoff_max_wait,
             replication_enabled,
+            logging_threshold_seconds,
+            trace_header,
         }
     }
 

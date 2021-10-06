@@ -10,3 +10,4 @@ export DB_SCHEMA=public
 export URI_HOST=figure.com
 export STORAGE_TYPE=file_system
 export STORAGE_BASE_PATH=storage_bucket
+export TRACE_HEADER=x-trace-header
