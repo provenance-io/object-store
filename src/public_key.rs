@@ -65,11 +65,11 @@ impl PublicKeyService for PublicKeyGrpc {
 
         if response.url.is_empty() {
             let mut cache = self.cache.lock().unwrap();
-            
+
             cache.add_local_public_key(key);
         } else {
             let mut cache = self.cache.lock().unwrap();
-            
+
             cache.add_remote_public_key(key, response.url.clone());
         }
 
