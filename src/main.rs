@@ -11,11 +11,11 @@ mod proto_helpers;
 mod replication;
 mod storage;
 mod types;
-mod minitrace_grpc;
+mod middleware;
 
 use crate::cache::Cache;
 use crate::config::Config;
-use crate::minitrace_grpc::{MinitraceGrpcMiddlewareLayer, MinitraceSpans, report_datadog_traces};
+use crate::middleware::{LoggingMiddlewareLayer, MinitraceGrpcMiddlewareLayer, MinitraceSpans, report_datadog_traces};
 use crate::object::ObjectGrpc;
 use crate::public_key::PublicKeyGrpc;
 use crate::mailbox::MailboxGrpc;
@@ -146,6 +146,7 @@ async fn main() -> Result<()> {
     // TODO add server fields that make sense
     if config.dd_config.is_some() {
         Server::builder()
+            .layer(LoggingMiddlewareLayer::new(Arc::clone(&config)))
             .layer(MinitraceGrpcMiddlewareLayer::new(datadog_sender))
             .add_service(health_service)
             .add_service(PublicKeyServiceServer::new(public_key_service))
@@ -155,6 +156,7 @@ async fn main() -> Result<()> {
             .await?;
     } else {
         Server::builder()
+            .layer(LoggingMiddlewareLayer::new(Arc::clone(&config)))
             .add_service(health_service)
             .add_service(PublicKeyServiceServer::new(public_key_service))
             .add_service(MailboxServiceServer::new(mailbox_service))
