@@ -518,7 +518,7 @@ pub async fn reap_unknown_keys(db_pool: Arc<PgPool>, cache: Arc<Mutex<Cache>>) {
 #[cfg(test)]
 pub mod tests {
     use crate::MIGRATOR;
-    use crate::config::{Config, DatadogConfig};
+    use crate::config::Config;
     use crate::datastore::replication_object_uuids;
     use crate::object::*;
     use crate::object::tests::*;
@@ -553,6 +553,8 @@ pub mod tests {
             dd_config: None,
             backoff_min_wait: 5,
             backoff_max_wait: 5,
+            logging_threshold_seconds: 1f64,
+            trace_header: String::default(),
         }
     }
 
@@ -575,6 +577,8 @@ pub mod tests {
             dd_config: None,
             backoff_min_wait: 5,
             backoff_max_wait: 5,
+            logging_threshold_seconds: 1f64,
+            trace_header: String::default(),
         }
     }
 
@@ -597,6 +601,8 @@ pub mod tests {
             dd_config: None,
             backoff_min_wait: 5,
             backoff_max_wait: 5,
+            logging_threshold_seconds: 1f64,
+            trace_header: String::default(),
         }
     }
 
