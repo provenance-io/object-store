@@ -59,14 +59,9 @@ impl PublicKeyService for PublicKeyGrpc {
         }
 
         let response = datastore::add_public_key(&self.db_pool, request).await?;
-        let key_bytes = match response.public_key.clone().unwrap().key.unwrap() {
-            Key::Secp256k1(data) => data,
+        let key = match response.public_key.clone().unwrap().key.unwrap() {
+            Key::Secp256k1(data) => base64::encode(data),
         };
-        let key = std::str::from_utf8(&key_bytes)
-            .map_err(Into::<OsError>::into)
-            // TODO remove this when we have public_key RPCs using the OsError across the board
-            .map_err(Into::<Status>::into)?
-            .to_owned();
 
         if response.url.is_empty() {
             let mut cache = self.cache.lock().unwrap();
@@ -453,7 +448,7 @@ mod tests {
         let cache = cache.lock().unwrap();
         assert_eq!(cache.local_public_keys.len(), 1);
         assert_eq!(cache.remote_public_keys.len(), 0);
-        assert!(cache.local_public_keys.contains(&std::str::from_utf8(&vec![1u8, 2u8, 3u8]).unwrap().to_owned()));
+        assert!(cache.local_public_keys.contains(&base64::encode(&vec![1u8, 2u8, 3u8])));
     }
 
     #[tokio::test]
@@ -485,6 +480,6 @@ mod tests {
         let cache = cache.lock().unwrap();
         assert_eq!(cache.local_public_keys.len(), 0);
         assert_eq!(cache.remote_public_keys.len(), 1);
-        assert!(cache.remote_public_keys.contains_key(&std::str::from_utf8(&vec![1u8, 2u8, 3u8]).unwrap().to_owned()));
+        assert!(cache.remote_public_keys.contains_key(&base64::encode(&vec![1u8, 2u8, 3u8])));
     }
 }
