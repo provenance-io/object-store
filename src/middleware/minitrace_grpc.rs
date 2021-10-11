@@ -74,12 +74,12 @@ where
         let sender = self.sender.clone();
 
         let headers = req.headers().clone();
-        let mut path = req.uri().path().chars();
-        path.next();
-        let path = path.as_str().to_owned();
+        let mut resource = req.uri().path().chars();
+        resource.next();
+        let resource = resource.as_str().to_owned();
 
         Box::pin(async move {
-            let (root_span, collector) = Span::root(path);
+            let (root_span, collector) = Span::root("grpc.server".to_owned());
             let response = inner.call(req).in_span(root_span).await?;
 
             let status_code = response.headers().get("grpc-status").unwrap_or(&default_status_code).to_str().unwrap();
@@ -114,7 +114,10 @@ where
                 .unwrap_or(&default_parent_span_id_header_value).to_str();
             let parent_span_id: u64 = parent_span_id_header.unwrap().parse::<u64>().unwrap();
 
+            // TODO add error of non zero when there's an error
             sender.send(MinitraceSpans {
+                r#type: String::from("rpc"),
+                resource,
                 trace_id,
                 parent_span_id,
                 span_id_prefix,
@@ -127,6 +130,8 @@ where
 }
 
 pub struct MinitraceSpans {
+    r#type: String,
+    resource: String,
     trace_id: u64,
     parent_span_id: u64,
     span_id_prefix: u32,
@@ -155,6 +160,8 @@ pub async fn report_datadog_traces(
             while let Some(spans) = receiver.recv().await {
                 let bytes = Reporter::encode(
                     &service_name,
+                    &spans.r#type,
+                    &spans.resource,
                     spans.trace_id,
                     spans.parent_span_id,
                     spans.span_id_prefix,
