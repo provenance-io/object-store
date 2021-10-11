@@ -144,10 +144,10 @@ async fn main() -> Result<()> {
     log::info!("Starting server on {:?}", &config.url);
 
     // TODO add server fields that make sense
-    if config.dd_config.is_some() {
+    if let Some(ref dd_config) = config.dd_config {
         Server::builder()
             .layer(LoggingMiddlewareLayer::new(Arc::clone(&config)))
-            .layer(MinitraceGrpcMiddlewareLayer::new(datadog_sender))
+            .layer(MinitraceGrpcMiddlewareLayer::new(Arc::clone(&config), dd_config.span_tags.clone(), datadog_sender))
             .add_service(health_service)
             .add_service(PublicKeyServiceServer::new(public_key_service))
             .add_service(MailboxServiceServer::new(mailbox_service))

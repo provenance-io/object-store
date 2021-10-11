@@ -1,4 +1,6 @@
-use std::{net::{IpAddr, SocketAddr}, task::{Context, Poll}};
+use std::{fmt::Debug, net::{IpAddr, SocketAddr}, sync::Arc, task::{Context, Poll}};
+
+use crate::config::Config;
 
 use minitrace::{FutureExt, Span};
 use minitrace_datadog::Reporter;
@@ -7,14 +9,18 @@ use tokio::sync::mpsc::{Receiver, Sender};
 use tonic::{body::BoxBody, codegen::http::HeaderValue, transport::Body};
 use tower::{Layer, Service};
 
+// TODO move trace_async macro to take a CoW or Into<String> trait instead
+
 #[derive(Debug, Clone)]
 pub struct MinitraceGrpcMiddlewareLayer {
+    config: Arc<Config>,
+    span_tags: Vec<(String, String)>,
     sender: Sender<MinitraceSpans>,
 }
 
 impl MinitraceGrpcMiddlewareLayer {
-    pub fn new(sender: Sender<MinitraceSpans>) -> Self {
-        Self { sender }
+    pub fn new(config: Arc<Config>, span_tags: Vec<(String, String)>, sender: Sender<MinitraceSpans>) -> Self {
+        Self { config, span_tags, sender }
     }
 }
 
@@ -24,7 +30,10 @@ impl<S> Layer<S> for MinitraceGrpcMiddlewareLayer {
     fn layer(&self, service: S) -> Self::Service {
         MinitraceGrpcMiddleware {
             inner: service,
+            config: self.config.clone(),
+            span_tags: self.span_tags.clone(),
             sender: self.sender.clone(),
+            default_status_code: HeaderValue::from_str("0").unwrap(),
         }
     }
 }
@@ -32,13 +41,17 @@ impl<S> Layer<S> for MinitraceGrpcMiddlewareLayer {
 #[derive(Debug, Clone)]
 pub struct MinitraceGrpcMiddleware<S> {
     inner: S,
+    config: Arc<Config>,
+    span_tags: Vec<(String, String)>,
     sender: Sender<MinitraceSpans>,
+    default_status_code: HeaderValue,
 }
 
 impl<S> Service<tonic::codegen::http::Request<Body>> for MinitraceGrpcMiddleware<S>
 where
     S: Service<tonic::codegen::http::Request<Body>, Response = tonic::codegen::http::Response<BoxBody>> + Clone + Send + 'static,
     S::Future: Send + 'static,
+    S::Error: Send + Debug,
 {
     type Response = S::Response;
     type Error = S::Error;
@@ -55,20 +68,44 @@ where
         let clone = self.inner.clone();
         let mut inner = std::mem::replace(&mut self.inner, clone);
 
+        let config = self.config.clone();
+        let mut span_tags = self.span_tags.clone();
+        let default_status_code = self.default_status_code.clone();
         let sender = self.sender.clone();
 
         let headers = req.headers().clone();
+        let mut path = req.uri().path().chars();
+        path.next();
+        let path = path.as_str().to_owned();
 
         Box::pin(async move {
-            let (root_span, collector) = Span::root("service_root");
-
+            let (root_span, collector) = Span::root(path);
             let response = inner.call(req).in_span(root_span).await?;
 
-            let spans = collector.collect();
+            let status_code = response.headers().get("grpc-status").unwrap_or(&default_status_code).to_str().unwrap();
+            span_tags.push(("status.code".to_owned(), status_code.to_owned()));
+            // TODO remove if this isn't needed
+            // let status_code = tonic::Code::from_bytes(status_code.as_bytes());
+            // match status_code {
+            //     tonic::Code::Ok => span_tags.push(("status.code".to_owned(), format!("{:?}", &status_code))),
+            //     _ => {
+            //         span_tags.push(("status.code".to_owned(), format!("{:?}", &status_code)));
+            //         span_tags.push(("status.description".to_owned(), status_code.description().to_owned()));
+            //     },
+            // }
+            let spans: Vec<minitrace::span::Span> = collector.collect()
+                .into_iter()
+                .map(|mut span| {
+                    if span.parent_id == 0 {
+                        span.properties.extend(span_tags.clone());
+                    }
+
+                    span
+                }).collect();
 
             let rand: u32 = rand::random(); // todo: what is an appropriate default span id if not present in headers, uuid? something other than random number?
             let default_trace_id_header_value = HeaderValue::from_str(&rand.to_string()).unwrap();
-            let trace_id_header = headers.get("x-datadog-trace-id")
+            let trace_id_header = headers.get(&config.trace_header)
                 .unwrap_or(&default_trace_id_header_value).to_str();
             let trace_id: u64 = trace_id_header.unwrap().parse::<u64>().unwrap();
             let span_id_prefix: u32 = 0;

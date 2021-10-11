@@ -40,7 +40,7 @@ impl ObjectGrpc {
 
 #[tonic::async_trait]
 impl ObjectService for ObjectGrpc {
-    #[trace_async("object::put")]
+    #[trace_async("object::put".to_owned())]
     async fn put(
         &self,
         request: Request<Streaming<ChunkBidi>>,
@@ -192,7 +192,7 @@ impl ObjectService for ObjectGrpc {
 
     type GetStream = tokio_stream::wrappers::ReceiverStream<GrpcResult<ChunkBidi>>;
 
-    #[trace_async("object::get")]
+    #[trace_async("object::get".to_owned())]
     async fn get(
         &self,
         request: Request<HashRequest>,
@@ -286,6 +286,7 @@ pub mod tests {
             agent_host: "127.0.0.1".parse().unwrap(),
             agent_port: 8126,
             service_name: "object-store".to_owned(),
+            span_tags: Vec::default(),
         };
         Config {
             url: "0.0.0.0:6789".parse().unwrap(),
