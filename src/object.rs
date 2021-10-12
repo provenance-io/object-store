@@ -40,7 +40,7 @@ impl ObjectGrpc {
 
 #[tonic::async_trait]
 impl ObjectService for ObjectGrpc {
-    #[trace_async("object::put".to_owned())]
+    #[trace_async("object::put")]
     async fn put(
         &self,
         request: Request<Streaming<ChunkBidi>>,
@@ -192,7 +192,7 @@ impl ObjectService for ObjectGrpc {
 
     type GetStream = tokio_stream::wrappers::ReceiverStream<GrpcResult<ChunkBidi>>;
 
-    #[trace_async("object::get".to_owned())]
+    #[trace_async("object::get")]
     async fn get(
         &self,
         request: Request<HashRequest>,

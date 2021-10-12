@@ -79,7 +79,7 @@ where
         let resource = resource.as_str().to_owned();
 
         Box::pin(async move {
-            let (root_span, collector) = Span::root("grpc.server".to_owned());
+            let (root_span, collector) = Span::root("grpc.server");
             let response = inner.call(req).in_span(root_span).await?;
 
             let status_code = response.headers().get("grpc-status").unwrap_or(&default_status_code).to_str().unwrap();

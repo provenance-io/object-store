@@ -28,7 +28,7 @@ impl MailboxService for MailboxGrpc {
 
     type GetStream = tokio_stream::wrappers::ReceiverStream<GrpcResult<MailPayload>>;
 
-    #[trace_async("mailbox::get".to_owned())]
+    #[trace_async("mailbox::get")]
     async fn get(
         &self,
         request: Request<GetRequest>,
@@ -65,7 +65,7 @@ impl MailboxService for MailboxGrpc {
         Ok(Response::new(tokio_stream::wrappers::ReceiverStream::new(rx)))
     }
 
-    #[trace_async("mailbox::ack".to_owned())]
+    #[trace_async("mailbox::ack")]
     async fn ack(
         &self,
         request: Request<AckRequest>,
