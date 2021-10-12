@@ -1075,7 +1075,7 @@ checksum = "9c64630dcdd71f1a64c435f54885086a0de5d6a12d104d69b165fb7d5286d677"
 [[package]]
 name = "minitrace"
 version = "0.1.0"
-source = "git+https://github.com/scirner22/minitrace-rust.git#634b2375fb4854e22098efdd3b1c573542aab265"
+source = "git+https://github.com/scirner22/minitrace-rust.git#44923288bf8ce19bc1b1b5d9bdbda849aabf8a63"
 dependencies = [
  "crossbeam",
  "minstant 0.0.1",
@@ -1085,7 +1085,7 @@ dependencies = [
 [[package]]
 name = "minitrace-datadog"
 version = "0.1.0"
-source = "git+https://github.com/scirner22/minitrace-rust.git#634b2375fb4854e22098efdd3b1c573542aab265"
+source = "git+https://github.com/scirner22/minitrace-rust.git#44923288bf8ce19bc1b1b5d9bdbda849aabf8a63"
 dependencies = [
  "minitrace",
  "reqwest 0.10.10",
@@ -1096,7 +1096,7 @@ dependencies = [
 [[package]]
 name = "minitrace-macro"
 version = "0.1.0"
-source = "git+https://github.com/scirner22/minitrace-rust.git#634b2375fb4854e22098efdd3b1c573542aab265"
+source = "git+https://github.com/scirner22/minitrace-rust.git#44923288bf8ce19bc1b1b5d9bdbda849aabf8a63"
 dependencies = [
  "proc-macro-error",
  "quote",

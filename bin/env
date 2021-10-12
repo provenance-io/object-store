@@ -14,5 +14,6 @@ export TRACE_HEADER=x-trace-header
 export LOGGING_THRESHOLD_SECONDS=1
 export RUST_LOG=warn,object_store=debug
 export DD_AGENT_ENABLED=false
+DD_VERSION=undefined
 export DD_SERVICE_NAME=object-store-service
 export DD_TRACE_SPAN_TAGS=app:object-store,env:local

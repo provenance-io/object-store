@@ -87,6 +87,8 @@ impl Config {
                 .expect("DD_AGENT_PORT could not be parsed into a u16");
             let service_name = env::var("DD_SERVICE_NAME")
                 .unwrap_or("object-store".to_owned());
+            let version = env::var("DD_VERSION")
+                .unwrap_or("undefined".to_owned());
             let mut span_tags: Vec<(String, String)> = env::var("DD_TRACE_SPAN_TAGS")
                 .unwrap_or("".to_owned())
                 .split(",")
@@ -99,6 +101,7 @@ impl Config {
                 })
                 .collect();
             span_tags.extend(BASE_SPAN_TAGS.iter().map(|(k, v)| (k.to_string(), v.to_string())));
+            span_tags.push(("".to_owned(), version));
 
             Some(DatadogConfig { agent_host, agent_port, service_name, span_tags })
         } else {

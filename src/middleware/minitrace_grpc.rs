@@ -83,16 +83,18 @@ where
             let response = inner.call(req).in_span(root_span).await?;
 
             let status_code = response.headers().get("grpc-status").unwrap_or(&default_status_code).to_str().unwrap();
-            span_tags.push(("status.code".to_owned(), status_code.to_owned()));
-            // TODO remove if this isn't needed
-            // let status_code = tonic::Code::from_bytes(status_code.as_bytes());
-            // match status_code {
-            //     tonic::Code::Ok => span_tags.push(("status.code".to_owned(), format!("{:?}", &status_code))),
-            //     _ => {
-            //         span_tags.push(("status.code".to_owned(), format!("{:?}", &status_code)));
-            //         span_tags.push(("status.description".to_owned(), status_code.description().to_owned()));
-            //     },
-            // }
+            let status_code = tonic::Code::from_bytes(status_code.as_bytes());
+            let error_code = match status_code {
+                tonic::Code::Ok => {
+                    span_tags.push(("status.code".to_owned(), format!("{:?}", &status_code)));
+                    0i32
+                },
+                _ => {
+                    span_tags.push(("status.code".to_owned(), format!("{:?}", &status_code)));
+                    span_tags.push(("status.description".to_owned(), status_code.description().to_owned()));
+                    1i32
+                },
+            };
             let spans: Vec<minitrace::span::Span> = collector.collect()
                 .into_iter()
                 .map(|mut span| {
@@ -114,10 +116,10 @@ where
                 .unwrap_or(&default_parent_span_id_header_value).to_str();
             let parent_span_id: u64 = parent_span_id_header.unwrap().parse::<u64>().unwrap();
 
-            // TODO add error of non zero when there's an error
             sender.send(MinitraceSpans {
                 r#type: String::from("rpc"),
                 resource,
+                error_code,
                 trace_id,
                 parent_span_id,
                 span_id_prefix,
@@ -132,6 +134,7 @@ where
 pub struct MinitraceSpans {
     r#type: String,
     resource: String,
+    error_code: i32,
     trace_id: u64,
     parent_span_id: u64,
     span_id_prefix: u32,
@@ -162,6 +165,7 @@ pub async fn report_datadog_traces(
                     &service_name,
                     &spans.r#type,
                     &spans.resource,
+                    spans.error_code,
                     spans.trace_id,
                     spans.parent_span_id,
                     spans.span_id_prefix,
