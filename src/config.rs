@@ -101,7 +101,7 @@ impl Config {
                 })
                 .collect();
             span_tags.extend(BASE_SPAN_TAGS.iter().map(|(k, v)| (k.to_string(), v.to_string())));
-            span_tags.push(("".to_owned(), version));
+            span_tags.push(("version".to_owned(), version));
 
             Some(DatadogConfig { agent_host, agent_port, service_name, span_tags })
         } else {
