@@ -137,17 +137,17 @@ async fn main() -> Result<()> {
             datadog_receiver,
             dd_config.agent_host,
             dd_config.agent_port,
-            dd_config.service_name.clone(),
+            dd_config.service.clone(),
         ));
     }
 
     log::info!("Starting server on {:?}", &config.url);
 
     // TODO add server fields that make sense
-    if config.dd_config.is_some() {
+    if let Some(ref dd_config) = config.dd_config {
         Server::builder()
             .layer(LoggingMiddlewareLayer::new(Arc::clone(&config)))
-            .layer(MinitraceGrpcMiddlewareLayer::new(datadog_sender))
+            .layer(MinitraceGrpcMiddlewareLayer::new(Arc::clone(&config), dd_config.span_tags.clone(), datadog_sender))
             .add_service(health_service)
             .add_service(PublicKeyServiceServer::new(public_key_service))
             .add_service(MailboxServiceServer::new(mailbox_service))

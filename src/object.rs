@@ -285,7 +285,8 @@ pub mod tests {
         let dd_config = DatadogConfig {
             agent_host: "127.0.0.1".parse().unwrap(),
             agent_port: 8126,
-            service_name: "object-store".to_owned(),
+            service: "object-store".to_owned(),
+            span_tags: Vec::default(),
         };
         Config {
             url: "0.0.0.0:6789".parse().unwrap(),
