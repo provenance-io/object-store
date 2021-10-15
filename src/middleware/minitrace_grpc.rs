@@ -74,7 +74,7 @@ where
         let headers = req.headers().clone();
         let mut resource = req.uri().path().chars();
         resource.next();
-        let resource = resource.as_str().to_owned();
+        let resource = String::from(resource.as_str());
 
         Box::pin(async move {
             let (root_span, collector) = Span::root("grpc.server");
@@ -82,14 +82,13 @@ where
 
             let status_code = response.headers().get("grpc-status").unwrap_or(&default_status_code).to_str().unwrap();
             let status_code = tonic::Code::from_bytes(status_code.as_bytes());
+            span_tags.push((String::from("status.code"), format!("{:?}", &status_code)));
             let error_code = match status_code {
                 tonic::Code::Ok => {
-                    span_tags.push(("status.code".to_owned(), format!("{:?}", &status_code)));
                     0i32
                 },
                 _ => {
-                    span_tags.push(("status.code".to_owned(), format!("{:?}", &status_code)));
-                    span_tags.push(("status.description".to_owned(), status_code.description().to_owned()));
+                    span_tags.push((String::from("status.description"), String::from(status_code.description())));
                     1i32
                 },
             };
