@@ -137,7 +137,7 @@ async fn main() -> Result<()> {
             datadog_receiver,
             dd_config.agent_host,
             dd_config.agent_port,
-            dd_config.service_name.clone(),
+            dd_config.service.clone(),
         ));
     }
 
