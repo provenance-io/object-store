@@ -21,6 +21,7 @@ pub struct Config {
     pub db_database: String,
     pub db_schema: String,
     pub storage_type: String,
+    pub storage_base_url: Option<String>,
     pub storage_base_path: String,
     pub storage_threshold: u32,
     pub replication_enabled: bool,
@@ -61,6 +62,7 @@ impl Config {
         let db_database = env::var("DB_NAME").expect("DB_NAME not set");
         let db_schema = env::var("DB_SCHEMA").expect("DB_SCHEMA not set");
         let storage_type  = env::var("STORAGE_TYPE").expect("STORAGE_TYPE not set");
+        let storage_base_url = env::var("STORAGE_BASE_URL").ok();
         let storage_base_path = env::var("STORAGE_BASE_PATH").expect("STORAGE_BASE_PATH not set");
         let storage_threshold = env::var("STORAGE_THRESHOLD")
             // default to ~ 5KB
@@ -94,7 +96,7 @@ impl Config {
             let mut span_tags: Vec<(String, String)> = env::var("DD_TRACE_SPAN_TAGS")
                 .unwrap_or("".to_owned())
                 .split(",")
-                .map(|s| s.split_at(s.find(":").expect("DD_TRACE_SPAN_TAGS invalid syntax")))
+                .filter_map(|s| s.find(":").map(|pos| s.split_at(pos)))
                 .map(|(k, v)| {
                     let mut v = v.chars();
                     v.next();
@@ -141,6 +143,7 @@ impl Config {
             db_database,
             db_schema,
             storage_type,
+            storage_base_url,
             storage_base_path,
             storage_threshold,
             replication_batch_size,

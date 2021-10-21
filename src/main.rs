@@ -20,7 +20,7 @@ use crate::object::ObjectGrpc;
 use crate::public_key::PublicKeyGrpc;
 use crate::mailbox::MailboxGrpc;
 use crate::types::{OsError, Result};
-use crate::storage::FileSystem;
+use crate::storage::{FileSystem, GoogleCloud, Storage};
 use crate::replication::{reap_unknown_keys, replicate, ReplicationState};
 
 use std::sync::{Arc, Mutex};
@@ -70,7 +70,8 @@ async fn main() -> Result<()> {
     let mut cache = Cache::default();
     let config = Config::new();
     let storage = match config.storage_type.as_str() {
-        "file_system" => Ok(FileSystem::new(config.storage_base_path.as_str())),
+        "file_system" => Ok(Box::new(FileSystem::new(config.storage_base_path.as_str())) as Box<dyn Storage>),
+        "google_cloud" => Ok(Box::new(GoogleCloud::new(config.storage_base_url.clone(), config.storage_base_path.clone())) as Box<dyn Storage>),
         _ => Err(OsError::InvalidApplicationState("".to_owned()))
     }?;
     let schema = Arc::new(config.db_schema.clone());

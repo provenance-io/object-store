@@ -123,7 +123,7 @@ mod tests {
                 cache: Arc::new(cache),
                 config: Arc::new(config),
                 db_pool: pool.clone(),
-                storage: Arc::new(storage),
+                storage: Arc::new(Box::new(storage)),
             };
 
             tx.send(pool.clone()).await.unwrap();
