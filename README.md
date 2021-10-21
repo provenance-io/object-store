@@ -25,7 +25,7 @@ in order to process Provenance scopes and memorialize them on chain.
 
 ## Features
 
-- Strong end-to-end encryption when combined with load balancer like `Nginx`.
+- Strong end-to-end encryption when combined with a load balancer like `Nginx`.
 - Peer-to-peer replication to parties (third party `object-store`s) you want to share data with.
 - Publishes traces to Datadog.
 
