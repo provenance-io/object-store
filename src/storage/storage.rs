@@ -1,6 +1,3 @@
-use minitrace_macro::trace;
-use minitrace::LocalSpan;
-
 use crate::storage::{Result, StorageError};
 
 pub struct StoragePath {
@@ -15,7 +12,6 @@ pub trait Storage: Send + Sync + std::fmt::Debug {
     async fn fetch(&self, path: &StoragePath, content_length: u64) -> Result<Vec<u8>>;
 
 
-    #[trace("storage::validate_content_length")]
     fn validate_content_length(&self, path: &StoragePath, content_length: u64, data:&[u8]) -> Result<()> {
         if data.len() as u64 != content_length {
             Err(StorageError::ContentLengthError(format!(
