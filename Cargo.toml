@@ -11,6 +11,7 @@ async-recursion = "0.3"
 base64 = "0.13"
 bytes = "1.0"
 chrono = "0.4"
+cloud-storage = { git = "https://github.com/scirner22/cloud-storage-rs.git", branch = "allow-base-url" }
 env_logger = "0.9"
 futures = "0.3"
 futures-util = "0.3"

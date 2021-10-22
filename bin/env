@@ -8,8 +8,6 @@ export DB_PASS=password1
 export DB_NAME=object-store
 export DB_SCHEMA=public
 export URI_HOST=figure.com
-export STORAGE_TYPE=file_system
-export STORAGE_BASE_PATH=storage_bucket
 export TRACE_HEADER=x-trace-header
 export LOGGING_THRESHOLD_SECONDS=1
 export RUST_LOG=warn,object_store=debug
@@ -18,3 +16,14 @@ export DD_VERSION=undefined
 export DD_SERVICE=object-store
 export DD_ENV=local
 export DD_TRACE_SPAN_TAGS=
+
+## start of file system variables
+export STORAGE_TYPE=file_system
+export STORAGE_BASE_PATH=storage_bucket
+## end
+
+## start of google cloud variables
+# export STORAGE_TYPE=google_cloud
+# export STORAGE_BASE_PATH=scirner-os-test
+# export SERVICE_ACCOUNT=key-file
+## end

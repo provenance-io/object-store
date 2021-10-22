@@ -1,11 +1,11 @@
 use std::path::PathBuf;
 
-use minitrace_macro::{trace, trace_async};
-use minitrace::{FutureExt, LocalSpan};
+use minitrace_macro::trace_async;
+use minitrace::FutureExt;
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt;
 
-use crate::storage::{Result, StorageError, StoragePath};
+use crate::storage::{Result, Storage, StorageError, StoragePath};
 
 #[derive(Debug)]
 pub struct FileSystem {
@@ -13,34 +13,17 @@ pub struct FileSystem {
 }
 
 impl FileSystem {
-
     pub fn new(base_url: &str) -> Self {
         FileSystem { base_url: PathBuf::from(base_url) }
     }
 
-    #[trace("file_system::validate_content_length")]
-    fn validate_content_length(&self, path: &StoragePath, content_length: u64, data:&[u8]) -> Result<()> {
-        if data.len() as u64 != content_length {
-            Err(StorageError::ContentLengthError(format!(
-                "expected content length of {} and fetched content length of {} for {}/{}",
-                content_length,
-                data.len(),
-                &path.dir,
-                &path.file,
-            )))
-        } else {
-            Ok(())
-        }
-    }
-
-    #[trace("file_system::get_path")]
     fn get_path(&self, path: &StoragePath) -> PathBuf {
         let mut path_buf = self.base_url.clone();
         path_buf.push(&path.dir);
         path_buf.push(&path.file);
         path_buf
     }
-    
+
     #[trace_async("file_system::create_dir")]
     async fn create_dir(&self, path: &StoragePath) -> Result<()> {
         let mut path_buf = self.base_url.clone();
@@ -54,10 +37,12 @@ impl FileSystem {
             }
         }
     }
+}
 
-    #[async_recursion::async_recursion]
+#[async_trait::async_trait]
+impl Storage for FileSystem {
     #[trace_async("file_system::store")]
-    pub async fn store(&self, path: &StoragePath, content_length: u64, data: &[u8]) -> Result<()> {
+    async fn store(&self, path: &StoragePath, content_length: u64, data: &[u8]) -> Result<()> {
         if let Err(e) = self.validate_content_length(&path, content_length, &data) {
             log::warn!("{:?}", e);
         }
@@ -85,7 +70,7 @@ impl FileSystem {
     }
 
     #[trace_async("file_system::fetch")]
-    pub async fn fetch(&self, path: &StoragePath, content_length: u64) -> Result<Vec<u8>> {
+    async fn fetch(&self, path: &StoragePath, content_length: u64) -> Result<Vec<u8>> {
         let data = tokio::fs::read(self.get_path(path)).await
             .map_err(|e| StorageError::IoError(format!("{:?}", e)))?;
 

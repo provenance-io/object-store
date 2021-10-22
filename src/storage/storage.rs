@@ -1,4 +1,4 @@
-use crate::storage::Result;
+use crate::storage::{Result, StorageError};
 
 pub struct StoragePath {
     pub dir: String,
@@ -6,8 +6,23 @@ pub struct StoragePath {
 }
 
 #[async_trait::async_trait]
-pub trait Storage {
+pub trait Storage: Send + Sync + std::fmt::Debug {
     // store should be idempotent
     async fn store(&self, path: &StoragePath, content_length: u64, data: &[u8]) -> Result<()>;
     async fn fetch(&self, path: &StoragePath, content_length: u64) -> Result<Vec<u8>>;
+
+
+    fn validate_content_length(&self, path: &StoragePath, content_length: u64, data:&[u8]) -> Result<()> {
+        if data.len() as u64 != content_length {
+            Err(StorageError::ContentLengthError(format!(
+                "expected content length of {} and fetched content length of {} for {}/{}",
+                content_length,
+                data.len(),
+                &path.dir,
+                &path.file,
+            )))
+        } else {
+            Ok(())
+        }
+    }
 }

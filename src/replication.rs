@@ -1,6 +1,6 @@
 use crate::{cache::Cache, config::Config, consts, types::OsError};
 use crate::datastore::{self, reap_object_replication, replication_object_uuids};
-use crate::storage::{FileSystem, StoragePath};
+use crate::storage::{Storage, StoragePath};
 use crate::pb::object_service_client::ObjectServiceClient;
 use crate::proto_helpers::{create_data_chunk, create_multi_stream_header, create_stream_header_field, create_stream_end};
 
@@ -314,11 +314,11 @@ pub struct ReplicationState {
     config: Arc<Config>,
     snapshot_cache: (DateTime<Utc>, Cache),
     db_pool: Arc<PgPool>,
-    storage: Arc<FileSystem>
+    storage: Arc<Box<dyn Storage>>
 }
 
 impl ReplicationState {
-    pub fn new(cache: Arc<Mutex<Cache>>, config: Arc<Config>, db_pool: Arc<PgPool>, storage: Arc<FileSystem>) -> Self {
+    pub fn new(cache: Arc<Mutex<Cache>>, config: Arc<Config>, db_pool: Arc<PgPool>, storage: Arc<Box<dyn Storage>>) -> Self {
         let snapshot_cache = cache.lock().unwrap().clone();
         let snapshot_cache = (Utc::now(), snapshot_cache);
 
@@ -524,6 +524,7 @@ pub mod tests {
     use crate::object::tests::*;
     use crate::pb::{self};
     use crate::replication::*;
+    use crate::storage::FileSystem;
 
     use std::collections::HashMap;
 
@@ -546,6 +547,7 @@ pub mod tests {
             db_database: String::default(),
             db_schema: String::default(),
             storage_type: "file_system_one".to_owned(),
+            storage_base_url: None,
             storage_base_path: "/tmp".to_owned(),
             storage_threshold: 5000,
             replication_enabled: true,
@@ -570,6 +572,7 @@ pub mod tests {
             db_database: String::default(),
             db_schema: String::default(),
             storage_type: "file_system_one".to_owned(),
+            storage_base_url: None,
             storage_base_path: "/tmp".to_owned(),
             storage_threshold: 5000,
             replication_enabled: false,
@@ -594,6 +597,7 @@ pub mod tests {
             db_database: String::default(),
             db_schema: String::default(),
             storage_type: "file_system_two".to_owned(),
+            storage_base_url: None,
             storage_base_path: "/tmp".to_owned(),
             storage_threshold: 5000,
             replication_enabled: true,
@@ -641,7 +645,7 @@ pub mod tests {
             let cache = Arc::new(cache);
             let config = Arc::new(config);
             let db_pool = Arc::new(pool);
-            let storage = Arc::new(storage);
+            let storage: Arc<Box<dyn Storage>> = Arc::new(Box::new(storage));
             let replication_state = ReplicationState::new(Arc::clone(&cache), Arc::clone(&config), Arc::clone(&db_pool), Arc::clone(&storage));
             let object_service = ObjectGrpc {
                 cache: Arc::clone(&cache),
@@ -680,7 +684,7 @@ pub mod tests {
             let cache = Arc::new(cache);
             let config = Arc::new(config);
             let db_pool = Arc::new(pool);
-            let storage = Arc::new(storage);
+            let storage: Arc<Box<dyn Storage>> = Arc::new(Box::new(storage));
             let replication_state = ReplicationState::new(Arc::clone(&cache), Arc::clone(&config), Arc::clone(&db_pool), Arc::clone(&storage));
             let object_service = ObjectGrpc {
                 cache: Arc::clone(&cache),

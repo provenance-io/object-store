@@ -1,11 +1,13 @@
 use quick_error::quick_error;
 
 mod file_system;
+mod google_cloud;
 mod storage;
 
 // forwarding declarations
-pub use storage::{Storage, StoragePath};
 pub use file_system::FileSystem;
+pub use google_cloud::GoogleCloud;
+pub use storage::{Storage, StoragePath};
 
 quick_error! {
     #[derive(Debug, PartialEq)]

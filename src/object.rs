@@ -1,4 +1,4 @@
-use crate::{cache::Cache, config::Config, dime::{Dime, Signature, format_dime_bytes}, storage::{FileSystem, StoragePath}};
+use crate::{cache::Cache, config::Config, dime::{Dime, Signature, format_dime_bytes}, storage::{Storage, StoragePath}};
 use crate::consts;
 use crate::datastore;
 use crate::domain::{DimeProperties, ObjectApiResponse};
@@ -28,11 +28,11 @@ pub struct ObjectGrpc {
     pub cache: Arc<Mutex<Cache>>,
     pub config: Arc<Config>,
     pub db_pool: Arc<PgPool>,
-    pub storage: Arc<FileSystem>,
+    pub storage: Arc<Box<dyn Storage>>,
 }
 
 impl ObjectGrpc {
-    pub fn new(cache: Arc<Mutex<Cache>>, config: Arc<Config>, db_pool: Arc<PgPool>, storage: Arc<FileSystem>) -> Self
+    pub fn new(cache: Arc<Mutex<Cache>>, config: Arc<Config>, db_pool: Arc<PgPool>, storage: Arc<Box<dyn Storage>>) -> Self
     {
         Self { cache, config, db_pool, storage }
     }
@@ -270,6 +270,7 @@ pub mod tests {
     use crate::dime::Signature;
     use crate::pb::{self, Audience, Dime as DimeProto, ObjectResponse};
     use crate::object::*;
+    use crate::storage::FileSystem;
 
     use futures::stream;
     use futures_util::TryStreamExt;
@@ -299,6 +300,7 @@ pub mod tests {
             db_database: String::default(),
             db_schema: String::default(),
             storage_type: "file_system".to_owned(),
+            storage_base_url: None,
             storage_base_path: "/tmp".to_owned(),
             storage_threshold: 5000,
             replication_enabled: true,
@@ -347,7 +349,7 @@ pub mod tests {
                 cache: Arc::new(cache),
                 config: Arc::new(config),
                 db_pool: Arc::new(pool),
-                storage: Arc::new(storage),
+                storage: Arc::new(Box::new(storage)),
             };
 
             tx.send(object_service.db_pool.clone()).await.unwrap();
