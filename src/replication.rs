@@ -422,7 +422,7 @@ async fn replicate_iteration(inner: &mut ReplicationState, client_cache: &mut Cl
 
     let mut futures = Vec::new();
 
-    for (public_key, url) in &inner.snapshot_cache.1.remote_public_keys {
+    for (public_key, (_, url)) in &inner.snapshot_cache.1.remote_public_keys {
 
         let public_key = PublicKey::new(public_key);
 
@@ -431,10 +431,10 @@ async fn replicate_iteration(inner: &mut ReplicationState, client_cache: &mut Cl
                 futures.push(replicate_public_key(&inner, client, public_key.clone(), &url));
             },
             Ok(None) => {
-                log::trace!("Waiting to retry for client for {}", url);
+                log::trace!("Waiting to retry for client for {}", &url);
             },
             Err(e) => {
-                log::error!("Failed to cache service connection {} - {:?}", url, e)
+                log::error!("Failed to cache service connection {} - {:?}", &url, e)
             }
         }
     }
@@ -486,7 +486,7 @@ pub async fn replicate(mut inner: ReplicationState) {
 async fn reap_unknown_keys_iteration(db_pool: &Arc<PgPool>, cache: &Arc<Mutex<Cache>>) {
     let local_public_keys = cache.lock().unwrap().local_public_keys.clone();
 
-    for public_key in local_public_keys {
+    for (public_key, _) in local_public_keys {
         let result = replication_object_uuids(&db_pool, &public_key, 1).await;
 
         match result {
@@ -519,7 +519,7 @@ pub async fn reap_unknown_keys(db_pool: Arc<PgPool>, cache: Arc<Mutex<Cache>>) {
 pub mod tests {
     use crate::MIGRATOR;
     use crate::config::Config;
-    use crate::datastore::replication_object_uuids;
+    use crate::datastore::{AuthType, KeyType, PublicKey, replication_object_uuids};
     use crate::object::*;
     use crate::object::tests::*;
     use crate::pb::{self};
@@ -557,6 +557,7 @@ pub mod tests {
             backoff_max_wait: 5,
             logging_threshold_seconds: 1f64,
             trace_header: String::default(),
+            user_auth_enabled: false,
         }
     }
 
@@ -582,6 +583,7 @@ pub mod tests {
             backoff_max_wait: 5,
             logging_threshold_seconds: 1f64,
             trace_header: String::default(),
+            user_auth_enabled: false,
         }
     }
 
@@ -607,6 +609,7 @@ pub mod tests {
             backoff_max_wait: 5,
             logging_threshold_seconds: 1f64,
             trace_header: String::default(),
+            user_auth_enabled: false,
         }
     }
 
@@ -627,13 +630,40 @@ pub mod tests {
         pool
     }
 
+    fn set_cache(cache: &mut Cache) {
+        cache.add_local_public_key(PublicKey {
+            uuid: uuid::Uuid::default(),
+            public_key: std::str::from_utf8(&party_1().0.public_key).unwrap().to_owned(),
+            public_key_type: KeyType::Secp256k1,
+            url: String::from(""),
+            metadata: Vec::default(),
+            auth_type: Some(AuthType::Header),
+            auth_data: Some(String::from("X-Test-Header:test_value")),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        });
+        cache.add_remote_public_key(
+            PublicKey {
+                uuid: uuid::Uuid::default(),
+                public_key: std::str::from_utf8(&party_2().0.public_key).unwrap().to_owned(),
+                public_key_type: KeyType::Secp256k1,
+                url: String::from("tcp://0.0.0.0:6790"),
+                metadata: Vec::default(),
+                auth_type: Some(AuthType::Header),
+                auth_data: Some(String::from("X-Test-Header:test_value")),
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+            },
+            String::from("tcp://0.0.0.0:6790"),
+        );
+    }
+
     async fn start_server_one(config_override: Option<Config>) -> ReplicationState {
         let (tx, mut rx) = tokio::sync::mpsc::channel(1);
 
         tokio::spawn(async move {
             let mut cache = Cache::default();
-            cache.add_local_public_key(std::str::from_utf8(&party_1().0.public_key).unwrap().to_owned());
-            cache.add_remote_public_key(std::str::from_utf8(&party_2().0.public_key).unwrap().to_owned(), String::from("tcp://0.0.0.0:6790"));
+            set_cache(&mut cache);
             let cache = Mutex::new(cache);
             let config = config_override.unwrap_or(test_config_one());
             let url = config.url.clone();
@@ -671,8 +701,7 @@ pub mod tests {
 
         tokio::spawn(async move {
             let mut cache = Cache::default();
-            cache.add_local_public_key(std::str::from_utf8(&party_1().0.public_key).unwrap().to_owned());
-            cache.add_remote_public_key(std::str::from_utf8(&party_2().0.public_key).unwrap().to_owned(), String::from("tcp://0.0.0.0:6790"));
+            set_cache(&mut cache);
             let cache = Mutex::new(cache);
             let config = test_config_two();
             let url = config.url.clone();
@@ -791,7 +820,7 @@ pub mod tests {
         let dime = generate_dime(vec![audience1.clone(), audience2.clone(), audience3.clone()], vec![signature1.clone(), signature2.clone(), signature3.clone()]);
         let payload: bytes::Bytes = "testing small payload 2".as_bytes().into();
         let chunk_size = 500; // full payload in one packet
-        let response = put_helper(dime, payload, chunk_size, HashMap::default()).await;
+        let response = put_helper(dime, payload, chunk_size, HashMap::default(), Vec::default()).await;
 
         match response {
             Ok(_) => (),
@@ -800,7 +829,7 @@ pub mod tests {
 
         let dime = generate_dime(vec![audience1.clone(), audience2.clone(), audience3.clone()], vec![signature1.clone(), signature2.clone(), signature3.clone()]);
         let payload: bytes::Bytes = "testing small payload 3".as_bytes().into();
-        let response = put_helper(dime, payload, chunk_size, HashMap::default()).await;
+        let response = put_helper(dime, payload, chunk_size, HashMap::default(), Vec::default()).await;
 
         match response {
             Ok(_) => (),
@@ -809,7 +838,7 @@ pub mod tests {
 
         let dime = generate_dime(vec![audience1.clone(), audience2.clone(), audience3.clone()], vec![signature1.clone(), signature2.clone(), signature3.clone()]);
         let payload: bytes::Bytes = "testing small payload 4".as_bytes().into();
-        let response = put_helper(dime, payload.clone(), chunk_size, HashMap::default()).await;
+        let response = put_helper(dime, payload.clone(), chunk_size, HashMap::default(), Vec::default()).await;
 
         match response {
             Ok(_) => {
@@ -837,7 +866,7 @@ pub mod tests {
         let dime = generate_dime(vec![audience1.clone()], vec![signature1.clone()]);
         let payload: bytes::Bytes = "testing small payload 1".as_bytes().into();
         let chunk_size = 500; // full payload in one packet
-        let response = put_helper(dime, payload, chunk_size, HashMap::default()).await;
+        let response = put_helper(dime, payload, chunk_size, HashMap::default(), Vec::default()).await;
 
         match response {
             Ok(_) => {
@@ -849,7 +878,7 @@ pub mod tests {
         // put 3 objects for party_1, party_2, party_3
         let dime = generate_dime(vec![audience1.clone(), audience2.clone(), audience3.clone()], vec![signature1.clone(), signature2.clone(), signature3.clone()]);
         let payload: bytes::Bytes = "testing small payload 2".as_bytes().into();
-        let response = put_helper(dime, payload, chunk_size, HashMap::default()).await;
+        let response = put_helper(dime, payload, chunk_size, HashMap::default(), Vec::default()).await;
 
         match response {
             Ok(_) => (),
@@ -858,7 +887,7 @@ pub mod tests {
 
         let dime = generate_dime(vec![audience1.clone(), audience2.clone(), audience3.clone()], vec![signature1.clone(), signature2.clone(), signature3.clone()]);
         let payload: bytes::Bytes = "testing small payload 3".as_bytes().into();
-        let response = put_helper(dime, payload, chunk_size, HashMap::default()).await;
+        let response = put_helper(dime, payload, chunk_size, HashMap::default(), Vec::default()).await;
 
         match response {
             Ok(_) => (),
@@ -867,7 +896,7 @@ pub mod tests {
 
         let dime = generate_dime(vec![audience1.clone(), audience2.clone(), audience3.clone()], vec![signature1.clone(), signature2.clone(), signature3.clone()]);
         let payload: bytes::Bytes = "testing small payload 4".as_bytes().into();
-        let response = put_helper(dime, payload.clone(), chunk_size, HashMap::default()).await;
+        let response = put_helper(dime, payload.clone(), chunk_size, HashMap::default(), Vec::default()).await;
 
         match response {
             Ok(_) => {
@@ -936,6 +965,7 @@ pub mod tests {
     #[tokio::test]
     #[serial(grpc_server)]
     async fn late_remote_url_can_replicate() {
+        // TODO implement
     }
 
     #[tokio::test]
@@ -950,7 +980,7 @@ pub mod tests {
         let dime = generate_dime(vec![audience1.clone(), audience3.clone()], vec![signature1.clone(), signature3.clone()]);
         let payload: bytes::Bytes = "testing small payload 2".as_bytes().into();
         let chunk_size = 500; // full payload in one packet
-        let response = put_helper(dime, payload, chunk_size, HashMap::default()).await;
+        let response = put_helper(dime, payload, chunk_size, HashMap::default(), Vec::default()).await;
 
         match response {
             Ok(_) => (),
@@ -959,7 +989,7 @@ pub mod tests {
 
         let dime = generate_dime(vec![audience1.clone(), audience3.clone()], vec![signature1.clone(), signature3.clone()]);
         let payload: bytes::Bytes = "testing small payload 3".as_bytes().into();
-        let response = put_helper(dime, payload, chunk_size, HashMap::default()).await;
+        let response = put_helper(dime, payload, chunk_size, HashMap::default(), Vec::default()).await;
 
         match response {
             Ok(_) => (),
@@ -968,7 +998,7 @@ pub mod tests {
 
         let dime = generate_dime(vec![audience1.clone(), audience3.clone()], vec![signature1.clone(), signature3.clone()]);
         let payload: bytes::Bytes = "testing small payload 4".as_bytes().into();
-        let response = put_helper(dime, payload.clone(), chunk_size, HashMap::default()).await;
+        let response = put_helper(dime, payload.clone(), chunk_size, HashMap::default(), Vec::default()).await;
 
         match response {
             Ok(_) => {
@@ -984,7 +1014,17 @@ pub mod tests {
         {
             let mut cache = cache.lock().unwrap();
 
-            cache.add_local_public_key(String::from_utf8(audience3.public_key.clone()).unwrap());
+            cache.add_local_public_key(PublicKey {
+                uuid: uuid::Uuid::default(),
+                public_key: std::str::from_utf8(audience3.public_key.as_slice()).unwrap().to_owned(),
+                public_key_type: KeyType::Secp256k1,
+                url: String::from(""),
+                metadata: Vec::default(),
+                auth_type: Some(AuthType::Header),
+                auth_data: Some(String::from("X-Test-Header:test_value")),
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+            });
         }
 
         reap_unknown_keys_iteration(&state_one.db_pool, &cache).await;

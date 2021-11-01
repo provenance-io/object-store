@@ -1,3 +1,4 @@
+mod authorization;
 mod cache;
 mod consts;
 mod config;
@@ -93,15 +94,16 @@ async fn main() -> Result<()> {
     MIGRATOR.run(&pool).await?;
 
     // populate initial cache
-    for (public_key, url) in datastore::get_all_public_keys(&pool).await? {
-        if let Some(url) = url {
-            log::trace!("Adding remote public key - {} {}", &public_key, &url);
+    for key in datastore::get_all_public_keys(&pool).await? {
+        if key.url.is_empty() {
+            log::trace!("Adding local public key - {}", &key.public_key);
 
-            cache.add_remote_public_key(public_key, url);
+            cache.add_local_public_key(key);
         } else {
-            log::trace!("Adding local public key - {}", &public_key);
+            log::trace!("Adding remote public key - {} {}", &key.public_key, &key.url);
 
-            cache.add_local_public_key(public_key);
+            let url = key.url.clone();
+            cache.add_remote_public_key(key, url);
         }
     }
 

@@ -1,4 +1,4 @@
-use crate::{cache::Cache, config::Config, dime::{Dime, Signature, format_dime_bytes}, storage::{Storage, StoragePath}};
+use crate::{cache::{Cache, PublicKeyState}, config::Config, dime::{Dime, Signature, format_dime_bytes}, storage::{Storage, StoragePath}};
 use crate::consts;
 use crate::datastore;
 use crate::domain::{DimeProperties, ObjectApiResponse};
@@ -45,6 +45,7 @@ impl ObjectService for ObjectGrpc {
         &self,
         request: Request<Streaming<ChunkBidi>>,
     ) -> GrpcResult<Response<ObjectResponse>> {
+        let metadata = request.metadata().clone();
         let mut stream = request.into_inner();
         let mut chunk_buffer = Vec::new();
         let mut byte_buffer = BytesMut::new();
@@ -156,6 +157,24 @@ impl ObjectService for ObjectGrpc {
         };
         let mut replication_key_states = Vec::new();
 
+        if self.config.user_auth_enabled {
+            let owner_public_key = dime.owner_public_key_base64()
+                .map_err(|_| Status::invalid_argument("Invalid Dime proto - owner"))?;
+            let cache = self.cache.lock().unwrap();
+
+            match cache.get_public_key_state(&owner_public_key) {
+                PublicKeyState::Local => {
+                    if let Some(cached_key) = cache.local_public_keys.get(&owner_public_key) {
+                        cached_key.auth()?.authorize(&metadata)
+                    } else {
+                        Err(Status::internal("this should not happen - key was resolved to Local state and then could not be fetched"))
+                    }
+                },
+                PublicKeyState::Remote => Err(Status::permission_denied(format!("remote public key {} - use the replicate route", &owner_public_key))),
+                PublicKeyState::Unknown => Err(Status::permission_denied(format!("unknown public key {}", &owner_public_key))),
+            }?;
+        }
+
         if self.config.replication_enabled {
             let audience = dime.unique_audience_without_owner_base64()
                 .map_err(|_| Status::invalid_argument("Invalid Dime proto - audience list"))?;
@@ -266,12 +285,13 @@ pub mod tests {
     use crate::MIGRATOR;
     use crate::config::DatadogConfig;
     use crate::consts::*;
-    use crate::datastore::{replication_object_uuids, MailboxPublicKey, ObjectPublicKey};
+    use crate::datastore::{AuthType, KeyType, MailboxPublicKey, ObjectPublicKey, PublicKey, replication_object_uuids};
     use crate::dime::Signature;
     use crate::pb::{self, Audience, Dime as DimeProto, ObjectResponse};
     use crate::object::*;
     use crate::storage::FileSystem;
 
+    use chrono::Utc;
     use futures::stream;
     use futures_util::TryStreamExt;
     use sqlx::FromRow;
@@ -310,6 +330,7 @@ pub mod tests {
             backoff_max_wait: 1,
             logging_threshold_seconds: 1f64,
             trace_header: String::default(),
+            user_auth_enabled: false,
         }
     }
 
@@ -330,15 +351,38 @@ pub mod tests {
         pool
     }
 
-    async fn start_server() -> Arc<PgPool> {
+    async fn start_server(default_config: Option<Config>) -> Arc<PgPool> {
         let (tx, mut rx) = tokio::sync::mpsc::channel(1);
 
         tokio::spawn(async move {
             let mut cache = Cache::default();
-            cache.add_local_public_key(std::str::from_utf8(&party_1().0.public_key).unwrap().to_owned());
-            cache.add_remote_public_key(std::str::from_utf8(&party_2().0.public_key).unwrap().to_owned(), String::from("tcp://party2:8080"));
+            cache.add_local_public_key(PublicKey {
+                uuid: uuid::Uuid::default(),
+                public_key: std::str::from_utf8(&party_1().0.public_key).unwrap().to_owned(),
+                public_key_type: KeyType::Secp256k1,
+                url: String::from(""),
+                metadata: Vec::default(),
+                auth_type: Some(AuthType::Header),
+                auth_data: Some(String::from("x-test-header:test_value")),
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+            });
+            cache.add_remote_public_key(
+                PublicKey {
+                    uuid: uuid::Uuid::default(),
+                    public_key: std::str::from_utf8(&party_2().0.public_key).unwrap().to_owned(),
+                    public_key_type: KeyType::Secp256k1,
+                    url: String::from("tcp://party2:8080"),
+                    metadata: Vec::default(),
+                    auth_type: Some(AuthType::Header),
+                    auth_data: Some(String::from("x-test-header:test_value")),
+                    created_at: Utc::now(),
+                    updated_at: Utc::now(),
+                },
+                String::from("tcp://party2:8080"),
+            );
             let cache = Mutex::new(cache);
-            let config = test_config();
+            let config = default_config.unwrap_or(test_config());
             let url = config.url.clone();
             let docker = clients::Cli::default();
             let image = images::postgres::Postgres::default().with_version(9);
@@ -433,7 +477,7 @@ pub mod tests {
         hash.to_be_bytes().to_vec()
     }
 
-    pub async fn put_helper(dime: Dime, payload: bytes::Bytes, chunk_size: usize, extra_properties: HashMap<String, String>) -> GrpcResult<Response<ObjectResponse>> {
+    pub async fn put_helper(dime: Dime, payload: bytes::Bytes, chunk_size: usize, extra_properties: HashMap<String, String>, grpc_metadata: Vec<(&'static str, &'static str)>) -> GrpcResult<Response<ObjectResponse>> {
         let mut packets = Vec::new();
 
         let mut metadata = HashMap::new();
@@ -506,8 +550,13 @@ pub mod tests {
 
         let mut client = pb::object_service_client::ObjectServiceClient::connect("tcp://0.0.0.0:6789").await.unwrap();
         let stream = stream::iter(packets);
+        let mut request = Request::new(stream);
+        let metadata = request.metadata_mut();
+        for (k, v) in grpc_metadata {
+            metadata.insert(k, v.parse().unwrap());
+        }
 
-        client.put(Request::new(stream)).await
+        client.put(request).await
     }
 
     pub async fn get_public_keys_by_object(db: &PgPool, object_uuid: &uuid::Uuid) -> Vec<ObjectPublicKey> {
@@ -555,7 +604,7 @@ pub mod tests {
     #[tokio::test]
     #[serial(grpc_server)]
     async fn simple_put() {
-        let db = start_server().await;
+        let db = start_server(None).await;
 
         let (audience, signature) = party_1();
         let dime = generate_dime(vec![audience], vec![signature]);
@@ -563,7 +612,61 @@ pub mod tests {
         let payload: bytes::Bytes = "testing small payload".as_bytes().into();
         let payload_len = payload.len() as i64;
         let chunk_size = 500; // full payload in one packet
-        let response = put_helper(dime, payload, chunk_size, HashMap::default()).await;
+        let response = put_helper(dime, payload, chunk_size, HashMap::default(), Vec::default()).await;
+
+        match response {
+            Ok(response) => {
+                let response = response.into_inner();
+                let uuid = response.uuid.unwrap().value;
+                let uuid_typed = uuid::Uuid::from_str(uuid.as_str()).unwrap();
+                let object = datastore::get_object_by_uuid(&db, &uuid_typed).await.unwrap();
+                let mut properties = LinkedHashMap::new();
+                properties.insert(HASH_FIELD_NAME.to_owned(), base64::decode(object.hash).unwrap());
+                properties.insert(SIGNATURE_FIELD_NAME.to_owned(), "signature".as_bytes().to_owned());
+                properties.insert(SIGNATURE_PUBLIC_KEY_FIELD_NAME.to_owned(), "signature public key".as_bytes().to_owned());
+
+                assert_ne!(uuid, dime_uuid);
+                assert_eq!(response.name, NOT_STORAGE_BACKED);
+                assert_eq!(response.metadata.unwrap().content_length, payload_len);
+                assert_eq!(object.properties, properties)
+            },
+            _ => assert_eq!(format!("{:?}", response), ""),
+        }
+    }
+
+    #[tokio::test]
+    #[serial(grpc_server)]
+    async fn simple_put_with_auth_failure() {
+        let mut config = test_config();
+        config.user_auth_enabled = true;
+        start_server(Some(config)).await;
+
+        let (audience, signature) = party_1();
+        let dime = generate_dime(vec![audience], vec![signature]);
+        let payload: bytes::Bytes = "testing small payload".as_bytes().into();
+        let chunk_size = 500; // full payload in one packet
+        let response = put_helper(dime, payload, chunk_size, HashMap::default(), Vec::default()).await;
+
+        match response {
+            Err(err) => assert_eq!(err.code(), tonic::Code::PermissionDenied),
+            _ => assert_eq!(format!("{:?}", response), ""),
+        }
+    }
+
+    #[tokio::test]
+    #[serial(grpc_server)]
+    async fn simple_put_with_auth_success() {
+        let mut config = test_config();
+        config.user_auth_enabled = true;
+        let db = start_server(Some(config)).await;
+
+        let (audience, signature) = party_1();
+        let dime = generate_dime(vec![audience], vec![signature]);
+        let dime_uuid = dime.uuid.clone().to_hyphenated().to_string();
+        let payload: bytes::Bytes = "testing small payload".as_bytes().into();
+        let payload_len = payload.len() as i64;
+        let chunk_size = 500; // full payload in one packet
+        let response = put_helper(dime, payload, chunk_size, HashMap::default(), vec![("x-test-header", "test_value")]).await;
 
         match response {
             Ok(response) => {
@@ -588,7 +691,7 @@ pub mod tests {
     #[tokio::test]
     #[serial(grpc_server)]
     async fn multi_packet_file_store_put() {
-        start_server().await;
+        start_server(None).await;
 
         let (audience, signature) = party_1();
         let dime = generate_dime(vec![audience], vec![signature]);
@@ -596,7 +699,7 @@ pub mod tests {
         let payload: bytes::Bytes = "testing larger payload ".repeat(250).into_bytes().into();
         let payload_len = payload.len() as i64;
         let chunk_size = 100; // split payload into packets
-        let response = put_helper(dime, payload, chunk_size, HashMap::default()).await;
+        let response = put_helper(dime, payload, chunk_size, HashMap::default(), Vec::default()).await;
 
         match response {
             Ok(response) => {
@@ -613,7 +716,7 @@ pub mod tests {
     #[tokio::test]
     #[serial(grpc_server)]
     async fn multi_party_put() {
-        let db = start_server().await;
+        let db = start_server(None).await;
 
         let (audience1, signature1) = party_1();
         let (audience2, signature2) = party_2();
@@ -621,7 +724,7 @@ pub mod tests {
         let dime = generate_dime(vec![audience1, audience2, audience3], vec![signature1, signature2, signature3]);
         let payload: bytes::Bytes = "testing small payload".as_bytes().into();
         let chunk_size = 500; // full payload in one packet
-        let response = put_helper(dime, payload, chunk_size, HashMap::default()).await;
+        let response = put_helper(dime, payload, chunk_size, HashMap::default(), Vec::default()).await;
 
         match response {
             Ok(response) => {
@@ -639,7 +742,7 @@ pub mod tests {
     #[tokio::test]
     #[serial(grpc_server)]
     async fn small_mailbox_put() {
-        let db = start_server().await;
+        let db = start_server(None).await;
 
         let (audience1, signature1) = party_1();
         let (audience2, signature2) = party_2();
@@ -648,7 +751,7 @@ pub mod tests {
         dime.metadata.insert(MAILBOX_KEY.to_owned(), MAILBOX_FRAGMENT_REQUEST.to_owned());
         let payload: bytes::Bytes = "testing small payload".as_bytes().into();
         let chunk_size = 500; // full payload in one packet
-        let response = put_helper(dime, payload, chunk_size, HashMap::default()).await;
+        let response = put_helper(dime, payload, chunk_size, HashMap::default(), Vec::default()).await;
 
         match response {
             Ok(response) => {
@@ -667,7 +770,7 @@ pub mod tests {
     #[tokio::test]
     #[serial(grpc_server)]
     async fn large_mailbox_put() {
-        let db = start_server().await;
+        let db = start_server(None).await;
 
         let (audience1, signature1) = party_1();
         let (audience2, signature2) = party_2();
@@ -676,7 +779,7 @@ pub mod tests {
         dime.metadata.insert(MAILBOX_KEY.to_owned(), MAILBOX_FRAGMENT_REQUEST.to_owned());
         let payload: bytes::Bytes = "testing larger payload ".repeat(250).into_bytes().into();
         let chunk_size = 100; // split payload into packets
-        let response = put_helper(dime, payload, chunk_size, HashMap::default()).await;
+        let response = put_helper(dime, payload, chunk_size, HashMap::default(), Vec::default()).await;
 
         match response {
             Ok(response) => {
@@ -695,13 +798,13 @@ pub mod tests {
     #[tokio::test]
     #[serial(grpc_server)]
     async fn simple_get() {
-        start_server().await;
+        start_server(None).await;
 
         let (audience, signature) = party_1();
         let dime = generate_dime(vec![audience.clone()], vec![signature]);
         let payload: bytes::Bytes = "testing small payload".as_bytes().into();
         let chunk_size = 500; // full payload in one packet
-        let response = put_helper(dime, payload.clone(), chunk_size, HashMap::default()).await;
+        let response = put_helper(dime, payload.clone(), chunk_size, HashMap::default(), Vec::default()).await;
 
         match response {
             Ok(response) => {
@@ -773,13 +876,13 @@ pub mod tests {
     #[tokio::test]
     #[serial(grpc_server)]
     async fn multi_packet_file_store_get() {
-        start_server().await;
+        start_server(None).await;
 
         let (audience, signature) = party_1();
         let dime = generate_dime(vec![audience.clone()], vec![signature]);
         let payload: bytes::Bytes = "testing larger payload ".repeat(250).into_bytes().into();
         let chunk_size = 100; // split payload into packets
-        let response = put_helper(dime, payload.clone(), chunk_size, HashMap::default()).await;
+        let response = put_helper(dime, payload.clone(), chunk_size, HashMap::default(), Vec::default()).await;
 
         match response {
             Ok(response) => {
@@ -804,7 +907,7 @@ pub mod tests {
     #[tokio::test]
     #[serial(grpc_server)]
     async fn multi_party_non_owner_get() {
-        start_server().await;
+        start_server(None).await;
 
         let (audience1, signature1) = party_1();
         let (audience2, signature2) = party_2();
@@ -812,7 +915,7 @@ pub mod tests {
         let dime = generate_dime(vec![audience1, audience2, audience3.clone()], vec![signature1, signature2, signature3]);
         let payload: bytes::Bytes = "testing small payload".as_bytes().into();
         let chunk_size = 500; // full payload in one packet
-        let response = put_helper(dime, payload.clone(), chunk_size, HashMap::default()).await;
+        let response = put_helper(dime, payload.clone(), chunk_size, HashMap::default(), Vec::default()).await;
 
         match response {
             Ok(_) => (),
@@ -832,14 +935,14 @@ pub mod tests {
     #[tokio::test]
     #[serial(grpc_server)]
     async fn dupe_objects_noop() {
-        start_server().await;
+        start_server(None).await;
 
         let (audience, signature) = party_1();
         let dime = generate_dime(vec![audience], vec![signature]);
         let payload: bytes::Bytes = "testing small payload".as_bytes().into();
         let chunk_size = 500; // full payload in one packet
-        let response = put_helper(dime.clone(), payload.clone(), chunk_size, HashMap::default()).await;
-        let response_dupe = put_helper(dime, payload, chunk_size, HashMap::default()).await;
+        let response = put_helper(dime.clone(), payload.clone(), chunk_size, HashMap::default(), Vec::default()).await;
+        let response_dupe = put_helper(dime, payload, chunk_size, HashMap::default(), Vec::default()).await;
 
         assert!(response.is_ok() && response_dupe.is_ok());
 
@@ -852,7 +955,7 @@ pub mod tests {
     #[tokio::test]
     #[serial(grpc_server)]
     async fn dupe_objects_added_audience() {
-        start_server().await;
+        start_server(None).await;
 
         let (audience, signature) = party_1();
         let (audience2, signature2) = party_2();
@@ -860,8 +963,8 @@ pub mod tests {
         let dime2 = generate_dime(vec![audience, audience2], vec![signature, signature2]);
         let payload: bytes::Bytes = "testing small payload".as_bytes().into();
         let chunk_size = 500; // full payload in one packet
-        let response = put_helper(dime.clone(), payload.clone(), chunk_size, HashMap::default()).await;
-        let response_dupe = put_helper(dime2, payload, chunk_size, HashMap::default()).await;
+        let response = put_helper(dime.clone(), payload.clone(), chunk_size, HashMap::default(), Vec::default()).await;
+        let response_dupe = put_helper(dime2, payload, chunk_size, HashMap::default(), Vec::default()).await;
 
         assert!(response.is_ok() && response_dupe.is_ok());
 
@@ -874,7 +977,7 @@ pub mod tests {
     #[tokio::test]
     #[serial(grpc_server)]
     async fn get_with_wrong_key() {
-        start_server().await;
+        start_server(None).await;
 
         let (audience1, signature1) = party_1();
         let (audience2, signature2) = party_2();
@@ -882,7 +985,7 @@ pub mod tests {
         let dime = generate_dime(vec![audience1, audience2], vec![signature1, signature2]);
         let payload: bytes::Bytes = "testing small payload".as_bytes().into();
         let chunk_size = 500; // full payload in one packet
-        let response = put_helper(dime, payload.clone(), chunk_size, HashMap::default()).await;
+        let response = put_helper(dime, payload.clone(), chunk_size, HashMap::default(), Vec::default()).await;
 
         match response {
             Ok(_) => (),
@@ -902,7 +1005,7 @@ pub mod tests {
     #[tokio::test]
     #[serial(grpc_server)]
     async fn get_nonexistent_hash() {
-        start_server().await;
+        start_server(None).await;
 
         let (audience1, _) = party_1();
         let payload: bytes::Bytes = "testing small payload".as_bytes().into();
@@ -922,7 +1025,7 @@ pub mod tests {
     #[tokio::test]
     #[serial(grpc_server)]
     async fn put_with_replication() {
-        let db = start_server().await;
+        let db = start_server(None).await;
 
         let (audience1, signature1) = party_1();
         let (audience2, signature2) = party_2();
@@ -932,7 +1035,7 @@ pub mod tests {
         extra_properties.insert(SOURCE_KEY.to_owned(), String::from("standard key"));
         let payload: bytes::Bytes = "testing small payload".as_bytes().into();
         let chunk_size = 500; // full payload in one packet
-        let response = put_helper(dime, payload, chunk_size, extra_properties).await;
+        let response = put_helper(dime, payload, chunk_size, extra_properties, Vec::default()).await;
 
         match response {
             Ok(response) => {
@@ -953,7 +1056,7 @@ pub mod tests {
     #[tokio::test]
     #[serial(grpc_server)]
     async fn put_with_replication_different_owner() {
-        let db = start_server().await;
+        let db = start_server(None).await;
 
         let (audience1, signature1) = party_1();
         let (audience2, signature2) = party_2();
@@ -963,7 +1066,7 @@ pub mod tests {
         extra_properties.insert(SOURCE_KEY.to_owned(), String::from("standard key"));
         let payload: bytes::Bytes = "testing small payload".as_bytes().into();
         let chunk_size = 500; // full payload in one packet
-        let response = put_helper(dime, payload, chunk_size, extra_properties).await;
+        let response = put_helper(dime, payload, chunk_size, extra_properties, Vec::default()).await;
 
         match response {
             Ok(response) => {
@@ -984,7 +1087,7 @@ pub mod tests {
     #[tokio::test]
     #[serial(grpc_server)]
     async fn put_with_double_replication() {
-        let db = start_server().await;
+        let db = start_server(None).await;
 
         let (audience1, signature1) = party_1();
         let (audience2, signature2) = party_2();
@@ -994,7 +1097,7 @@ pub mod tests {
         extra_properties.insert(SOURCE_KEY.to_owned(), SOURCE_REPLICATION.to_owned());
         let payload: bytes::Bytes = "testing small payload".as_bytes().into();
         let chunk_size = 500; // full payload in one packet
-        let response = put_helper(dime, payload, chunk_size, extra_properties).await;
+        let response = put_helper(dime, payload, chunk_size, extra_properties, Vec::default()).await;
 
         match response {
             Ok(response) => {
@@ -1015,13 +1118,13 @@ pub mod tests {
     #[tokio::test]
     #[serial(grpc_server)]
     async fn get_object_no_properties() {
-        let db = start_server().await;
+        let db = start_server(None).await;
 
         let (audience, signature) = party_1();
         let dime = generate_dime(vec![audience.clone()], vec![signature]);
         let payload: bytes::Bytes = "testing small payload".as_bytes().into();
         let chunk_size = 500; // full payload in one packet
-        let response = put_helper(dime, payload.clone(), chunk_size, HashMap::default()).await;
+        let response = put_helper(dime, payload.clone(), chunk_size, HashMap::default(), Vec::default()).await;
 
         match response {
             Ok(response) => {

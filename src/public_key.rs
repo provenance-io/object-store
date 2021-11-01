@@ -1,11 +1,14 @@
 use crate::cache::Cache;
 use crate::datastore;
-use crate::types::{GrpcResult, OsError};
-use crate::pb::{public_key::Key, PublicKeyRequest, PublicKeyResponse};
+use crate::domain::PublicKeyApiResponse;
+use crate::types::GrpcResult;
+use crate::pb::{PublicKeyRequest, PublicKeyResponse};
 use crate::pb::public_key_service_server::PublicKeyService;
+use crate::pb::public_key_request::Impl::HeaderAuth as HeaderAuthEnumRequest;
 
+use std::convert::TryInto;
 use std::sync::{Arc, Mutex};
-use sqlx::{postgres::PgPool};
+use sqlx::postgres::PgPool;
 use tonic::{Request, Response, Status};
 use url::Url;
 
@@ -43,14 +46,18 @@ impl PublicKeyService for PublicKeyGrpc {
             return Err(Status::invalid_argument("must specify public key"))
         }
 
-        // validate signing public_key
-        if let Some(ref signing_public_key) = request.signing_public_key {
-            if signing_public_key.key.is_none() {
-                return Err(Status::invalid_argument("must specify signing key type"))
-            }
-        } else {
-            return Err(Status::invalid_argument("must specify signing public key"))
-        }
+        // validate auth methods
+        match request.r#impl {
+            Some(HeaderAuthEnumRequest(ref auth)) => {
+                if auth.header.trim().is_empty() {
+                    return Err(Status::invalid_argument("must specify non empty auth header"))
+                }
+                if auth.value.trim().is_empty() {
+                    return Err(Status::invalid_argument("must specify non empty auth value"))
+                }
+            },
+            _ => (),
+        };
 
         // validate url if it is not empty
         if !request.url.is_empty() {
@@ -58,19 +65,18 @@ impl PublicKeyService for PublicKeyGrpc {
                 .map_err(|e| Status::invalid_argument(format!("Unable to parse url {} - {:?}", &request.url, e)))?;
         }
 
-        let response = datastore::add_public_key(&self.db_pool, request).await?;
-        let key = match response.public_key.clone().unwrap().key.unwrap() {
-            Key::Secp256k1(data) => base64::encode(data),
-        };
+        let key = datastore::add_public_key(&self.db_pool, request.try_into()?).await?;
+        let response = key.clone().to_response()?;
 
-        if response.url.is_empty() {
+        if key.url.is_empty() {
             let mut cache = self.cache.lock().unwrap();
 
             cache.add_local_public_key(key);
         } else {
             let mut cache = self.cache.lock().unwrap();
 
-            cache.add_remote_public_key(key, response.url.clone());
+            let url = key.url.clone();
+            cache.add_remote_public_key(key, url);
         }
 
         Ok(Response::new(response))
@@ -82,7 +88,8 @@ mod tests {
     use crate::*;
     use crate::public_key::*;
 
-    use crate::pb::PublicKey;
+    use crate::pb::{public_key::Key, HeaderAuth, PublicKey};
+    use crate::pb::public_key_response::Impl::HeaderAuth as HeaderAuthEnumResponse;
 
     use testcontainers::*;
     use testcontainers::images::postgres::Postgres;
@@ -117,9 +124,7 @@ mod tests {
             public_key: Some(PublicKey {
                 key: Some(Key::Secp256k1(vec![])),
             }),
-            signing_public_key: Some(PublicKey {
-                key: Some(Key::Secp256k1(vec![])),
-            }),
+            r#impl: None,
             url: "invalidurl.com".to_owned(),
             metadata: None,
         };
@@ -146,9 +151,7 @@ mod tests {
             public_key: Some(PublicKey {
                 key: Some(Key::Secp256k1(vec![1u8, 2u8, 3u8])),
             }),
-            signing_public_key: Some(PublicKey {
-                key: Some(Key::Secp256k1(vec![])),
-            }),
+            r#impl: None,
             url: String::default(),
             metadata: None,
         };
@@ -171,6 +174,66 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn empty_auth_header_header() {
+        let docker = clients::Cli::default();
+        let image = images::postgres::Postgres::default().with_version(9);
+        let container = docker.run(image);
+        let cache = Mutex::new(Cache::default());
+        let pool = setup_postgres(&container).await;
+        let public_key_service = PublicKeyGrpc { cache: Arc::new(cache), db_pool: Arc::new(pool) };
+        let request = PublicKeyRequest {
+            public_key: Some(PublicKey {
+                key: Some(Key::Secp256k1(vec![1u8, 2u8, 3u8])),
+            }),
+            r#impl: Some(HeaderAuthEnumRequest(HeaderAuth {
+                header: String::from(""),
+                value: String::from("custom_value"),
+            })),
+            url: String::default(),
+            metadata: None,
+        };
+        let response = public_key_service.add(Request::new(request)).await;
+
+        match response {
+            Err(err) => {
+                assert_eq!(err.code(), tonic::Code::InvalidArgument);
+                assert_eq!(err.message(), "must specify non empty auth header".to_owned());
+            },
+            _ => assert_eq!(format!("{:?}", response), ""),
+        }
+    }
+
+    #[tokio::test]
+    async fn empty_auth_header_value() {
+        let docker = clients::Cli::default();
+        let image = images::postgres::Postgres::default().with_version(9);
+        let container = docker.run(image);
+        let cache = Mutex::new(Cache::default());
+        let pool = setup_postgres(&container).await;
+        let public_key_service = PublicKeyGrpc { cache: Arc::new(cache), db_pool: Arc::new(pool) };
+        let request = PublicKeyRequest {
+            public_key: Some(PublicKey {
+                key: Some(Key::Secp256k1(vec![1u8, 2u8, 3u8])),
+            }),
+            r#impl: Some(HeaderAuthEnumRequest(HeaderAuth {
+                header: String::from("X-Custom-Header"),
+                value: String::from(""),
+            })),
+            url: String::default(),
+            metadata: None,
+        };
+        let response = public_key_service.add(Request::new(request)).await;
+
+        match response {
+            Err(err) => {
+                assert_eq!(err.code(), tonic::Code::InvalidArgument);
+                assert_eq!(err.message(), "must specify non empty auth value".to_owned());
+            },
+            _ => assert_eq!(format!("{:?}", response), ""),
+        }
+    }
+
+    #[tokio::test]
     async fn missing_public_key() {
         let docker = clients::Cli::default();
         let image = images::postgres::Postgres::default().with_version(9);
@@ -180,9 +243,7 @@ mod tests {
         let public_key_service = PublicKeyGrpc { cache: Arc::new(cache), db_pool: Arc::new(pool) };
         let request = PublicKeyRequest {
             public_key: None,
-            signing_public_key: Some(PublicKey {
-                key: Some(Key::Secp256k1(vec![1u8, 2u8, 3u8])),
-            }),
+            r#impl: None,
             url: "http://test.com".to_owned(),
             metadata: None,
         };
@@ -198,33 +259,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn missing_signing_public_key() {
-        let docker = clients::Cli::default();
-        let image = images::postgres::Postgres::default().with_version(9);
-        let container = docker.run(image);
-        let cache = Mutex::new(Cache::default());
-        let pool = setup_postgres(&container).await;
-        let public_key_service = PublicKeyGrpc { cache: Arc::new(cache), db_pool: Arc::new(pool) };
-        let request = PublicKeyRequest {
-            public_key: Some(PublicKey {
-                key: Some(Key::Secp256k1(vec![1u8, 2u8, 3u8])),
-            }),
-            signing_public_key: None,
-            url: "http://test.com".to_owned(),
-            metadata: None,
-        };
-        let response = public_key_service.add(Request::new(request)).await;
-
-        match response {
-            Err(err) => {
-                assert_eq!(err.code(), tonic::Code::InvalidArgument);
-                assert_eq!(err.message(), "must specify signing public key".to_owned());
-            },
-            _ => assert_eq!(format!("{:?}", response), ""),
-        }
-    }
-
-    #[tokio::test]
     async fn missing_key() {
         let docker = clients::Cli::default();
         let image = images::postgres::Postgres::default().with_version(9);
@@ -234,9 +268,7 @@ mod tests {
         let public_key_service = PublicKeyGrpc { cache: Arc::new(cache), db_pool: Arc::new(pool) };
         let request = PublicKeyRequest {
             public_key: Some(PublicKey { key: None }),
-            signing_public_key: Some(PublicKey {
-                key: Some(Key::Secp256k1(vec![1u8, 2u8, 3u8])),
-            }),
+            r#impl: None,
             url: "http://test.com".to_owned(),
             metadata: None,
         };
@@ -246,33 +278,6 @@ mod tests {
             Err(err) => {
                 assert_eq!(err.code(), tonic::Code::InvalidArgument);
                 assert_eq!(err.message(), "must specify key type".to_owned());
-            },
-            _ => assert_eq!(format!("{:?}", response), ""),
-        }
-    }
-
-    #[tokio::test]
-    async fn missing_p8e_key() {
-        let docker = clients::Cli::default();
-        let image = images::postgres::Postgres::default().with_version(9);
-        let container = docker.run(image);
-        let cache = Mutex::new(Cache::default());
-        let pool = setup_postgres(&container).await;
-        let public_key_service = PublicKeyGrpc { cache: Arc::new(cache), db_pool: Arc::new(pool) };
-        let request = PublicKeyRequest {
-            public_key: Some(PublicKey {
-                key: Some(Key::Secp256k1(vec![1u8, 2u8, 3u8])),
-            }),
-            signing_public_key: Some(PublicKey { key: None }),
-            url: "http://test.com".to_owned(),
-            metadata: None,
-        };
-        let response = public_key_service.add(Request::new(request)).await;
-
-        match response {
-            Err(err) => {
-                assert_eq!(err.code(), tonic::Code::InvalidArgument);
-                assert_eq!(err.message(), "must specify signing key type".to_owned());
             },
             _ => assert_eq!(format!("{:?}", response), ""),
         }
@@ -290,9 +295,7 @@ mod tests {
             public_key: Some(PublicKey {
                 key: Some(Key::Secp256k1(vec![1u8, 2u8, 3u8])),
             }),
-            signing_public_key: Some(PublicKey {
-                key: Some(Key::Secp256k1(vec![1u8, 2u8, 3u8])),
-            }),
+            r#impl: None,
             url: "http://test.com".to_owned(),
             metadata: None,
         };
@@ -300,9 +303,7 @@ mod tests {
             public_key: Some(PublicKey {
                 key: Some(Key::Secp256k1(vec![1u8, 2u8, 3u8])),
             }),
-            signing_public_key: Some(PublicKey {
-                key: Some(Key::Secp256k1(vec![1u8, 2u8, 3u8])),
-            }),
+            r#impl: None,
             url: "http://test2.com".to_owned(),
             metadata: None,
         };
@@ -335,55 +336,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cannot_update_when_both_keys_do_not_match() {
-        let docker = clients::Cli::default();
-        let image = images::postgres::Postgres::default().with_version(9);
-        let container = docker.run(image);
-        let cache = Mutex::new(Cache::default());
-        let pool = setup_postgres(&container).await;
-        let public_key_service = PublicKeyGrpc { cache: Arc::new(cache), db_pool: Arc::new(pool) };
-        let request1 = PublicKeyRequest {
-            public_key: Some(PublicKey {
-                key: Some(Key::Secp256k1(vec![1u8, 2u8, 3u8])),
-            }),
-            signing_public_key: Some(PublicKey {
-                key: Some(Key::Secp256k1(vec![1u8, 2u8, 3u8])),
-            }),
-            url: "http://test.com".to_owned(),
-            metadata: None,
-        };
-        let request2 = PublicKeyRequest {
-            public_key: Some(PublicKey {
-                key: Some(Key::Secp256k1(vec![1u8, 2u8, 3u8, 4u8])),
-            }),
-            signing_public_key: Some(PublicKey {
-                key: Some(Key::Secp256k1(vec![1u8, 2u8, 3u8])),
-            }),
-            url: "http://test2.com".to_owned(),
-            metadata: None,
-        };
-        let response = public_key_service.add(Request::new(request1)).await;
-
-        match response {
-            Ok(result) => {
-                let result = result.into_inner();
-                assert!(!result.uuid.is_none());
-            },
-            _ => {
-                assert_eq!(format!("{:?}", response), "");
-                unreachable!();
-            },
-        };
-
-        let response = public_key_service.add(Request::new(request2)).await;
-
-        match &response {
-            Ok(_) => assert_eq!(format!("{:?}", &response), ""),
-            Err(e) => assert_eq!(e.message(), "SqlError(RowNotFound)"),
-        };
-    }
-
-    #[tokio::test]
     async fn returns_full_proto() {
         let docker = clients::Cli::default();
         let image = images::postgres::Postgres::default().with_version(9);
@@ -396,9 +348,10 @@ mod tests {
             public_key: Some(PublicKey {
                 key: Some(Key::Secp256k1(vec![1u8, 2u8, 3u8])),
             }),
-            signing_public_key: Some(PublicKey {
-                key: Some(Key::Secp256k1(vec![4u8, 5u8, 6u8])),
-            }),
+            r#impl: Some(HeaderAuthEnumRequest(HeaderAuth {
+                header: String::from("X-Custom-Header"),
+                value: String::from("custom_value"),
+            })),
             url: "http://test.com".to_owned(),
             metadata: None,
         };
@@ -409,7 +362,13 @@ mod tests {
                 let result = result.into_inner();
                 assert!(!result.uuid.is_none());
                 assert_eq!(result.public_key.unwrap().key.unwrap(), Key::Secp256k1(vec![1u8, 2u8, 3u8]));
-                assert_eq!(result.signing_public_key.unwrap().key.unwrap(), Key::Secp256k1(vec![4u8, 5u8, 6u8]));
+                assert_eq!(
+                    result.r#impl.unwrap(),
+                    HeaderAuthEnumResponse(HeaderAuth {
+                        header: String::from("x-custom-header"),
+                        value: String::from("custom_value"),
+                    }),
+                );
                 assert_eq!(result.url, String::from("http://test.com"));
                 assert!(result.metadata.is_none());
                 assert!(!result.created_at.is_none());
@@ -431,9 +390,7 @@ mod tests {
             public_key: Some(PublicKey {
                 key: Some(Key::Secp256k1(vec![1u8, 2u8, 3u8])),
             }),
-            signing_public_key: Some(PublicKey {
-                key: Some(Key::Secp256k1(vec![4u8, 5u8, 6u8])),
-            }),
+            r#impl: None,
             url: String::default(),
             metadata: None,
         };
@@ -448,7 +405,7 @@ mod tests {
         let cache = cache.lock().unwrap();
         assert_eq!(cache.local_public_keys.len(), 1);
         assert_eq!(cache.remote_public_keys.len(), 0);
-        assert!(cache.local_public_keys.contains(&base64::encode(&vec![1u8, 2u8, 3u8])));
+        assert!(cache.local_public_keys.contains_key(&base64::encode(&vec![1u8, 2u8, 3u8])));
     }
 
     #[tokio::test]
@@ -463,9 +420,7 @@ mod tests {
             public_key: Some(PublicKey {
                 key: Some(Key::Secp256k1(vec![1u8, 2u8, 3u8])),
             }),
-            signing_public_key: Some(PublicKey {
-                key: Some(Key::Secp256k1(vec![4u8, 5u8, 6u8])),
-            }),
+            r#impl: None,
             url: "http://test.com".to_owned(),
             metadata: None,
         };
