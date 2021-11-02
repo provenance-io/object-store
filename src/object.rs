@@ -363,7 +363,7 @@ pub mod tests {
                 url: String::from(""),
                 metadata: Vec::default(),
                 auth_type: Some(AuthType::Header),
-                auth_data: Some(String::from("x-test-header:test_value")),
+                auth_data: Some(String::from("x-test-header:test_value_1")),
                 created_at: Utc::now(),
                 updated_at: Utc::now(),
             });
@@ -374,7 +374,7 @@ pub mod tests {
                 url: String::from("tcp://party2:8080"),
                 metadata: Vec::default(),
                 auth_type: Some(AuthType::Header),
-                auth_data: Some(String::from("x-test-header:test_value")),
+                auth_data: Some(String::from("x-test-header:test_value_2")),
                 created_at: Utc::now(),
                 updated_at: Utc::now(),
             });
@@ -633,7 +633,7 @@ pub mod tests {
 
     #[tokio::test]
     #[serial(grpc_server)]
-    async fn simple_put_with_auth_failure() {
+    async fn simple_put_with_auth_failure_no_header() {
         let mut config = test_config();
         config.user_auth_enabled = true;
         start_server(Some(config)).await;
@@ -643,6 +643,25 @@ pub mod tests {
         let payload: bytes::Bytes = "testing small payload".as_bytes().into();
         let chunk_size = 500; // full payload in one packet
         let response = put_helper(dime, payload, chunk_size, HashMap::default(), Vec::default()).await;
+
+        match response {
+            Err(err) => assert_eq!(err.code(), tonic::Code::PermissionDenied),
+            _ => assert_eq!(format!("{:?}", response), ""),
+        }
+    }
+
+    #[tokio::test]
+    #[serial(grpc_server)]
+    async fn simple_put_with_auth_failure_incorrect_value() {
+        let mut config = test_config();
+        config.user_auth_enabled = true;
+        start_server(Some(config)).await;
+
+        let (audience, signature) = party_1();
+        let dime = generate_dime(vec![audience], vec![signature]);
+        let payload: bytes::Bytes = "testing small payload".as_bytes().into();
+        let chunk_size = 500; // full payload in one packet
+        let response = put_helper(dime, payload, chunk_size, HashMap::default(), vec![("x-test-header", "test_value_2")]).await;
 
         match response {
             Err(err) => assert_eq!(err.code(), tonic::Code::PermissionDenied),
@@ -663,7 +682,7 @@ pub mod tests {
         let payload: bytes::Bytes = "testing small payload".as_bytes().into();
         let payload_len = payload.len() as i64;
         let chunk_size = 500; // full payload in one packet
-        let response = put_helper(dime, payload, chunk_size, HashMap::default(), vec![("x-test-header", "test_value")]).await;
+        let response = put_helper(dime, payload, chunk_size, HashMap::default(), vec![("x-test-header", "test_value_1")]).await;
 
         match response {
             Ok(response) => {
