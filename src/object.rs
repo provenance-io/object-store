@@ -164,7 +164,7 @@ impl ObjectService for ObjectGrpc {
 
             match cache.get_public_key_state(&owner_public_key) {
                 PublicKeyState::Local => {
-                    if let Some(cached_key) = cache.local_public_keys.get(&owner_public_key) {
+                    if let Some(cached_key) = cache.public_keys.get(&owner_public_key) {
                         cached_key.auth()?.authorize(&metadata)
                     } else {
                         Err(Status::internal("this should not happen - key was resolved to Local state and then could not be fetched"))
@@ -356,7 +356,7 @@ pub mod tests {
 
         tokio::spawn(async move {
             let mut cache = Cache::default();
-            cache.add_local_public_key(PublicKey {
+            cache.add_public_key(PublicKey {
                 uuid: uuid::Uuid::default(),
                 public_key: std::str::from_utf8(&party_1().0.public_key).unwrap().to_owned(),
                 public_key_type: KeyType::Secp256k1,
@@ -367,20 +367,17 @@ pub mod tests {
                 created_at: Utc::now(),
                 updated_at: Utc::now(),
             });
-            cache.add_remote_public_key(
-                PublicKey {
-                    uuid: uuid::Uuid::default(),
-                    public_key: std::str::from_utf8(&party_2().0.public_key).unwrap().to_owned(),
-                    public_key_type: KeyType::Secp256k1,
-                    url: String::from("tcp://party2:8080"),
-                    metadata: Vec::default(),
-                    auth_type: Some(AuthType::Header),
-                    auth_data: Some(String::from("x-test-header:test_value")),
-                    created_at: Utc::now(),
-                    updated_at: Utc::now(),
-                },
-                String::from("tcp://party2:8080"),
-            );
+            cache.add_public_key(PublicKey {
+                uuid: uuid::Uuid::default(),
+                public_key: std::str::from_utf8(&party_2().0.public_key).unwrap().to_owned(),
+                public_key_type: KeyType::Secp256k1,
+                url: String::from("tcp://party2:8080"),
+                metadata: Vec::default(),
+                auth_type: Some(AuthType::Header),
+                auth_data: Some(String::from("x-test-header:test_value")),
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+            });
             let cache = Mutex::new(cache);
             let config = default_config.unwrap_or(test_config());
             let url = config.url.clone();

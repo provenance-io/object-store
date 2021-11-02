@@ -68,15 +68,10 @@ impl PublicKeyService for PublicKeyGrpc {
         let key = datastore::add_public_key(&self.db_pool, request.try_into()?).await?;
         let response = key.clone().to_response()?;
 
-        if key.url.is_empty() {
+        {
             let mut cache = self.cache.lock().unwrap();
 
-            cache.add_local_public_key(key);
-        } else {
-            let mut cache = self.cache.lock().unwrap();
-
-            let url = key.url.clone();
-            cache.add_remote_public_key(key, url);
+            cache.add_public_key(key);
         }
 
         Ok(Response::new(response))
@@ -403,9 +398,9 @@ mod tests {
 
         let cache = Arc::clone(&cache);
         let cache = cache.lock().unwrap();
-        assert_eq!(cache.local_public_keys.len(), 1);
-        assert_eq!(cache.remote_public_keys.len(), 0);
-        assert!(cache.local_public_keys.contains_key(&base64::encode(&vec![1u8, 2u8, 3u8])));
+        assert_eq!(cache.public_keys.len(), 1);
+        assert!(cache.public_keys.contains_key(&base64::encode(&vec![1u8, 2u8, 3u8])));
+        assert_eq!(cache.public_keys.get(&base64::encode(&vec![1u8, 2u8, 3u8])).unwrap().url, String::from(""));
     }
 
     #[tokio::test]
@@ -433,8 +428,8 @@ mod tests {
 
         let cache = Arc::clone(&cache);
         let cache = cache.lock().unwrap();
-        assert_eq!(cache.local_public_keys.len(), 0);
-        assert_eq!(cache.remote_public_keys.len(), 1);
-        assert!(cache.remote_public_keys.contains_key(&base64::encode(&vec![1u8, 2u8, 3u8])));
+        assert_eq!(cache.public_keys.len(), 1);
+        assert!(cache.public_keys.contains_key(&base64::encode(&vec![1u8, 2u8, 3u8])));
+        assert_ne!(cache.public_keys.get(&base64::encode(&vec![1u8, 2u8, 3u8])).unwrap().url, String::from(""));
     }
 }

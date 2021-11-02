@@ -95,19 +95,10 @@ async fn main() -> Result<()> {
 
     // populate initial cache
     for key in datastore::get_all_public_keys(&pool).await? {
-        if key.url.is_empty() {
-            log::trace!("Adding local public key - {}", &key.public_key);
+        log::debug!("Adding public key {} with url {}", &key.public_key, &key.url);
 
-            cache.add_local_public_key(key);
-        } else {
-            log::trace!("Adding remote public key - {} {}", &key.public_key, &key.url);
-
-            let url = key.url.clone();
-            cache.add_remote_public_key(key, url);
-        }
+        cache.add_public_key(key);
     }
-
-    log::debug!("Seeded public keys - remote: {} local: {}", cache.remote_public_keys.len(), cache.local_public_keys.len());
 
     let pool = Arc::new(pool);
     let cache = Arc::new(Mutex::new(cache));

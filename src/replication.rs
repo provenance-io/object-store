@@ -422,19 +422,19 @@ async fn replicate_iteration(inner: &mut ReplicationState, client_cache: &mut Cl
 
     let mut futures = Vec::new();
 
-    for (public_key, (_, url)) in &inner.snapshot_cache.1.remote_public_keys {
+    for (public_key, value) in inner.snapshot_cache.1.get_remote_public_keys() {
 
         let public_key = PublicKey::new(public_key);
 
-        match client_cache.request(&url).await {
+        match client_cache.request(&value.url).await {
             Ok(Some(client)) => {
-                futures.push(replicate_public_key(&inner, client, public_key.clone(), &url));
+                futures.push(replicate_public_key(&inner, client, public_key.clone(), &value.url));
             },
             Ok(None) => {
-                log::trace!("Waiting to retry for client for {}", &url);
+                log::trace!("Waiting to retry for client for {}", &value.url);
             },
             Err(e) => {
-                log::error!("Failed to cache service connection {} - {:?}", &url, e)
+                log::error!("Failed to cache service connection {} - {:?}", &value.url, e)
             }
         }
     }
@@ -484,9 +484,9 @@ pub async fn replicate(mut inner: ReplicationState) {
 }
 
 async fn reap_unknown_keys_iteration(db_pool: &Arc<PgPool>, cache: &Arc<Mutex<Cache>>) {
-    let local_public_keys = cache.lock().unwrap().local_public_keys.clone();
+    let public_keys = cache.lock().unwrap().public_keys.clone();
 
-    for (public_key, _) in local_public_keys {
+    for (public_key, _) in public_keys.iter().filter(|(_, v)| v.url.is_empty()) {
         let result = replication_object_uuids(&db_pool, &public_key, 1).await;
 
         match result {
@@ -631,7 +631,7 @@ pub mod tests {
     }
 
     fn set_cache(cache: &mut Cache) {
-        cache.add_local_public_key(PublicKey {
+        cache.add_public_key(PublicKey {
             uuid: uuid::Uuid::default(),
             public_key: std::str::from_utf8(&party_1().0.public_key).unwrap().to_owned(),
             public_key_type: KeyType::Secp256k1,
@@ -642,20 +642,17 @@ pub mod tests {
             created_at: Utc::now(),
             updated_at: Utc::now(),
         });
-        cache.add_remote_public_key(
-            PublicKey {
-                uuid: uuid::Uuid::default(),
-                public_key: std::str::from_utf8(&party_2().0.public_key).unwrap().to_owned(),
-                public_key_type: KeyType::Secp256k1,
-                url: String::from("tcp://0.0.0.0:6790"),
-                metadata: Vec::default(),
-                auth_type: Some(AuthType::Header),
-                auth_data: Some(String::from("X-Test-Header:test_value")),
-                created_at: Utc::now(),
-                updated_at: Utc::now(),
-            },
-            String::from("tcp://0.0.0.0:6790"),
-        );
+        cache.add_public_key(PublicKey {
+            uuid: uuid::Uuid::default(),
+            public_key: std::str::from_utf8(&party_2().0.public_key).unwrap().to_owned(),
+            public_key_type: KeyType::Secp256k1,
+            url: String::from("tcp://0.0.0.0:6790"),
+            metadata: Vec::default(),
+            auth_type: Some(AuthType::Header),
+            auth_data: Some(String::from("X-Test-Header:test_value")),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        });
     }
 
     async fn start_server_one(config_override: Option<Config>) -> ReplicationState {
@@ -1014,7 +1011,7 @@ pub mod tests {
         {
             let mut cache = cache.lock().unwrap();
 
-            cache.add_local_public_key(PublicKey {
+            cache.add_public_key(PublicKey {
                 uuid: uuid::Uuid::default(),
                 public_key: std::str::from_utf8(audience3.public_key.as_slice()).unwrap().to_owned(),
                 public_key_type: KeyType::Secp256k1,
