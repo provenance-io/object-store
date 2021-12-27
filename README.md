@@ -7,8 +7,8 @@
 [![License][license-badge]][license-url]
 [![LOC][loc-badge]][loc-report]
 
-[release-badge]: https://img.shields.io/github/v/tag/provenance-io/p8e-scope-sdk.svg?sort=semver
-[release-latest]: https://github.com/provenance-io/p8e-scope-sdk/releases/latest
+[release-badge]: https://img.shields.io/github/v/tag/provenance-io/object-store.svg?sort=semver
+[release-latest]: https://github.com/provenance-io/object-store/releases/latest
 
 [license-badge]: https://img.shields.io/github/license/provenance-io/object-store.svg
 [license-url]: https://github.com/provenance-io/object-store/blob/main/LICENSE
