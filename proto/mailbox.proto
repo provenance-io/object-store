@@ -22,6 +22,9 @@ message GetRequest {
 
 message AckRequest {
     UUID uuid = 1;
+
+    // optional - used for authorization when desired
+    bytes public_key = 2;
 }
 
 message MailPayload {
