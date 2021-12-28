@@ -1,7 +1,10 @@
 use crate::config::Config;
-use crate::datastore::Object;
-use crate::pb::{ObjectMetadata, ObjectResponse, Uuid};
-use crate::types::Result;
+use crate::datastore::{AuthType, KeyType, Object, PublicKey};
+use crate::pb::{public_key::Key, HeaderAuth, PublicKey as PublicKeyProto, ObjectMetadata, PublicKeyResponse, ObjectResponse, Uuid};
+use crate::pb::public_key_response::Impl::HeaderAuth as HeaderAuthEnumResponse;
+use crate::types::{Result, OsError};
+
+use prost::Message;
 
 use std::time::SystemTime;
 
@@ -33,5 +36,57 @@ impl ObjectApiResponse for Object {
             }),
             created: Some(Into::<SystemTime>::into(self.created_at).into()),
         })
+    }
+}
+
+pub trait PublicKeyApiResponse {
+    fn to_response(self) -> Result<PublicKeyResponse>;
+}
+
+impl PublicKeyApiResponse for PublicKey {
+
+    fn to_response(self) -> Result<PublicKeyResponse> {
+        let key_bytes: Vec<u8> = base64::decode(&self.public_key)
+            .map_err(|err| sqlx::Error::Decode(Box::new(err)))?;
+        let public_key = match self.public_key_type {
+            KeyType::Secp256k1 => Key::Secp256k1(key_bytes),
+        };
+        let created_at: SystemTime = self.created_at.into();
+        let updated_at: SystemTime = self.updated_at.into();
+        let metadata = if !self.metadata.is_empty() {
+            let message = prost_types::Any::decode(self.metadata.as_slice())
+                .map_err(|err| sqlx::Error::Decode(Box::new(err)))?;
+            Some(message)
+        } else {
+            None
+        };
+        let r#impl = match self.auth_type {
+            Some(AuthType::Header) => {
+                let auth_data = self.auth_data
+                    .ok_or(sqlx::Error::Decode(Box::new(OsError::InvalidApplicationState(String::from("auth_type was set but no auth_data")))))?;
+                let (header, value) = auth_data
+                    .split_once(":")
+                    .ok_or(sqlx::Error::Decode(Box::new(OsError::InvalidApplicationState(String::from("auth_data invalid format")))))?;
+
+                Some(HeaderAuthEnumResponse(HeaderAuth {
+                    header: header.to_string(),
+                    value: value.to_string(),
+                }))
+            },
+            None => None,
+        };
+        let response = PublicKeyResponse {
+            uuid: Some(Uuid {
+                value: self.uuid.to_hyphenated().to_string()
+            }),
+            public_key: Some(PublicKeyProto { key: Some(public_key) }),
+            url: self.url,
+            r#impl,
+            metadata,
+            created_at: Some(created_at.into()),
+            updated_at: Some(updated_at.into()),
+        };
+
+        Ok(response)
     }
 }

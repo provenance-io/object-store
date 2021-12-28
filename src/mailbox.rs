@@ -190,7 +190,7 @@ mod tests {
         dime.metadata.insert(MAILBOX_KEY.to_owned(), MAILBOX_FRAGMENT_REQUEST.to_owned());
         let payload: bytes::Bytes = "fragment request envelope".as_bytes().into();
         let chunk_size = 500; // full payload in one packet
-        let response = put_helper(dime, payload, chunk_size, HashMap::default()).await;
+        let response = put_helper(dime, payload, chunk_size, HashMap::default(), Vec::default()).await;
 
         match response {
             Ok(response) => {
@@ -215,7 +215,7 @@ mod tests {
         dime.metadata.insert(MAILBOX_KEY.to_owned(), MAILBOX_FRAGMENT_RESPONSE.to_owned());
         let payload: bytes::Bytes = "fragment response envelope".as_bytes().into();
         let chunk_size = 500; // full payload in one packet
-        let response = put_helper(dime, payload, chunk_size, HashMap::default()).await;
+        let response = put_helper(dime, payload, chunk_size, HashMap::default(), Vec::default()).await;
 
         match response {
             Ok(response) => {
@@ -240,7 +240,7 @@ mod tests {
         dime.metadata.insert(MAILBOX_KEY.to_owned(), MAILBOX_ERROR_RESPONSE.to_owned());
         let payload: bytes::Bytes = "error envelope".as_bytes().into();
         let chunk_size = 500; // full payload in one packet
-        let response = put_helper(dime, payload, chunk_size, HashMap::default()).await;
+        let response = put_helper(dime, payload, chunk_size, HashMap::default(), Vec::default()).await;
 
         match response {
             Ok(response) => {
@@ -280,7 +280,7 @@ mod tests {
         let chunk_size = 500; // full payload in one packet
 
         for _ in 0..10 {
-            let response = put_helper(dime.clone(), payload.clone(), chunk_size, HashMap::default()).await;
+            let response = put_helper(dime.clone(), payload.clone(), chunk_size, HashMap::default(), Vec::default()).await;
 
             match response {
                 Ok(_) => (),
@@ -291,7 +291,7 @@ mod tests {
         dime.metadata.insert(MAILBOX_KEY.to_owned(), MAILBOX_ERROR_RESPONSE.to_owned());
 
         for _ in 0..10 {
-            let response = put_helper(dime.clone(), payload.clone(), chunk_size, HashMap::default()).await;
+            let response = put_helper(dime.clone(), payload.clone(), chunk_size, HashMap::default(), Vec::default()).await;
 
             match response {
                 Ok(_) => (),
@@ -316,7 +316,7 @@ mod tests {
 
         for _ in 0..10 {
             let payload: bytes::Bytes = uuid::Uuid::new_v4().to_hyphenated().to_string().into_bytes().into();
-            let response = put_helper(dime.clone(), payload, chunk_size, HashMap::default()).await;
+            let response = put_helper(dime.clone(), payload, chunk_size, HashMap::default(), Vec::default()).await;
 
             match response {
                 Ok(_) => (),
@@ -328,7 +328,7 @@ mod tests {
 
         for _ in 0..10 {
             let payload: bytes::Bytes = uuid::Uuid::new_v4().to_hyphenated().to_string().into_bytes().into();
-            let response = put_helper(dime.clone(), payload.clone(), chunk_size, HashMap::default()).await;
+            let response = put_helper(dime.clone(), payload.clone(), chunk_size, HashMap::default(), Vec::default()).await;
 
             match response {
                 Ok(_) => (),

@@ -31,6 +31,7 @@ pub struct Config {
     pub backoff_max_wait: i64,
     pub logging_threshold_seconds: f64,
     pub trace_header: String,
+    pub user_auth_enabled: bool,
 }
 
 const BASE_SPAN_TAGS: [(&'static str, &'static str); 3] = [
@@ -132,6 +133,10 @@ impl Config {
             .expect("LOGGING_THRESHOLD_SECONDS could not be parsed into a i32");
         let logging_threshold_seconds: f64 = logging_threshold_seconds.into();
         let trace_header = env::var("TRACE_HEADER").expect("TRACE_HEADER not set");
+        let user_auth_enabled: bool = env::var("USER_ATH_ENABLED")
+            .unwrap_or("false".to_owned())
+            .parse()
+            .expect("USER_AUTH_ENABLED could not be parsed into a bool");
 
         Self {
             url,
@@ -153,6 +158,7 @@ impl Config {
             replication_enabled,
             logging_threshold_seconds,
             trace_header,
+            user_auth_enabled,
         }
     }
 
