@@ -1,6 +1,5 @@
 use cloud_storage::client::Client;
-use minitrace_macro::trace_async;
-use minitrace::FutureExt;
+use minitrace_macro::trace;
 
 use crate::storage::{Result, Storage, StorageError, StoragePath};
 
@@ -28,7 +27,7 @@ impl GoogleCloud {
 
 #[async_trait::async_trait]
 impl Storage for GoogleCloud {
-    #[trace_async("google_cloud::store")]
+    #[trace("google_cloud::store")]
     async fn store(&self, path: &StoragePath, content_length: u64, data: &[u8]) -> Result<()> {
         if let Err(e) = self.validate_content_length(&path, content_length, &data) {
             log::warn!("{:?}", e);
@@ -43,7 +42,7 @@ impl Storage for GoogleCloud {
         Ok(())
     }
 
-    #[trace_async("google_cloud::fetch")]
+    #[trace("google_cloud::fetch")]
     async fn fetch(&self, path: &StoragePath, content_length: u64) -> Result<Vec<u8>> {
         let data = self.client
             .object(self.base_url_ref())

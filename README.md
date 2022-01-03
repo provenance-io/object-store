@@ -25,9 +25,29 @@ in order to process Provenance scopes and memorialize them on chain.
 
 ## Features
 
-- Strong end-to-end encryption when combined with a load balancer like `Nginx`.
+- Strong end-to-end encryption.
 - Peer-to-peer replication to parties (third party `object-store`s) you want to share data with.
-- Publishes traces to Datadog.
+- Capable of publishing traces to Datadog.
+
+## Authentication
+
+gRPC metadata based authentication is provided on a per key basis. When adding a public key to the database, an `auth_type` and `auth_data` can be provided. These
+can either be leveraged directly as an api key or indirectly be combining it with a proxy capable of authentication and header forwarding. Setting both of these fields
+to `null` and a service level config property of `USER_AUTH_ENABLED=false` disables all authentication - this can be used if the object store is meant for internal use
+and not exposed publicly.
+
+- Example authentication configuration
+
+NOTE: Requires settings the service level configuration to `USER_AUTH_ENABLED=true`.
+
+```
+public_key=BH6YrLjN+I7JzjGCgrIWbfXicg4C4nZaMPwzmTB2Yef/aqxiJmPmpBi1JAonlTzA6c1zU/WX4RKWzAkQBd7lWbU=
+public_key_type=secp256k1
+auth_type=header
+auth_data=x-custom-header:6eace982-f682-4b1d-9f8e-82ed9ab15813
+```
+
+With such a configuration all requests for this public key will have to contain this metadata.
 
 ## Backends
 

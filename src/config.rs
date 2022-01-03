@@ -133,7 +133,7 @@ impl Config {
             .expect("LOGGING_THRESHOLD_SECONDS could not be parsed into a i32");
         let logging_threshold_seconds: f64 = logging_threshold_seconds.into();
         let trace_header = env::var("TRACE_HEADER").expect("TRACE_HEADER not set");
-        let user_auth_enabled: bool = env::var("USER_ATH_ENABLED")
+        let user_auth_enabled: bool = env::var("USER_AUTH_ENABLED")
             .unwrap_or("false".to_owned())
             .parse()
             .expect("USER_AUTH_ENABLED could not be parsed into a bool");

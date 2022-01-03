@@ -2,8 +2,7 @@ use std::{fmt::Debug, net::{IpAddr, SocketAddr}, sync::Arc, task::{Context, Poll
 
 use crate::config::Config;
 
-use minitrace::{FutureExt, Span};
-use minitrace_datadog::Reporter;
+use minitrace::prelude::*;
 use reqwest::header::HeaderMap;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tonic::{body::BoxBody, codegen::http::HeaderValue, transport::Body};
@@ -92,11 +91,12 @@ where
                     1i32
                 },
             };
-            let spans: Vec<minitrace::span::Span> = collector.collect()
+            let spans: Vec<SpanRecord> = collector.collect()
                 .into_iter()
                 .map(|mut span| {
                     if span.parent_id == 0 {
-                        span.properties.extend(span_tags.clone());
+                        // TODO fix
+                        // span.properties.extend(span_tags.clone());
                     }
 
                     span
@@ -135,7 +135,7 @@ pub struct MinitraceSpans {
     trace_id: u64,
     parent_span_id: u64,
     span_id_prefix: u32,
-    spans: Box<Vec<minitrace::span::Span>>
+    spans: Box<Vec<SpanRecord>>
 }
 
 pub async fn report_datadog_traces(
@@ -158,7 +158,7 @@ pub async fn report_datadog_traces(
     match client {
         Ok(client) => {
             while let Some(spans) = receiver.recv().await {
-                let bytes = Reporter::encode(
+                let bytes = minitrace_datadog::encode(
                     &service_name,
                     &spans.r#type,
                     &spans.resource,
