@@ -11,12 +11,12 @@ use tower::{Layer, Service};
 #[derive(Debug, Clone)]
 pub struct MinitraceGrpcMiddlewareLayer {
     config: Arc<Config>,
-    span_tags: Vec<(String, String)>,
+    span_tags: Vec<(&'static str, String)>,
     sender: Sender<MinitraceSpans>,
 }
 
 impl MinitraceGrpcMiddlewareLayer {
-    pub fn new(config: Arc<Config>, span_tags: Vec<(String, String)>, sender: Sender<MinitraceSpans>) -> Self {
+    pub fn new(config: Arc<Config>, span_tags: Vec<(&'static str, String)>, sender: Sender<MinitraceSpans>) -> Self {
         Self { config, span_tags, sender }
     }
 }
@@ -39,7 +39,7 @@ impl<S> Layer<S> for MinitraceGrpcMiddlewareLayer {
 pub struct MinitraceGrpcMiddleware<S> {
     inner: S,
     config: Arc<Config>,
-    span_tags: Vec<(String, String)>,
+    span_tags: Vec<(&'static str, String)>,
     sender: Sender<MinitraceSpans>,
     default_status_code: HeaderValue,
 }
@@ -81,13 +81,13 @@ where
 
             let status_code = response.headers().get("grpc-status").unwrap_or(&default_status_code).to_str().unwrap();
             let status_code = tonic::Code::from_bytes(status_code.as_bytes());
-            span_tags.push((String::from("status.code"), format!("{:?}", &status_code)));
+            span_tags.push(("status.code", format!("{:?}", &status_code)));
             let error_code = match status_code {
                 tonic::Code::Ok => {
                     0i32
                 },
                 _ => {
-                    span_tags.push((String::from("status.description"), String::from(status_code.description())));
+                    span_tags.push(("status.description", String::from(status_code.description())));
                     1i32
                 },
             };
@@ -95,8 +95,7 @@ where
                 .into_iter()
                 .map(|mut span| {
                     if span.parent_id == 0 {
-                        // TODO fix
-                        // span.properties.extend(span_tags.clone());
+                        span.properties.extend(span_tags.clone());
                     }
 
                     span
