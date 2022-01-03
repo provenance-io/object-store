@@ -2,7 +2,7 @@
 name = "object-store"
 version = "0.1.0"
 authors = ["Stephen Cirner <scirner@figure.com>"]
-edition = "2018"
+edition = "2021"
 
 [dependencies]
 aes-gcm = "0.9"
