@@ -15,7 +15,6 @@ export DD_AGENT_ENABLED=false
 export DD_VERSION=undefined
 export DD_SERVICE=object-store
 export DD_ENV=local
-export DD_TRACE_SPAN_TAGS=
 
 ## start of file system variables
 export STORAGE_TYPE=file_system

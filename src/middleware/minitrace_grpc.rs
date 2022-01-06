@@ -2,8 +2,7 @@ use std::{fmt::Debug, net::{IpAddr, SocketAddr}, sync::Arc, task::{Context, Poll
 
 use crate::config::Config;
 
-use minitrace::{FutureExt, Span};
-use minitrace_datadog::Reporter;
+use minitrace::prelude::*;
 use reqwest::header::HeaderMap;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tonic::{body::BoxBody, codegen::http::HeaderValue, transport::Body};
@@ -12,12 +11,12 @@ use tower::{Layer, Service};
 #[derive(Debug, Clone)]
 pub struct MinitraceGrpcMiddlewareLayer {
     config: Arc<Config>,
-    span_tags: Vec<(String, String)>,
+    span_tags: Vec<(&'static str, String)>,
     sender: Sender<MinitraceSpans>,
 }
 
 impl MinitraceGrpcMiddlewareLayer {
-    pub fn new(config: Arc<Config>, span_tags: Vec<(String, String)>, sender: Sender<MinitraceSpans>) -> Self {
+    pub fn new(config: Arc<Config>, span_tags: Vec<(&'static str, String)>, sender: Sender<MinitraceSpans>) -> Self {
         Self { config, span_tags, sender }
     }
 }
@@ -40,7 +39,7 @@ impl<S> Layer<S> for MinitraceGrpcMiddlewareLayer {
 pub struct MinitraceGrpcMiddleware<S> {
     inner: S,
     config: Arc<Config>,
-    span_tags: Vec<(String, String)>,
+    span_tags: Vec<(&'static str, String)>,
     sender: Sender<MinitraceSpans>,
     default_status_code: HeaderValue,
 }
@@ -82,17 +81,17 @@ where
 
             let status_code = response.headers().get("grpc-status").unwrap_or(&default_status_code).to_str().unwrap();
             let status_code = tonic::Code::from_bytes(status_code.as_bytes());
-            span_tags.push((String::from("status.code"), format!("{:?}", &status_code)));
+            span_tags.push(("status.code", format!("{:?}", &status_code)));
             let error_code = match status_code {
                 tonic::Code::Ok => {
                     0i32
                 },
                 _ => {
-                    span_tags.push((String::from("status.description"), String::from(status_code.description())));
+                    span_tags.push(("status.description", String::from(status_code.description())));
                     1i32
                 },
             };
-            let spans: Vec<minitrace::span::Span> = collector.collect()
+            let spans: Vec<SpanRecord> = collector.collect()
                 .into_iter()
                 .map(|mut span| {
                     if span.parent_id == 0 {
@@ -135,7 +134,7 @@ pub struct MinitraceSpans {
     trace_id: u64,
     parent_span_id: u64,
     span_id_prefix: u32,
-    spans: Box<Vec<minitrace::span::Span>>
+    spans: Box<Vec<SpanRecord>>
 }
 
 pub async fn report_datadog_traces(
@@ -158,7 +157,7 @@ pub async fn report_datadog_traces(
     match client {
         Ok(client) => {
             while let Some(spans) = receiver.recv().await {
-                let bytes = Reporter::encode(
+                let bytes = minitrace_datadog::encode(
                     &service_name,
                     &spans.r#type,
                     &spans.resource,

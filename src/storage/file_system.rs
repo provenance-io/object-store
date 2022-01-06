@@ -1,7 +1,6 @@
 use std::path::PathBuf;
 
-use minitrace_macro::trace_async;
-use minitrace::FutureExt;
+use minitrace_macro::trace;
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt;
 
@@ -24,7 +23,7 @@ impl FileSystem {
         path_buf
     }
 
-    #[trace_async("file_system::create_dir")]
+    #[trace("file_system::create_dir")]
     async fn create_dir(&self, path: &StoragePath) -> Result<()> {
         let mut path_buf = self.base_url.clone();
         path_buf.push(&path.dir);
@@ -41,7 +40,7 @@ impl FileSystem {
 
 #[async_trait::async_trait]
 impl Storage for FileSystem {
-    #[trace_async("file_system::store")]
+    #[trace("file_system::store")]
     async fn store(&self, path: &StoragePath, content_length: u64, data: &[u8]) -> Result<()> {
         if let Err(e) = self.validate_content_length(&path, content_length, &data) {
             log::warn!("{:?}", e);
@@ -69,7 +68,7 @@ impl Storage for FileSystem {
         }
     }
 
-    #[trace_async("file_system::fetch")]
+    #[trace("file_system::fetch")]
     async fn fetch(&self, path: &StoragePath, content_length: u64) -> Result<Vec<u8>> {
         let data = tokio::fs::read(self.get_path(path)).await
             .map_err(|e| StorageError::IoError(format!("{:?}", e)))?;

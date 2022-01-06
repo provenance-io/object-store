@@ -4,8 +4,7 @@ use crate::types::{GrpcResult, OsError};
 use crate::pb::{AckRequest, GetRequest, MailPayload, Uuid };
 use crate::pb::mailbox_service_server::MailboxService;
 
-use minitrace_macro::trace_async;
-use minitrace::{FutureExt};
+use minitrace_macro::trace;
 use tokio::sync::mpsc;
 use std::{sync::{Arc, Mutex}, str::FromStr};
 use sqlx::postgres::PgPool;
@@ -31,7 +30,7 @@ impl MailboxService for MailboxGrpc {
 
     type GetStream = tokio_stream::wrappers::ReceiverStream<GrpcResult<MailPayload>>;
 
-    #[trace_async("mailbox::get")]
+    #[trace("mailbox::get")]
     async fn get(
         &self,
         request: Request<GetRequest>,
@@ -86,7 +85,7 @@ impl MailboxService for MailboxGrpc {
         Ok(Response::new(tokio_stream::wrappers::ReceiverStream::new(rx)))
     }
 
-    #[trace_async("mailbox::ack")]
+    #[trace("mailbox::ack")]
     async fn ack(
         &self,
         request: Request<AckRequest>,

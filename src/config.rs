@@ -6,7 +6,7 @@ pub struct DatadogConfig {
     pub agent_host: IpAddr,
     pub agent_port: u16,
     pub service: String,
-    pub span_tags: Vec<(String, String)>,
+    pub span_tags: Vec<(&'static str, String)>,
 }
 
 #[derive(Debug)]
@@ -94,21 +94,11 @@ impl Config {
                 .unwrap_or("undefined".to_owned());
             let environment = env::var("DD_ENV")
                 .expect("DD_ENV not set");
-            let mut span_tags: Vec<(String, String)> = env::var("DD_TRACE_SPAN_TAGS")
-                .unwrap_or("".to_owned())
-                .split(",")
-                .filter_map(|s| s.find(":").map(|pos| s.split_at(pos)))
-                .map(|(k, v)| {
-                    let mut v = v.chars();
-                    v.next();
-
-                    (k.to_owned(), v.as_str().to_owned())
-                })
-                .collect();
-            span_tags.extend(BASE_SPAN_TAGS.iter().map(|(k, v)| (k.to_string(), v.to_string())));
-            span_tags.push(("app".to_owned(), service.clone()));
-            span_tags.push(("version".to_owned(), version));
-            span_tags.push(("env".to_owned(), environment));
+            let mut span_tags = Vec::default();
+            span_tags.extend(BASE_SPAN_TAGS.into_iter().map(|(k, v)| (k, v.to_string())));
+            span_tags.push(("app", service.clone()));
+            span_tags.push(("version", version));
+            span_tags.push(("env", environment));
 
             Some(DatadogConfig { agent_host, agent_port, service, span_tags })
         } else {
@@ -133,7 +123,7 @@ impl Config {
             .expect("LOGGING_THRESHOLD_SECONDS could not be parsed into a i32");
         let logging_threshold_seconds: f64 = logging_threshold_seconds.into();
         let trace_header = env::var("TRACE_HEADER").expect("TRACE_HEADER not set");
-        let user_auth_enabled: bool = env::var("USER_ATH_ENABLED")
+        let user_auth_enabled: bool = env::var("USER_AUTH_ENABLED")
             .unwrap_or("false".to_owned())
             .parse()
             .expect("USER_AUTH_ENABLED could not be parsed into a bool");

@@ -12,8 +12,7 @@ use crate::pb::object_service_server::ObjectService;
 use bytes::{BufMut, Bytes, BytesMut};
 use futures_util::StreamExt;
 use linked_hash_map::LinkedHashMap;
-use minitrace_macro::trace_async;
-use minitrace::{FutureExt};
+use minitrace_macro::trace;
 use prost::Message;
 use tokio::sync::mpsc;
 use std::{collections::HashMap, convert::TryInto, sync::{Arc, Mutex}};
@@ -40,7 +39,7 @@ impl ObjectGrpc {
 
 #[tonic::async_trait]
 impl ObjectService for ObjectGrpc {
-    #[trace_async("object::put")]
+    #[trace("object::put")]
     async fn put(
         &self,
         request: Request<Streaming<ChunkBidi>>,
@@ -211,7 +210,7 @@ impl ObjectService for ObjectGrpc {
 
     type GetStream = tokio_stream::wrappers::ReceiverStream<GrpcResult<ChunkBidi>>;
 
-    #[trace_async("object::get")]
+    #[trace("object::get")]
     async fn get(
         &self,
         request: Request<HashRequest>,
