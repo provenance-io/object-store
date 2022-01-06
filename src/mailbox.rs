@@ -118,7 +118,7 @@ impl MailboxService for MailboxGrpc {
                         Err(Status::internal("this should not happen - key was resolved to Local state and then could not be fetched"))
                     }
                 },
-                PublicKeyState::Remote => Err(Status::permission_denied(format!("remote public key {} - use the replicate route", &public_key))),
+                PublicKeyState::Remote => Err(Status::permission_denied(format!("remote public key {} - ack on its own instance", &public_key))),
                 PublicKeyState::Unknown => Err(Status::permission_denied(format!("unknown public key {}", &public_key))),
             }?;
         }
