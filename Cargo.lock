@@ -991,23 +991,13 @@ dependencies = [
 
 [[package]]
 name = "minstant"
-version = "0.0.2"
-source = "git+https://github.com/tikv/minstant.git#dcd3e1e66aef844ce0bb5433d46f7a779fbff2e8"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2cb320648b7883b43ce5dfbc5c6f4a84038194c3f67b4fcb7d05c994e6006557"
 dependencies = [
  "ctor",
  "libc",
- "minstant_macro",
  "wasi 0.7.0",
-]
-
-[[package]]
-name = "minstant_macro"
-version = "0.1.0"
-source = "git+https://github.com/tikv/minstant.git#dcd3e1e66aef844ce0bb5433d46f7a779fbff2e8"
-dependencies = [
- "proc-macro-error",
- "quote",
- "syn",
 ]
 
 [[package]]
@@ -1136,7 +1126,7 @@ dependencies = [
  "minitrace",
  "minitrace-datadog",
  "minitrace-macro",
- "minstant 0.0.2",
+ "minstant 0.1.1",
  "prost",
  "prost-types",
  "quick-error",

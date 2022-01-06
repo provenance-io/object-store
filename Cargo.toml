@@ -32,7 +32,7 @@ reqwest = { version = "0.11" }
 minitrace = { git = "https://github.com/tikv/minitrace-rust.git" }
 minitrace-macro = { git = "https://github.com/tikv/minitrace-rust.git" }
 minitrace-datadog = { git = "https://github.com/tikv/minitrace-rust.git" }
-minstant = { git = "https://github.com/tikv/minstant.git" }
+minstant = "0.1.1"
 # TODO can we upgrade this?
 tokio = { version = "1.0", features = ["macros", "rt-multi-thread", "sync"] }
 tokio-stream = "0.1"
