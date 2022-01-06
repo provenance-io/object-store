@@ -216,9 +216,27 @@ impl ObjectService for ObjectGrpc {
         &self,
         request: Request<HashRequest>,
     ) -> GrpcResult<Response<Self::GetStream>> {
+        let metadata = request.metadata().clone();
         let request = request.into_inner();
         let hash = base64::encode(request.hash);
         let public_key = base64::encode(&request.public_key);
+
+        if self.config.user_auth_enabled {
+            let cache = self.cache.lock().unwrap();
+
+            match cache.get_public_key_state(&public_key) {
+                PublicKeyState::Local => {
+                    if let Some(cached_key) = cache.public_keys.get(&public_key) {
+                        cached_key.auth()?.authorize(&metadata)
+                    } else {
+                        Err(Status::internal("this should not happen - key was resolved to Local state and then could not be fetched"))
+                    }
+                },
+                PublicKeyState::Remote => Err(Status::permission_denied(format!("remote public key {} - use the replicate route", &public_key))),
+                PublicKeyState::Unknown => Err(Status::permission_denied(format!("unknown public key {}", &public_key))),
+            }?;
+        }
+
         let object_uuid = datastore::get_public_key_object_uuid(&self.db_pool, hash.as_str(), &public_key).await?;
         let object = datastore::get_object_by_uuid(&self.db_pool, &object_uuid).await?;
         let payload = if let Some(payload) = &object.payload {
@@ -885,6 +903,109 @@ pub mod tests {
                     assert_eq!(format!("{:?}", msg), "");
                 }
             },
+            _ => assert_eq!(format!("{:?}", response), ""),
+        }
+    }
+
+    #[tokio::test]
+    #[serial(grpc_server)]
+    async fn auth_get_failure_no_key() {
+        let mut config = test_config();
+        config.user_auth_enabled = true;
+        start_server(Some(config)).await;
+
+        let (audience, signature) = party_1();
+        let dime = generate_dime(vec![audience.clone()], vec![signature]);
+        let payload: bytes::Bytes = "testing larger payload ".repeat(250).into_bytes().into();
+        let chunk_size = 100; // split payload into packets
+        let response = put_helper(dime, payload.clone(), chunk_size, HashMap::default(), vec![("x-test-header", "test_value_1")]).await;
+
+        match response {
+            Ok(response) => {
+                let response = response.into_inner();
+
+                assert_ne!(response.name, NOT_STORAGE_BACKED);
+            },
+            _ => assert_eq!(format!("{:?}", response), ""),
+        }
+
+        let mut client = pb::object_service_client::ObjectServiceClient::connect("tcp://0.0.0.0:6789").await.unwrap();
+        let public_key = base64::decode(audience.public_key).unwrap();
+        let request = HashRequest { hash: hash(payload), public_key };
+        let response = client.get(Request::new(request)).await;
+
+        match response {
+            Err(err) => assert_eq!(err.code(), tonic::Code::PermissionDenied),
+            _ => assert_eq!(format!("{:?}", response), ""),
+        }
+    }
+
+    #[tokio::test]
+    #[serial(grpc_server)]
+    async fn auth_get_failure_invalid_key() {
+        let mut config = test_config();
+        config.user_auth_enabled = true;
+        start_server(Some(config)).await;
+
+        let (audience, signature) = party_1();
+        let dime = generate_dime(vec![audience.clone()], vec![signature]);
+        let payload: bytes::Bytes = "testing larger payload ".repeat(250).into_bytes().into();
+        let chunk_size = 100; // split payload into packets
+        let response = put_helper(dime, payload.clone(), chunk_size, HashMap::default(), vec![("x-test-header", "test_value_1")]).await;
+
+        match response {
+            Ok(response) => {
+                let response = response.into_inner();
+
+                assert_ne!(response.name, NOT_STORAGE_BACKED);
+            },
+            _ => assert_eq!(format!("{:?}", response), ""),
+        }
+
+        let mut client = pb::object_service_client::ObjectServiceClient::connect("tcp://0.0.0.0:6789").await.unwrap();
+        let public_key = base64::decode(audience.public_key).unwrap();
+        let mut request = Request::new(HashRequest { hash: hash(payload), public_key });
+        let metadata = request.metadata_mut();
+        metadata.insert("x-test-header", "test_value_2".parse().unwrap());
+        let response = client.get(request).await;
+
+        match response {
+            Err(err) => assert_eq!(err.code(), tonic::Code::PermissionDenied),
+            _ => assert_eq!(format!("{:?}", response), ""),
+        }
+    }
+
+    #[tokio::test]
+    #[serial(grpc_server)]
+    async fn auth_get_success() {
+        let mut config = test_config();
+        config.user_auth_enabled = true;
+        start_server(Some(config)).await;
+
+        let (audience, signature) = party_1();
+        let dime = generate_dime(vec![audience.clone()], vec![signature]);
+        let payload: bytes::Bytes = "testing larger payload ".repeat(250).into_bytes().into();
+        let chunk_size = 100; // split payload into packets
+        let response = put_helper(dime, payload.clone(), chunk_size, HashMap::default(), vec![("x-test-header", "test_value_1")]).await;
+
+        match response {
+            Ok(response) => {
+                let response = response.into_inner();
+
+                assert_ne!(response.name, NOT_STORAGE_BACKED);
+            },
+            _ => assert_eq!(format!("{:?}", response), ""),
+        }
+
+        let mut client = pb::object_service_client::ObjectServiceClient::connect("tcp://0.0.0.0:6789").await.unwrap();
+        let public_key = base64::decode(audience.public_key).unwrap();
+        let mut request = Request::new(HashRequest { hash: hash(payload), public_key });
+        let metadata = request.metadata_mut();
+        metadata.insert("x-test-header", "test_value_1".parse().unwrap());
+        let response = client.get(request).await;
+
+        match response {
+            Ok(_) => (),
             _ => assert_eq!(format!("{:?}", response), ""),
         }
     }
