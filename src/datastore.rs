@@ -447,17 +447,31 @@ SELECT * FROM UNNEST($1, $2, $3, $4)
 }
 
 #[trace_async("datastore::ack_mailbox_public_key")]
-pub async fn ack_mailbox_public_key(db: &PgPool, uuid: &uuid::Uuid) -> Result<bool> {
-    let query_str = r#"
-UPDATE mailbox_public_key SET acked_at = $1 WHERE uuid = $2
-    "#;
+pub async fn ack_mailbox_public_key(db: &PgPool, uuid: &uuid::Uuid, public_key: &Option<String>) -> Result<bool> {
+    let rows_affected = if let Some(public_key) = public_key {
+        let query_str = r#"
+UPDATE mailbox_public_key SET acked_at = $1 WHERE uuid = $2 AND public_key = $3
+        "#;
 
-    let rows_affected = sqlx::query(query_str)
-        .bind(Utc::now())
-        .bind(&uuid)
-        .execute(db)
-        .await?
-        .rows_affected();
+        sqlx::query(query_str)
+            .bind(Utc::now())
+            .bind(&uuid)
+            .bind(&public_key)
+            .execute(db)
+            .await?
+            .rows_affected()
+    } else {
+        let query_str = r#"
+UPDATE mailbox_public_key SET acked_at = $1 WHERE uuid = $2
+        "#;
+
+        sqlx::query(query_str)
+            .bind(Utc::now())
+            .bind(&uuid)
+            .execute(db)
+            .await?
+            .rows_affected()
+    };
 
     Ok(rows_affected > 0)
 }

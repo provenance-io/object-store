@@ -1,3 +1,4 @@
+use crate::{cache::{Cache, PublicKeyState}, config::Config};
 use crate::datastore;
 use crate::types::{GrpcResult, OsError};
 use crate::pb::{AckRequest, GetRequest, MailPayload, Uuid };
@@ -6,20 +7,22 @@ use crate::pb::mailbox_service_server::MailboxService;
 use minitrace_macro::trace_async;
 use minitrace::{FutureExt};
 use tokio::sync::mpsc;
-use std::{sync::Arc, str::FromStr};
+use std::{sync::{Arc, Mutex}, str::FromStr};
 use sqlx::postgres::PgPool;
-use tonic::{Request, Response};
+use tonic::{Request, Response, Status};
 
 // TODO write test to not mailbox remote_keys
 
 #[derive(Debug)]
 pub struct MailboxGrpc {
+    pub cache: Arc<Mutex<Cache>>,
+    pub config: Arc<Config>,
     db_pool: Arc<PgPool>,
 }
 
 impl MailboxGrpc {
-    pub fn new(pool: Arc<PgPool>) -> Self {
-        Self { db_pool: pool }
+    pub fn new(cache: Arc<Mutex<Cache>>, config: Arc<Config>, db_pool: Arc<PgPool>) -> Self {
+        Self { cache, config, db_pool }
     }
 }
 
@@ -33,8 +36,26 @@ impl MailboxService for MailboxGrpc {
         &self,
         request: Request<GetRequest>,
     ) -> GrpcResult<Response<Self::GetStream>> {
+        let metadata = request.metadata().clone();
         let request = request.into_inner();
         let public_key = base64::encode(&request.public_key);
+
+        if self.config.user_auth_enabled {
+            let cache = self.cache.lock().unwrap();
+
+            match cache.get_public_key_state(&public_key) {
+                PublicKeyState::Local => {
+                    if let Some(cached_key) = cache.public_keys.get(&public_key) {
+                        cached_key.auth()?.authorize(&metadata)
+                    } else {
+                        Err(Status::internal("this should not happen - key was resolved to Local state and then could not be fetched"))
+                    }
+                },
+                PublicKeyState::Remote => Err(Status::permission_denied(format!("remote public key {} - fetch on its own instance", &public_key))),
+                PublicKeyState::Unknown => Err(Status::permission_denied(format!("unknown public key {}", &public_key))),
+            }?;
+        }
+
         let (tx, rx) = mpsc::channel(4);
         let results = datastore::stream_mailbox_public_keys(&self.db_pool, &public_key, request.max_results).await?;
 
@@ -70,6 +91,7 @@ impl MailboxService for MailboxGrpc {
         &self,
         request: Request<AckRequest>,
     ) -> GrpcResult<Response<()>> {
+        let metadata = request.metadata().clone();
         let request = request.into_inner();
 
         let uuid = if let Some(uuid) = request.uuid {
@@ -78,8 +100,30 @@ impl MailboxService for MailboxGrpc {
         } else {
             return Err(tonic::Status::new(tonic::Code::InvalidArgument, "must specify uuid"));
         };
+        let public_key = if request.public_key.is_empty() {
+            None
+        } else {
+            Some(base64::encode(&request.public_key))
+        };
 
-        datastore::ack_mailbox_public_key(&self.db_pool, &uuid).await?;
+        if self.config.user_auth_enabled {
+            let public_key = public_key.clone().ok_or(Status::permission_denied("auth is enabled, but a public_key wasn't sent"))?;
+            let cache = self.cache.lock().unwrap();
+
+            match cache.get_public_key_state(&public_key) {
+                PublicKeyState::Local => {
+                    if let Some(cached_key) = cache.public_keys.get(&public_key) {
+                        cached_key.auth()?.authorize(&metadata)
+                    } else {
+                        Err(Status::internal("this should not happen - key was resolved to Local state and then could not be fetched"))
+                    }
+                },
+                PublicKeyState::Remote => Err(Status::permission_denied(format!("remote public key {} - ack on its own instance", &public_key))),
+                PublicKeyState::Unknown => Err(Status::permission_denied(format!("unknown public key {}", &public_key))),
+            }?;
+        }
+
+        datastore::ack_mailbox_public_key(&self.db_pool, &uuid, &public_key).await?;
 
         Ok(Response::new(()))
     }
@@ -93,35 +137,66 @@ mod tests {
 
     use crate::cache::Cache;
     use crate::consts::*;
+    use crate::datastore::{AuthType, KeyType, PublicKey};
     use crate::pb::{self, AckRequest, Audience, GetRequest, mailbox_service_client::MailboxServiceClient};
     use crate::mailbox::*;
     use crate::object::*;
     use crate::object::tests::*;
     use crate::storage::FileSystem;
 
+    use chrono::Utc;
     use sqlx::postgres::PgPool;
     use tonic::transport::Channel;
 
     use serial_test::serial;
     use testcontainers::*;
 
-    async fn start_server() -> Arc<PgPool> {
+    async fn start_server(default_config: Option<Config>) -> Arc<PgPool> {
         let (tx, mut rx) = tokio::sync::mpsc::channel(1);
 
         tokio::spawn(async move {
-            let config = test_config();
+            let mut cache = Cache::default();
+            cache.add_public_key(PublicKey {
+                uuid: uuid::Uuid::default(),
+                public_key: std::str::from_utf8(&party_1().0.public_key).unwrap().to_owned(),
+                public_key_type: KeyType::Secp256k1,
+                url: String::from(""),
+                metadata: Vec::default(),
+                auth_type: Some(AuthType::Header),
+                auth_data: Some(String::from("x-test-header:test_value_1")),
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+            });
+            cache.add_public_key(PublicKey {
+                uuid: uuid::Uuid::default(),
+                public_key: std::str::from_utf8(&party_2().0.public_key).unwrap().to_owned(),
+                public_key_type: KeyType::Secp256k1,
+                url: String::from(""),
+                metadata: Vec::default(),
+                auth_type: Some(AuthType::Header),
+                auth_data: Some(String::from("x-test-header:test_value_2")),
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+            });
+            let cache = Mutex::new(cache);
+            let config = default_config.unwrap_or(test_config());
             let url = config.url.clone();
             let docker = clients::Cli::default();
             let image = images::postgres::Postgres::default().with_version(9);
             let container = docker.run(image);
-            let cache = Mutex::new(Cache::default());
+            let cache = Arc::new(cache);
             let pool = setup_postgres(&container).await;
             let pool = Arc::new(pool);
             let storage = FileSystem::new(config.storage_base_path.as_str());
-            let mailbox_service = MailboxGrpc { db_pool: pool.clone() };
+            let config = Arc::new(config);
+            let mailbox_service = MailboxGrpc {
+                cache: cache.clone(),
+                config: config.clone(),
+                db_pool: pool.clone(),
+            };
             let object_service = ObjectGrpc {
-                cache: Arc::new(cache),
-                config: Arc::new(config),
+                cache,
+                config,
                 db_pool: pool.clone(),
                 storage: Arc::new(Box::new(storage)),
             };
@@ -147,7 +222,7 @@ mod tests {
     }
 
     async fn get_and_ack_helper(client: &mut MailboxServiceClient<Channel>, audience: Audience, expected_size: usize) {
-        let public_key = base64::decode(audience.public_key).unwrap();
+        let public_key = base64::decode(&audience.public_key).unwrap();
         let request = GetRequest { public_key, max_results: 50 };
         let response = client.get(request).await;
 
@@ -163,7 +238,45 @@ mod tests {
                 assert_eq!(mail.len(), expected_size);
 
                 for msg in mail {
-                    let request = AckRequest { uuid: msg.uuid };
+                    let request = AckRequest { uuid: msg.uuid, public_key: Vec::default() };
+                    let response = client.ack(request).await;
+
+                    match response {
+                        Ok(_) => (),
+                        _ => assert_eq!(format!("{:?}", response), ""),
+                    }
+                }
+            },
+            _ => assert_eq!(format!("{:?}", response), ""),
+        }
+    }
+
+    async fn authed_get_and_ack_helper(client: &mut MailboxServiceClient<Channel>, audience: Audience, expected_size: usize, grpc_metadata: Vec<(&'static str, &'static str)>) {
+        let public_key = base64::decode(&audience.public_key).unwrap();
+        let mut request = Request::new(GetRequest { public_key: public_key.clone(), max_results: 50 });
+        let metadata = request.metadata_mut();
+        for (k, v) in &grpc_metadata {
+            metadata.insert(*k, v.parse().unwrap());
+        }
+        let response = client.get(request).await;
+
+        match response {
+            Ok(response) => {
+                let mut response = response.into_inner();
+                let mut mail = Vec::new();
+
+                while let Some(msg) = response.message().await.unwrap() {
+                    mail.push(msg);
+                }
+
+                assert_eq!(mail.len(), expected_size);
+
+                for msg in mail {
+                    let mut request = Request::new(AckRequest { uuid: msg.uuid, public_key: public_key.clone() });
+                    let metadata = request.metadata_mut();
+                    for (k, v) in &grpc_metadata {
+                        metadata.insert(*k, v.parse().unwrap());
+                    }
                     let response = client.ack(request).await;
 
                     match response {
@@ -179,7 +292,7 @@ mod tests {
     #[tokio::test]
     #[serial(grpc_server)]
     async fn get_and_ack_flow() {
-        let db = start_server().await;
+        let db = start_server(None).await;
         let mut client = get_client().await;
 
         // post fragment request
@@ -269,7 +382,7 @@ mod tests {
     #[tokio::test]
     #[serial(grpc_server)]
     async fn duplicate_objects_does_not_dup_mail() {
-        start_server().await;
+        start_server(None).await;
         let mut client = get_client().await;
 
         let (audience1, signature1) = party_1();
@@ -305,7 +418,7 @@ mod tests {
     #[tokio::test]
     #[serial(grpc_server)]
     async fn get_and_ack_many() {
-        start_server().await;
+        start_server(None).await;
         let mut client = get_client().await;
 
         let (audience1, signature1) = party_1();
@@ -338,5 +451,163 @@ mod tests {
 
         get_and_ack_helper(&mut client, audience2.clone(), 20).await;
         get_and_ack_helper(&mut client, audience2, 0).await;
+    }
+
+    #[tokio::test]
+    #[serial(grpc_server)]
+    async fn auth_get_and_ack_success() {
+        let mut config = test_config();
+        config.user_auth_enabled = true;
+        start_server(Some(config)).await;
+        let mut client = get_client().await;
+
+        let (audience1, signature1) = party_1();
+        let (audience2, signature2) = party_2();
+        let mut dime = generate_dime(vec![audience1, audience2.clone()], vec![signature1, signature2]);
+        dime.metadata.insert(MAILBOX_KEY.to_owned(), MAILBOX_FRAGMENT_REQUEST.to_owned());
+        let chunk_size = 500; // full payload in one packet
+
+        let payload: bytes::Bytes = uuid::Uuid::new_v4().to_hyphenated().to_string().into_bytes().into();
+        let response = put_helper(dime.clone(), payload, chunk_size, HashMap::default(), vec![("x-test-header", "test_value_1")]).await;
+
+        match response {
+            Ok(_) => (),
+            _ => assert_eq!(format!("{:?}", response), ""),
+        }
+
+        authed_get_and_ack_helper(&mut client, audience2.clone(), 1, vec![("x-test-header", "test_value_2")]).await;
+        authed_get_and_ack_helper(&mut client, audience2, 0, vec![("x-test-header", "test_value_2")]).await;
+    }
+
+    #[tokio::test]
+    #[serial(grpc_server)]
+    async fn auth_get_invalid_key() {
+        let mut config = test_config();
+        config.user_auth_enabled = true;
+        start_server(Some(config)).await;
+        let mut client = get_client().await;
+
+        let (audience1, signature1) = party_1();
+        let (audience2, signature2) = party_2();
+        let mut dime = generate_dime(vec![audience1, audience2.clone()], vec![signature1, signature2]);
+        dime.metadata.insert(MAILBOX_KEY.to_owned(), MAILBOX_FRAGMENT_REQUEST.to_owned());
+        let chunk_size = 500; // full payload in one packet
+
+        let payload: bytes::Bytes = uuid::Uuid::new_v4().to_hyphenated().to_string().into_bytes().into();
+        let response = put_helper(dime.clone(), payload, chunk_size, HashMap::default(), vec![("x-test-header", "test_value_1")]).await;
+
+        match response {
+            Ok(_) => (),
+            _ => assert_eq!(format!("{:?}", response), ""),
+        }
+
+        let public_key = base64::decode(&audience2.public_key).unwrap();
+        let mut request = Request::new(GetRequest { public_key, max_results: 50 });
+        let metadata = request.metadata_mut();
+        metadata.insert("x-test-header", "test_value_1".parse().unwrap());
+        let response = client.get(request).await;
+
+        match response {
+            Err(err) => assert_eq!(err.code(), tonic::Code::PermissionDenied),
+            _ => assert_eq!(format!("{:?}", response), ""),
+        }
+    }
+
+    #[tokio::test]
+    #[serial(grpc_server)]
+    async fn auth_ack_invalid_key() {
+        let mut config = test_config();
+        config.user_auth_enabled = true;
+        start_server(Some(config)).await;
+        let mut client = get_client().await;
+
+        let (audience1, signature1) = party_1();
+        let (audience2, signature2) = party_2();
+        let mut dime = generate_dime(vec![audience1, audience2.clone()], vec![signature1, signature2]);
+        dime.metadata.insert(MAILBOX_KEY.to_owned(), MAILBOX_FRAGMENT_REQUEST.to_owned());
+        let chunk_size = 500; // full payload in one packet
+
+        let payload: bytes::Bytes = uuid::Uuid::new_v4().to_hyphenated().to_string().into_bytes().into();
+        let response = put_helper(dime.clone(), payload, chunk_size, HashMap::default(), vec![("x-test-header", "test_value_1")]).await;
+
+        match response {
+            Ok(_) => (),
+            _ => assert_eq!(format!("{:?}", response), ""),
+        }
+
+        let public_key = base64::decode(&audience2.public_key).unwrap();
+        let mut request = Request::new(AckRequest { uuid: response.unwrap().into_inner().uuid, public_key });
+        let metadata = request.metadata_mut();
+        metadata.insert("x-test-header", "test_value_1".parse().unwrap());
+        let response = client.ack(request).await;
+
+        match response {
+            Err(err) => assert_eq!(err.code(), tonic::Code::PermissionDenied),
+            _ => assert_eq!(format!("{:?}", response), ""),
+        }
+    }
+
+    #[tokio::test]
+    #[serial(grpc_server)]
+    async fn auth_get_no_key() {
+        let mut config = test_config();
+        config.user_auth_enabled = true;
+        start_server(Some(config)).await;
+        let mut client = get_client().await;
+
+        let (audience1, signature1) = party_1();
+        let (audience2, signature2) = party_2();
+        let mut dime = generate_dime(vec![audience1, audience2.clone()], vec![signature1, signature2]);
+        dime.metadata.insert(MAILBOX_KEY.to_owned(), MAILBOX_FRAGMENT_REQUEST.to_owned());
+        let chunk_size = 500; // full payload in one packet
+
+        let payload: bytes::Bytes = uuid::Uuid::new_v4().to_hyphenated().to_string().into_bytes().into();
+        let response = put_helper(dime.clone(), payload, chunk_size, HashMap::default(), vec![("x-test-header", "test_value_1")]).await;
+
+        match response {
+            Ok(_) => (),
+            _ => assert_eq!(format!("{:?}", response), ""),
+        }
+
+        let public_key = base64::decode(&audience2.public_key).unwrap();
+        let request = Request::new(GetRequest { public_key, max_results: 50 });
+        let response = client.get(request).await;
+
+        match response {
+            Err(err) => assert_eq!(err.code(), tonic::Code::PermissionDenied),
+            _ => assert_eq!(format!("{:?}", response), ""),
+        }
+    }
+
+    #[tokio::test]
+    #[serial(grpc_server)]
+    async fn auth_ack_no_key() {
+        let mut config = test_config();
+        config.user_auth_enabled = true;
+        start_server(Some(config)).await;
+        let mut client = get_client().await;
+
+        let (audience1, signature1) = party_1();
+        let (audience2, signature2) = party_2();
+        let mut dime = generate_dime(vec![audience1, audience2.clone()], vec![signature1, signature2]);
+        dime.metadata.insert(MAILBOX_KEY.to_owned(), MAILBOX_FRAGMENT_REQUEST.to_owned());
+        let chunk_size = 500; // full payload in one packet
+
+        let payload: bytes::Bytes = uuid::Uuid::new_v4().to_hyphenated().to_string().into_bytes().into();
+        let response = put_helper(dime.clone(), payload, chunk_size, HashMap::default(), vec![("x-test-header", "test_value_1")]).await;
+
+        match response {
+            Ok(_) => (),
+            _ => assert_eq!(format!("{:?}", response), ""),
+        }
+
+        let public_key = base64::decode(&audience2.public_key).unwrap();
+        let request = Request::new(AckRequest { uuid: response.unwrap().into_inner().uuid, public_key });
+        let response = client.ack(request).await;
+
+        match response {
+            Err(err) => assert_eq!(err.code(), tonic::Code::PermissionDenied),
+            _ => assert_eq!(format!("{:?}", response), ""),
+        }
     }
 }
