@@ -254,6 +254,7 @@ impl ObjectService for ObjectGrpc {
         let (tx, rx) = mpsc::channel(4);
 
         tokio::spawn(async move {
+            let _ = &object;
             // send multi stream header
             let mut metadata = HashMap::new();
             metadata.insert(consts::CREATED_BY_HEADER.to_owned(), uuid::Uuid::nil().to_hyphenated().to_string());
