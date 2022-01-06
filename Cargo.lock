@@ -947,7 +947,7 @@ checksum = "9c64630dcdd71f1a64c435f54885086a0de5d6a12d104d69b165fb7d5286d677"
 [[package]]
 name = "minitrace"
 version = "0.2.0"
-source = "git+https://github.com/scirner22/minitrace-rust.git?branch=feature/add-dd-fields#ad5c130ccbcc0ba91b26b15a9ff0794ba7a19dfc"
+source = "git+https://github.com/tikv/minitrace-rust.git#6db0d95cc068e57617d763bb679f928698ed5a93"
 dependencies = [
  "crossbeam",
  "minitrace-macro",
@@ -959,7 +959,7 @@ dependencies = [
 [[package]]
 name = "minitrace-datadog"
 version = "0.1.0"
-source = "git+https://github.com/scirner22/minitrace-rust.git?branch=feature/add-dd-fields#ad5c130ccbcc0ba91b26b15a9ff0794ba7a19dfc"
+source = "git+https://github.com/tikv/minitrace-rust.git#6db0d95cc068e57617d763bb679f928698ed5a93"
 dependencies = [
  "minitrace",
  "reqwest",
@@ -970,7 +970,7 @@ dependencies = [
 [[package]]
 name = "minitrace-macro"
 version = "0.1.0"
-source = "git+https://github.com/scirner22/minitrace-rust.git?branch=feature/add-dd-fields#ad5c130ccbcc0ba91b26b15a9ff0794ba7a19dfc"
+source = "git+https://github.com/tikv/minitrace-rust.git#6db0d95cc068e57617d763bb679f928698ed5a93"
 dependencies = [
  "proc-macro-error",
  "proc-macro2",
