@@ -69,10 +69,9 @@ where
                 .unwrap_or(&default_trace_id)
                 .to_str()
                 .unwrap();
-            let start = minstant::now();
+            let start = minstant::Instant::now();
             let response = inner.call(req).await?;
-            let end = minstant::now();
-            let elapsed_seconds = (end - start) as f64 * minstant::nanos_per_cycle() / 1_000_000_000f64;
+            let elapsed_seconds = start.elapsed().as_secs_f64();
 
             if elapsed_seconds > upper_logging_bounds {
                 log::warn!("Trace ID: {} took {} second(s)", trace_id, elapsed_seconds);
