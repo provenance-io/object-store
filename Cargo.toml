@@ -5,26 +5,27 @@ authors = ["Stephen Cirner <scirner@figure.com>"]
 edition = "2021"
 
 [dependencies]
-aes-gcm = "0.9"
+aes-gcm = "0.10"
 async-trait = "0.1"
-async-recursion = "0.3"
-base64 = "0.13"
+async-recursion = "1.0"
+base64 = "0.20"
 bytes = "1.0"
 chrono = "0.4"
 cloud-storage = { git = "https://github.com/scirner22/cloud-storage-rs.git", branch = "allow-base-url" }
-env_logger = "0.9"
+env_logger = "0.10"
 futures = "0.3"
 futures-util = "0.3"
 hex = "0.4"
 linked-hash-map = { version = "0.5", features = ["serde_impl"] }
 log = "0.4"
+percent-encoding = "2.2"
 prost = "0.9"
 prost-types = "0.9"
 quick-error = "2.0"
 rand = "0.8"
 serde = "1.0"
 serde_json = "1.0"
-sqlx = { version = "0.5", features = ["runtime-tokio-rustls", "postgres", "macros", "uuid", "chrono", "json"] }
+sqlx = { version = "0.6", features = ["runtime-tokio-rustls", "postgres", "macros", "uuid", "chrono", "json"] }
 tonic = "0.6"
 tonic-health = "0.5"
 tower = "0.4"
@@ -32,16 +33,16 @@ reqwest = { version = "0.11" }
 minitrace = { git = "https://github.com/tikv/minitrace-rust.git" }
 minitrace-macro = { git = "https://github.com/tikv/minitrace-rust.git" }
 minitrace-datadog = { git = "https://github.com/tikv/minitrace-rust.git" }
-minstant = "0.1.1"
+minstant = "0.1.2"
 # TODO can we upgrade this?
 tokio = { version = "1.0", features = ["macros", "rt-multi-thread", "sync"] }
 tokio-stream = "0.1"
-url = "2.2"
-uuid = { version = "0.8", features = ["serde", "v4"] }
+url = "2.3"
+uuid = { version = "1", features = ["serde", "v4"] }
 
 [build-dependencies]
 tonic-build = "0.6"
 
 [dev-dependencies]
 serial_test = "*"
-testcontainers = "0.12"
+testcontainers = "0.14"

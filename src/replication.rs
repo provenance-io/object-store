@@ -613,10 +613,10 @@ pub mod tests {
         }
     }
 
-    pub async fn setup_postgres(container: &Container<'_, clients::Cli, images::postgres::Postgres>) -> PgPool {
+    pub async fn setup_postgres(port: u16) -> PgPool {
         let connection_string = &format!(
             "postgres://postgres:postgres@localhost:{}/postgres",
-            container.get_host_port(5432).unwrap(),
+            port,
         );
 
         let pool = PgPoolOptions::new()
@@ -655,7 +655,7 @@ pub mod tests {
         });
     }
 
-    async fn start_server_one(config_override: Option<Config>) -> ReplicationState {
+    async fn start_server_one(config_override: Option<Config>, postgres_port: u16) -> ReplicationState {
         let (tx, mut rx) = tokio::sync::mpsc::channel(1);
 
         tokio::spawn(async move {
@@ -664,10 +664,7 @@ pub mod tests {
             let cache = Mutex::new(cache);
             let config = config_override.unwrap_or(test_config_one());
             let url = config.url.clone();
-            let docker = clients::Cli::default();
-            let image = images::postgres::Postgres::default().with_version(9);
-            let container = docker.run(image);
-            let pool = setup_postgres(&container).await;
+            let pool = setup_postgres(postgres_port).await;
             let storage = FileSystem::new(config.storage_base_path.as_str());
             let cache = Arc::new(cache);
             let config = Arc::new(config);
@@ -693,7 +690,7 @@ pub mod tests {
         rx.recv().await.unwrap()
     }
 
-    async fn start_server_two() -> ReplicationState {
+    async fn start_server_two(postgres_port: u16) -> ReplicationState {
         let (tx, mut rx) = tokio::sync::mpsc::channel(1);
 
         tokio::spawn(async move {
@@ -702,10 +699,7 @@ pub mod tests {
             let cache = Mutex::new(cache);
             let config = test_config_two();
             let url = config.url.clone();
-            let docker = clients::Cli::default();
-            let image = images::postgres::Postgres::default().with_version(9);
-            let container = docker.run(image);
-            let pool = setup_postgres(&container).await;
+            let pool = setup_postgres(postgres_port).await;
             let storage = FileSystem::new(config.storage_base_path.as_str());
             let cache = Arc::new(cache);
             let config = Arc::new(config);
@@ -757,7 +751,16 @@ pub mod tests {
     #[tokio::test]
     #[serial(grpc_server)]
     async fn client_caching() {
-        let _state_one = start_server_one(None).await;
+        let docker = clients::Cli::default();
+        let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
+        let container = docker.run(image);
+        let postgres_port = container.get_host_port_ipv4(5432);
+
+        let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
+        let container_two = docker.run(image);
+        let postgres_port_two = container_two.get_host_port_ipv4(5432);
+
+        let _state_one = start_server_one(None, postgres_port).await;
 
         let config_one = test_config_one();
         let config_two = test_config_two();
@@ -789,14 +792,14 @@ pub mod tests {
         // client 2 should be empty because server two is not running:
         assert_eq!(client_two.is_none(), true);
 
-        let _state_two = start_server_two().await;
+        let _state_two = start_server_two(postgres_port_two).await;
         let client_two = client_cache.request(&url_two).await.unwrap();
         // client 2 will still fail even if state_two is ready because there's still time to wait
         // out until the client can attempt to be created again.
         assert_eq!(client_two.is_none(), true);
 
         // wait a little more and it should work:
-        tokio::time::sleep(tokio::time::Duration::from_millis(2_000)).await;
+        tokio::time::sleep(tokio::time::Duration::from_millis(5_000)).await;
 
         let client_two = client_cache.request(&url_two).await.unwrap().unwrap();
 
@@ -807,7 +810,12 @@ pub mod tests {
     #[tokio::test]
     #[serial(grpc_server)]
     async fn replication_can_be_disabled() {
-        let state_one = start_server_one(Some(test_config_one_no_replication())).await;
+        let docker = clients::Cli::default();
+        let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
+        let container = docker.run(image);
+        let postgres_port = container.get_host_port_ipv4(5432);
+
+        let state_one = start_server_one(Some(test_config_one_no_replication()), postgres_port).await;
 
         let (audience1, signature1) = party_1();
         let (audience2, signature2) = party_2();
@@ -850,9 +858,18 @@ pub mod tests {
     #[tokio::test]
     #[serial(grpc_server)]
     async fn end_to_end_replication() {
+        let docker = clients::Cli::default();
+        let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
+        let container = docker.run(image);
+        let postgres_port = container.get_host_port_ipv4(5432);
+
+        let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
+        let container_two = docker.run(image);
+        let postgres_port_two = container_two.get_host_port_ipv4(5432);
+
         let config_one = test_config_one();
-        let mut state_one = start_server_one(None).await;
-        let state_two = start_server_two().await;
+        let mut state_one = start_server_one(None, postgres_port).await;
+        let state_two = start_server_two(postgres_port_two).await;
         let mut client_cache_one = ClientCache::new(config_one.backoff_min_wait, config_one.backoff_max_wait);
 
         let (audience1, signature1) = party_1();
@@ -968,7 +985,12 @@ pub mod tests {
     #[tokio::test]
     #[serial(grpc_server)]
     async fn late_local_url_can_cleanup() {
-        let state_one = start_server_one(None).await;
+        let docker = clients::Cli::default();
+        let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
+        let container = docker.run(image);
+        let postgres_port = container.get_host_port_ipv4(5432);
+
+        let state_one = start_server_one(None, postgres_port).await;
 
         let (audience1, signature1) = party_1();
         let (audience3, signature3) = party_3();

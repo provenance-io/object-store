@@ -88,12 +88,11 @@ mod tests {
 
     use testcontainers::*;
     use testcontainers::images::postgres::Postgres;
-    use testcontainers::clients::Cli;
 
-    async fn setup_postgres(container: &Container<'_, Cli, Postgres>) -> PgPool {
+    async fn setup_postgres(container: &Container<'_, Postgres>) -> PgPool {
         let connection_string = &format!(
             "postgres://postgres:postgres@localhost:{}/postgres",
-            container.get_host_port(5432).unwrap(),
+            container.get_host_port_ipv4(5432),
         );
 
         let pool = PgPoolOptions::new()
@@ -110,7 +109,7 @@ mod tests {
     #[tokio::test]
     async fn invalid_url() {
         let docker = clients::Cli::default();
-        let image = images::postgres::Postgres::default().with_version(9);
+        let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
         let container = docker.run(image);
         let cache = Mutex::new(Cache::default());
         let pool = setup_postgres(&container).await;
@@ -137,7 +136,7 @@ mod tests {
     #[tokio::test]
     async fn empty_url() {
         let docker = clients::Cli::default();
-        let image = images::postgres::Postgres::default().with_version(9);
+        let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
         let container = docker.run(image);
         let cache = Mutex::new(Cache::default());
         let pool = setup_postgres(&container).await;
@@ -171,7 +170,7 @@ mod tests {
     #[tokio::test]
     async fn empty_auth_header_header() {
         let docker = clients::Cli::default();
-        let image = images::postgres::Postgres::default().with_version(9);
+        let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
         let container = docker.run(image);
         let cache = Mutex::new(Cache::default());
         let pool = setup_postgres(&container).await;
@@ -201,7 +200,7 @@ mod tests {
     #[tokio::test]
     async fn empty_auth_header_value() {
         let docker = clients::Cli::default();
-        let image = images::postgres::Postgres::default().with_version(9);
+        let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
         let container = docker.run(image);
         let cache = Mutex::new(Cache::default());
         let pool = setup_postgres(&container).await;
@@ -231,7 +230,7 @@ mod tests {
     #[tokio::test]
     async fn missing_public_key() {
         let docker = clients::Cli::default();
-        let image = images::postgres::Postgres::default().with_version(9);
+        let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
         let container = docker.run(image);
         let cache = Mutex::new(Cache::default());
         let pool = setup_postgres(&container).await;
@@ -256,7 +255,7 @@ mod tests {
     #[tokio::test]
     async fn missing_key() {
         let docker = clients::Cli::default();
-        let image = images::postgres::Postgres::default().with_version(9);
+        let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
         let container = docker.run(image);
         let cache = Mutex::new(Cache::default());
         let pool = setup_postgres(&container).await;
@@ -281,7 +280,7 @@ mod tests {
     #[tokio::test]
     async fn duplicate_key() {
         let docker = clients::Cli::default();
-        let image = images::postgres::Postgres::default().with_version(9);
+        let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
         let container = docker.run(image);
         let cache = Mutex::new(Cache::default());
         let pool = setup_postgres(&container).await;
@@ -333,7 +332,7 @@ mod tests {
     #[tokio::test]
     async fn returns_full_proto() {
         let docker = clients::Cli::default();
-        let image = images::postgres::Postgres::default().with_version(9);
+        let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
         let container = docker.run(image);
         let cache = Mutex::new(Cache::default());
         let pool = setup_postgres(&container).await;
@@ -376,7 +375,7 @@ mod tests {
     #[tokio::test]
     async fn adds_empty_urls_to_local_cache() {
         let docker = clients::Cli::default();
-        let image = images::postgres::Postgres::default().with_version(9);
+        let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
         let container = docker.run(image);
         let cache = Arc::new(Mutex::new(Cache::default()));
         let pool = setup_postgres(&container).await;
@@ -406,7 +405,7 @@ mod tests {
     #[tokio::test]
     async fn adds_nonempty_urls_to_remote_cache() {
         let docker = clients::Cli::default();
-        let image = images::postgres::Postgres::default().with_version(9);
+        let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
         let container = docker.run(image);
         let cache = Arc::new(Mutex::new(Cache::default()));
         let pool = setup_postgres(&container).await;

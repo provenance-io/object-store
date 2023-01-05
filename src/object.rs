@@ -256,7 +256,7 @@ impl ObjectService for ObjectGrpc {
             let _ = &object;
             // send multi stream header
             let mut metadata = HashMap::new();
-            metadata.insert(consts::CREATED_BY_HEADER.to_owned(), uuid::Uuid::nil().to_hyphenated().to_string());
+            metadata.insert(consts::CREATED_BY_HEADER.to_owned(), uuid::Uuid::nil().as_hyphenated().to_string());
             let header = MultiStreamHeader { stream_count: 1, metadata };
             let msg = ChunkBidi { r#impl: Some(MultiStreamHeaderEnum(header)) };
             if let Err(_) = tx.send(Ok(msg)).await {
@@ -317,8 +317,6 @@ pub mod tests {
 
     use serial_test::serial;
     use testcontainers::*;
-    use testcontainers::images::postgres::Postgres;
-    use testcontainers::clients::Cli;
 
     pub fn test_config() -> Config {
         let dd_config = DatadogConfig {
@@ -352,10 +350,10 @@ pub mod tests {
         }
     }
 
-    pub async fn setup_postgres(container: &Container<'_, Cli, Postgres>) -> PgPool {
+    pub async fn setup_postgres(port: u16) -> PgPool {
         let connection_string = &format!(
             "postgres://postgres:postgres@localhost:{}/postgres",
-            container.get_host_port(5432).unwrap(),
+            port,
         );
 
         let pool = PgPoolOptions::new()
@@ -369,7 +367,7 @@ pub mod tests {
         pool
     }
 
-    async fn start_server(default_config: Option<Config>) -> Arc<PgPool> {
+    async fn start_server(default_config: Option<Config>, postgres_port: u16) -> Arc<PgPool> {
         let (tx, mut rx) = tokio::sync::mpsc::channel(1);
 
         tokio::spawn(async move {
@@ -399,10 +397,7 @@ pub mod tests {
             let cache = Mutex::new(cache);
             let config = default_config.unwrap_or(test_config());
             let url = config.url.clone();
-            let docker = clients::Cli::default();
-            let image = images::postgres::Postgres::default().with_version(9);
-            let container = docker.run(image);
-            let pool = setup_postgres(&container).await;
+            let pool = setup_postgres(postgres_port).await;
             let storage = FileSystem::new(config.storage_base_path.as_str());
             let object_service = ObjectGrpc {
                 cache: Arc::new(cache),
@@ -496,7 +491,7 @@ pub mod tests {
         let mut packets = Vec::new();
 
         let mut metadata = HashMap::new();
-        metadata.insert(CREATED_BY_HEADER.to_owned(), uuid::Uuid::nil().to_hyphenated().to_string());
+        metadata.insert(CREATED_BY_HEADER.to_owned(), uuid::Uuid::nil().as_hyphenated().to_string());
         let header = MultiStreamHeader { stream_count: 1, metadata };
         let msg = ChunkBidi { r#impl: Some(MultiStreamHeaderEnum(header)) };
 
@@ -619,11 +614,16 @@ pub mod tests {
     #[tokio::test]
     #[serial(grpc_server)]
     async fn simple_put() {
-        let db = start_server(None).await;
+        let docker = clients::Cli::default();
+        let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
+        let container = docker.run(image);
+        let postgres_port = container.get_host_port_ipv4(5432);
+
+        let db = start_server(None, postgres_port).await;
 
         let (audience, signature) = party_1();
         let dime = generate_dime(vec![audience], vec![signature]);
-        let dime_uuid = dime.uuid.clone().to_hyphenated().to_string();
+        let dime_uuid = dime.uuid.as_hyphenated().to_string();
         let payload: bytes::Bytes = "testing small payload".as_bytes().into();
         let payload_len = payload.len() as i64;
         let chunk_size = 500; // full payload in one packet
@@ -652,9 +652,14 @@ pub mod tests {
     #[tokio::test]
     #[serial(grpc_server)]
     async fn simple_put_with_auth_failure_no_header() {
+        let docker = clients::Cli::default();
+        let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
+        let container = docker.run(image);
+        let postgres_port = container.get_host_port_ipv4(5432);
+
         let mut config = test_config();
         config.user_auth_enabled = true;
-        start_server(Some(config)).await;
+        start_server(Some(config), postgres_port).await;
 
         let (audience, signature) = party_1();
         let dime = generate_dime(vec![audience], vec![signature]);
@@ -671,9 +676,14 @@ pub mod tests {
     #[tokio::test]
     #[serial(grpc_server)]
     async fn simple_put_with_auth_failure_incorrect_value() {
+        let docker = clients::Cli::default();
+        let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
+        let container = docker.run(image);
+        let postgres_port = container.get_host_port_ipv4(5432);
+
         let mut config = test_config();
         config.user_auth_enabled = true;
-        start_server(Some(config)).await;
+        start_server(Some(config), postgres_port).await;
 
         let (audience, signature) = party_1();
         let dime = generate_dime(vec![audience], vec![signature]);
@@ -690,13 +700,18 @@ pub mod tests {
     #[tokio::test]
     #[serial(grpc_server)]
     async fn simple_put_with_auth_success() {
+        let docker = clients::Cli::default();
+        let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
+        let container = docker.run(image);
+        let postgres_port = container.get_host_port_ipv4(5432);
+
         let mut config = test_config();
         config.user_auth_enabled = true;
-        let db = start_server(Some(config)).await;
+        let db = start_server(Some(config), postgres_port).await;
 
         let (audience, signature) = party_1();
         let dime = generate_dime(vec![audience], vec![signature]);
-        let dime_uuid = dime.uuid.clone().to_hyphenated().to_string();
+        let dime_uuid = dime.uuid.as_hyphenated().to_string();
         let payload: bytes::Bytes = "testing small payload".as_bytes().into();
         let payload_len = payload.len() as i64;
         let chunk_size = 500; // full payload in one packet
@@ -725,11 +740,16 @@ pub mod tests {
     #[tokio::test]
     #[serial(grpc_server)]
     async fn multi_packet_file_store_put() {
-        start_server(None).await;
+        let docker = clients::Cli::default();
+        let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
+        let container = docker.run(image);
+        let postgres_port = container.get_host_port_ipv4(5432);
+
+        start_server(None, postgres_port).await;
 
         let (audience, signature) = party_1();
         let dime = generate_dime(vec![audience], vec![signature]);
-        let dime_uuid = dime.uuid.clone().to_hyphenated().to_string();
+        let dime_uuid = dime.uuid.as_hyphenated().to_string();
         let payload: bytes::Bytes = "testing larger payload ".repeat(250).into_bytes().into();
         let payload_len = payload.len() as i64;
         let chunk_size = 100; // split payload into packets
@@ -750,7 +770,12 @@ pub mod tests {
     #[tokio::test]
     #[serial(grpc_server)]
     async fn multi_party_put() {
-        let db = start_server(None).await;
+        let docker = clients::Cli::default();
+        let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
+        let container = docker.run(image);
+        let postgres_port = container.get_host_port_ipv4(5432);
+
+        let db = start_server(None, postgres_port).await;
 
         let (audience1, signature1) = party_1();
         let (audience2, signature2) = party_2();
@@ -776,7 +801,12 @@ pub mod tests {
     #[tokio::test]
     #[serial(grpc_server)]
     async fn small_mailbox_put() {
-        let db = start_server(None).await;
+        let docker = clients::Cli::default();
+        let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
+        let container = docker.run(image);
+        let postgres_port = container.get_host_port_ipv4(5432);
+
+        let db = start_server(None, postgres_port).await;
 
         let (audience1, signature1) = party_1();
         let (audience2, signature2) = party_2();
@@ -804,7 +834,12 @@ pub mod tests {
     #[tokio::test]
     #[serial(grpc_server)]
     async fn large_mailbox_put() {
-        let db = start_server(None).await;
+        let docker = clients::Cli::default();
+        let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
+        let container = docker.run(image);
+        let postgres_port = container.get_host_port_ipv4(5432);
+
+        let db = start_server(None, postgres_port).await;
 
         let (audience1, signature1) = party_1();
         let (audience2, signature2) = party_2();
@@ -832,7 +867,12 @@ pub mod tests {
     #[tokio::test]
     #[serial(grpc_server)]
     async fn simple_get() {
-        start_server(None).await;
+        let docker = clients::Cli::default();
+        let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
+        let container = docker.run(image);
+        let postgres_port = container.get_host_port_ipv4(5432);
+
+        start_server(None, postgres_port).await;
 
         let (audience, signature) = party_1();
         let dime = generate_dime(vec![audience.clone()], vec![signature]);
@@ -910,9 +950,14 @@ pub mod tests {
     #[tokio::test]
     #[serial(grpc_server)]
     async fn auth_get_failure_no_key() {
+        let docker = clients::Cli::default();
+        let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
+        let container = docker.run(image);
+        let postgres_port = container.get_host_port_ipv4(5432);
+
         let mut config = test_config();
         config.user_auth_enabled = true;
-        start_server(Some(config)).await;
+        start_server(Some(config), postgres_port).await;
 
         let (audience, signature) = party_1();
         let dime = generate_dime(vec![audience.clone()], vec![signature]);
@@ -943,9 +988,14 @@ pub mod tests {
     #[tokio::test]
     #[serial(grpc_server)]
     async fn auth_get_failure_invalid_key() {
+        let docker = clients::Cli::default();
+        let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
+        let container = docker.run(image);
+        let postgres_port = container.get_host_port_ipv4(5432);
+
         let mut config = test_config();
         config.user_auth_enabled = true;
-        start_server(Some(config)).await;
+        start_server(Some(config), postgres_port).await;
 
         let (audience, signature) = party_1();
         let dime = generate_dime(vec![audience.clone()], vec![signature]);
@@ -978,9 +1028,14 @@ pub mod tests {
     #[tokio::test]
     #[serial(grpc_server)]
     async fn auth_get_success() {
+        let docker = clients::Cli::default();
+        let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
+        let container = docker.run(image);
+        let postgres_port = container.get_host_port_ipv4(5432);
+
         let mut config = test_config();
         config.user_auth_enabled = true;
-        start_server(Some(config)).await;
+        start_server(Some(config), postgres_port).await;
 
         let (audience, signature) = party_1();
         let dime = generate_dime(vec![audience.clone()], vec![signature]);
@@ -1013,7 +1068,12 @@ pub mod tests {
     #[tokio::test]
     #[serial(grpc_server)]
     async fn multi_packet_file_store_get() {
-        start_server(None).await;
+        let docker = clients::Cli::default();
+        let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
+        let container = docker.run(image);
+        let postgres_port = container.get_host_port_ipv4(5432);
+
+        start_server(None, postgres_port).await;
 
         let (audience, signature) = party_1();
         let dime = generate_dime(vec![audience.clone()], vec![signature]);
@@ -1044,7 +1104,12 @@ pub mod tests {
     #[tokio::test]
     #[serial(grpc_server)]
     async fn multi_party_non_owner_get() {
-        start_server(None).await;
+        let docker = clients::Cli::default();
+        let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
+        let container = docker.run(image);
+        let postgres_port = container.get_host_port_ipv4(5432);
+
+        start_server(None, postgres_port).await;
 
         let (audience1, signature1) = party_1();
         let (audience2, signature2) = party_2();
@@ -1072,7 +1137,12 @@ pub mod tests {
     #[tokio::test]
     #[serial(grpc_server)]
     async fn dupe_objects_noop() {
-        start_server(None).await;
+        let docker = clients::Cli::default();
+        let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
+        let container = docker.run(image);
+        let postgres_port = container.get_host_port_ipv4(5432);
+
+        start_server(None, postgres_port).await;
 
         let (audience, signature) = party_1();
         let dime = generate_dime(vec![audience], vec![signature]);
@@ -1092,7 +1162,12 @@ pub mod tests {
     #[tokio::test]
     #[serial(grpc_server)]
     async fn dupe_objects_added_audience() {
-        start_server(None).await;
+        let docker = clients::Cli::default();
+        let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
+        let container = docker.run(image);
+        let postgres_port = container.get_host_port_ipv4(5432);
+
+        start_server(None, postgres_port).await;
 
         let (audience, signature) = party_1();
         let (audience2, signature2) = party_2();
@@ -1114,7 +1189,12 @@ pub mod tests {
     #[tokio::test]
     #[serial(grpc_server)]
     async fn get_with_wrong_key() {
-        start_server(None).await;
+        let docker = clients::Cli::default();
+        let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
+        let container = docker.run(image);
+        let postgres_port = container.get_host_port_ipv4(5432);
+
+        start_server(None, postgres_port).await;
 
         let (audience1, signature1) = party_1();
         let (audience2, signature2) = party_2();
@@ -1142,7 +1222,12 @@ pub mod tests {
     #[tokio::test]
     #[serial(grpc_server)]
     async fn get_nonexistent_hash() {
-        start_server(None).await;
+        let docker = clients::Cli::default();
+        let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
+        let container = docker.run(image);
+        let postgres_port = container.get_host_port_ipv4(5432);
+
+        start_server(None, postgres_port).await;
 
         let (audience1, _) = party_1();
         let payload: bytes::Bytes = "testing small payload".as_bytes().into();
@@ -1162,7 +1247,12 @@ pub mod tests {
     #[tokio::test]
     #[serial(grpc_server)]
     async fn put_with_replication() {
-        let db = start_server(None).await;
+        let docker = clients::Cli::default();
+        let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
+        let container = docker.run(image);
+        let postgres_port = container.get_host_port_ipv4(5432);
+
+        let db = start_server(None, postgres_port).await;
 
         let (audience1, signature1) = party_1();
         let (audience2, signature2) = party_2();
@@ -1193,7 +1283,12 @@ pub mod tests {
     #[tokio::test]
     #[serial(grpc_server)]
     async fn put_with_replication_different_owner() {
-        let db = start_server(None).await;
+        let docker = clients::Cli::default();
+        let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
+        let container = docker.run(image);
+        let postgres_port = container.get_host_port_ipv4(5432);
+
+        let db = start_server(None, postgres_port).await;
 
         let (audience1, signature1) = party_1();
         let (audience2, signature2) = party_2();
@@ -1224,7 +1319,12 @@ pub mod tests {
     #[tokio::test]
     #[serial(grpc_server)]
     async fn put_with_double_replication() {
-        let db = start_server(None).await;
+        let docker = clients::Cli::default();
+        let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
+        let container = docker.run(image);
+        let postgres_port = container.get_host_port_ipv4(5432);
+
+        let db = start_server(None, postgres_port).await;
 
         let (audience1, signature1) = party_1();
         let (audience2, signature2) = party_2();
@@ -1255,7 +1355,12 @@ pub mod tests {
     #[tokio::test]
     #[serial(grpc_server)]
     async fn get_object_no_properties() {
-        let db = start_server(None).await;
+        let docker = clients::Cli::default();
+        let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
+        let container = docker.run(image);
+        let postgres_port = container.get_host_port_ipv4(5432);
+
+        let db = start_server(None, postgres_port).await;
 
         let (audience, signature) = party_1();
         let dime = generate_dime(vec![audience.clone()], vec![signature]);
