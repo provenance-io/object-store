@@ -23,8 +23,8 @@ impl ObjectApiResponse for Object {
 
     fn to_response(&self, config: &Config) -> Result<ObjectResponse> {
         Ok(ObjectResponse {
-            uuid: Some(Uuid { value: self.uuid.to_hyphenated().to_string() }),
-            dime_uuid: Some(Uuid { value: self.dime_uuid.to_hyphenated().to_string() }),
+            uuid: Some(Uuid { value: self.uuid.as_hyphenated().to_string() }),
+            dime_uuid: Some(Uuid { value: self.dime_uuid.as_hyphenated().to_string() }),
             hash: base64::decode(&self.hash)?,
             uri: format!("object://{}/{}", &config.uri_host, &self.hash),
             bucket: config.storage_base_path.clone(),
@@ -77,7 +77,7 @@ impl PublicKeyApiResponse for PublicKey {
         };
         let response = PublicKeyResponse {
             uuid: Some(Uuid {
-                value: self.uuid.to_hyphenated().to_string()
+                value: self.uuid.as_hyphenated().to_string()
             }),
             public_key: Some(PublicKeyProto { key: Some(public_key) }),
             url: self.url,

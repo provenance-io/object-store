@@ -62,11 +62,11 @@ impl MailboxService for MailboxGrpc {
             for (mailbox_uuid, object) in results {
                 let payload = match object.payload {
                     Some(payload) => MailPayload {
-                        uuid: Some(Uuid { value: mailbox_uuid.to_hyphenated().to_string() }),
+                        uuid: Some(Uuid { value: mailbox_uuid.as_hyphenated().to_string() }),
                         data: payload,
                     },
                     None => {
-                        log::error!("mailbox object without a payload {}", object.uuid.to_hyphenated().to_string());
+                        log::error!("mailbox object without a payload {}", object.uuid.as_hyphenated().to_string());
 
                         if let Err(_) = tx.send(Err(tonic::Status::new(tonic::Code::Internal, "mailbox object without a payload"))).await {
                             log::debug!("stream closed early");
@@ -150,7 +150,7 @@ mod tests {
     use serial_test::serial;
     use testcontainers::*;
 
-    async fn start_server(default_config: Option<Config>) -> Arc<PgPool> {
+    async fn start_server(default_config: Option<Config>, postgres_port: u16) -> Arc<PgPool> {
         let (tx, mut rx) = tokio::sync::mpsc::channel(1);
 
         tokio::spawn(async move {
@@ -180,12 +180,9 @@ mod tests {
             let cache = Mutex::new(cache);
             let config = default_config.unwrap_or(test_config());
             let url = config.url.clone();
-            let docker = clients::Cli::default();
-            let image = images::postgres::Postgres::default().with_version(9);
-            let container = docker.run(image);
-            let cache = Arc::new(cache);
-            let pool = setup_postgres(&container).await;
+            let pool = setup_postgres(postgres_port).await;
             let pool = Arc::new(pool);
+            let cache = Arc::new(cache);
             let storage = FileSystem::new(config.storage_base_path.as_str());
             let config = Arc::new(config);
             let mailbox_service = MailboxGrpc {
@@ -291,7 +288,12 @@ mod tests {
     #[tokio::test]
     #[serial(grpc_server)]
     async fn get_and_ack_flow() {
-        let db = start_server(None).await;
+        let docker = clients::Cli::default();
+        let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
+        let container = docker.run(image);
+        let postgres_port = container.get_host_port_ipv4(5432);
+
+        let db = start_server(None, postgres_port).await;
         let mut client = get_client().await;
 
         // post fragment request
@@ -381,7 +383,12 @@ mod tests {
     #[tokio::test]
     #[serial(grpc_server)]
     async fn duplicate_objects_does_not_dup_mail() {
-        start_server(None).await;
+        let docker = clients::Cli::default();
+        let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
+        let container = docker.run(image);
+        let postgres_port = container.get_host_port_ipv4(5432);
+
+        start_server(None, postgres_port).await;
         let mut client = get_client().await;
 
         let (audience1, signature1) = party_1();
@@ -417,7 +424,12 @@ mod tests {
     #[tokio::test]
     #[serial(grpc_server)]
     async fn get_and_ack_many() {
-        start_server(None).await;
+        let docker = clients::Cli::default();
+        let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
+        let container = docker.run(image);
+        let postgres_port = container.get_host_port_ipv4(5432);
+
+        start_server(None, postgres_port).await;
         let mut client = get_client().await;
 
         let (audience1, signature1) = party_1();
@@ -427,7 +439,7 @@ mod tests {
         let chunk_size = 500; // full payload in one packet
 
         for _ in 0..10 {
-            let payload: bytes::Bytes = uuid::Uuid::new_v4().to_hyphenated().to_string().into_bytes().into();
+            let payload: bytes::Bytes = uuid::Uuid::new_v4().as_hyphenated().to_string().into_bytes().into();
             let response = put_helper(dime.clone(), payload, chunk_size, HashMap::default(), Vec::default()).await;
 
             match response {
@@ -439,7 +451,7 @@ mod tests {
         dime.metadata.insert(MAILBOX_KEY.to_owned(), MAILBOX_ERROR_RESPONSE.to_owned());
 
         for _ in 0..10 {
-            let payload: bytes::Bytes = uuid::Uuid::new_v4().to_hyphenated().to_string().into_bytes().into();
+            let payload: bytes::Bytes = uuid::Uuid::new_v4().as_hyphenated().to_string().into_bytes().into();
             let response = put_helper(dime.clone(), payload.clone(), chunk_size, HashMap::default(), Vec::default()).await;
 
             match response {
@@ -455,9 +467,14 @@ mod tests {
     #[tokio::test]
     #[serial(grpc_server)]
     async fn auth_get_and_ack_success() {
+        let docker = clients::Cli::default();
+        let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
+        let container = docker.run(image);
+        let postgres_port = container.get_host_port_ipv4(5432);
+
         let mut config = test_config();
         config.user_auth_enabled = true;
-        start_server(Some(config)).await;
+        start_server(Some(config), postgres_port).await;
         let mut client = get_client().await;
 
         let (audience1, signature1) = party_1();
@@ -466,7 +483,7 @@ mod tests {
         dime.metadata.insert(MAILBOX_KEY.to_owned(), MAILBOX_FRAGMENT_REQUEST.to_owned());
         let chunk_size = 500; // full payload in one packet
 
-        let payload: bytes::Bytes = uuid::Uuid::new_v4().to_hyphenated().to_string().into_bytes().into();
+        let payload: bytes::Bytes = uuid::Uuid::new_v4().as_hyphenated().to_string().into_bytes().into();
         let response = put_helper(dime.clone(), payload, chunk_size, HashMap::default(), vec![("x-test-header", "test_value_1")]).await;
 
         match response {
@@ -481,9 +498,14 @@ mod tests {
     #[tokio::test]
     #[serial(grpc_server)]
     async fn auth_get_invalid_key() {
+        let docker = clients::Cli::default();
+        let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
+        let container = docker.run(image);
+        let postgres_port = container.get_host_port_ipv4(5432);
+
         let mut config = test_config();
         config.user_auth_enabled = true;
-        start_server(Some(config)).await;
+        start_server(Some(config), postgres_port).await;
         let mut client = get_client().await;
 
         let (audience1, signature1) = party_1();
@@ -492,7 +514,7 @@ mod tests {
         dime.metadata.insert(MAILBOX_KEY.to_owned(), MAILBOX_FRAGMENT_REQUEST.to_owned());
         let chunk_size = 500; // full payload in one packet
 
-        let payload: bytes::Bytes = uuid::Uuid::new_v4().to_hyphenated().to_string().into_bytes().into();
+        let payload: bytes::Bytes = uuid::Uuid::new_v4().as_hyphenated().to_string().into_bytes().into();
         let response = put_helper(dime.clone(), payload, chunk_size, HashMap::default(), vec![("x-test-header", "test_value_1")]).await;
 
         match response {
@@ -515,9 +537,14 @@ mod tests {
     #[tokio::test]
     #[serial(grpc_server)]
     async fn auth_ack_invalid_key() {
+        let docker = clients::Cli::default();
+        let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
+        let container = docker.run(image);
+        let postgres_port = container.get_host_port_ipv4(5432);
+
         let mut config = test_config();
         config.user_auth_enabled = true;
-        start_server(Some(config)).await;
+        start_server(Some(config), postgres_port).await;
         let mut client = get_client().await;
 
         let (audience1, signature1) = party_1();
@@ -526,7 +553,7 @@ mod tests {
         dime.metadata.insert(MAILBOX_KEY.to_owned(), MAILBOX_FRAGMENT_REQUEST.to_owned());
         let chunk_size = 500; // full payload in one packet
 
-        let payload: bytes::Bytes = uuid::Uuid::new_v4().to_hyphenated().to_string().into_bytes().into();
+        let payload: bytes::Bytes = uuid::Uuid::new_v4().as_hyphenated().to_string().into_bytes().into();
         let response = put_helper(dime.clone(), payload, chunk_size, HashMap::default(), vec![("x-test-header", "test_value_1")]).await;
 
         match response {
@@ -549,9 +576,14 @@ mod tests {
     #[tokio::test]
     #[serial(grpc_server)]
     async fn auth_get_no_key() {
+        let docker = clients::Cli::default();
+        let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
+        let container = docker.run(image);
+        let postgres_port = container.get_host_port_ipv4(5432);
+
         let mut config = test_config();
         config.user_auth_enabled = true;
-        start_server(Some(config)).await;
+        start_server(Some(config), postgres_port).await;
         let mut client = get_client().await;
 
         let (audience1, signature1) = party_1();
@@ -560,7 +592,7 @@ mod tests {
         dime.metadata.insert(MAILBOX_KEY.to_owned(), MAILBOX_FRAGMENT_REQUEST.to_owned());
         let chunk_size = 500; // full payload in one packet
 
-        let payload: bytes::Bytes = uuid::Uuid::new_v4().to_hyphenated().to_string().into_bytes().into();
+        let payload: bytes::Bytes = uuid::Uuid::new_v4().as_hyphenated().to_string().into_bytes().into();
         let response = put_helper(dime.clone(), payload, chunk_size, HashMap::default(), vec![("x-test-header", "test_value_1")]).await;
 
         match response {
@@ -581,9 +613,14 @@ mod tests {
     #[tokio::test]
     #[serial(grpc_server)]
     async fn auth_ack_no_key() {
+        let docker = clients::Cli::default();
+        let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
+        let container = docker.run(image);
+        let postgres_port = container.get_host_port_ipv4(5432);
+
         let mut config = test_config();
         config.user_auth_enabled = true;
-        start_server(Some(config)).await;
+        start_server(Some(config), postgres_port).await;
         let mut client = get_client().await;
 
         let (audience1, signature1) = party_1();
@@ -592,7 +629,7 @@ mod tests {
         dime.metadata.insert(MAILBOX_KEY.to_owned(), MAILBOX_FRAGMENT_REQUEST.to_owned());
         let chunk_size = 500; // full payload in one packet
 
-        let payload: bytes::Bytes = uuid::Uuid::new_v4().to_hyphenated().to_string().into_bytes().into();
+        let payload: bytes::Bytes = uuid::Uuid::new_v4().as_hyphenated().to_string().into_bytes().into();
         let response = put_helper(dime.clone(), payload, chunk_size, HashMap::default(), vec![("x-test-header", "test_value_1")]).await;
 
         match response {

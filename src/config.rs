@@ -1,6 +1,8 @@
 use std::env;
 use std::net::{IpAddr, SocketAddr};
 
+use percent_encoding::NON_ALPHANUMERIC;
+
 #[derive(Debug)]
 pub struct DatadogConfig {
     pub agent_host: IpAddr,
@@ -153,10 +155,12 @@ impl Config {
     }
 
     pub fn db_connection_string(&self) -> String {
+        let password = percent_encoding::percent_encode(self.db_password.as_bytes(), NON_ALPHANUMERIC);
+
         format!(
             "postgres://{}:{}@{}/{}",
             self.db_user,
-            self.db_password,
+            password,
             self.db_host,
             self.db_database,
         )

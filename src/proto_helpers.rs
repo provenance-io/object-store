@@ -8,7 +8,7 @@ use crate::pb::{Chunk, ChunkBidi, ChunkEnd, StreamHeader};
 
 pub fn create_multi_stream_header(uuid: uuid::Uuid, stream_count: i32, is_replication: bool) -> ChunkBidi {
     let mut metadata = HashMap::new();
-    metadata.insert(consts::CREATED_BY_HEADER.to_owned(), uuid.to_hyphenated().to_string());
+    metadata.insert(consts::CREATED_BY_HEADER.to_owned(), uuid.as_hyphenated().to_string());
     if is_replication {
         metadata.insert(consts::SOURCE_KEY.to_owned(), consts::SOURCE_REPLICATION.to_owned());
     }
