@@ -54,3 +54,7 @@ With such a configuration all requests for this public key will have to contain 
 This service was designed to support many underlying storage backends. The currently supported backends are `postgres`, `google cloud storage`, and the local `file system`.
 In practice, a sizeable number of objects this system stores are very small. For this reason the `postgres` backend, along with a byte threshold, is provided
 so that items smaller than the threshold specified can have thier bytes stored directly in the database.
+
+## Local Development
+
+The minimum required environment variables can be sourced from `./bin/env`. A postgres database connection is also required. The simplest way to get up and running is to leverage the container [here](https://github.com/provenance-io/p8e-scope-sdk/tree/main/dev-tools/compose) with `docker-compose up postgres -d`.
