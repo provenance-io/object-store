@@ -54,3 +54,12 @@ With such a configuration all requests for this public key will have to contain 
 This service was designed to support many underlying storage backends. The currently supported backends are `postgres`, `google cloud storage`, and the local `file system`.
 In practice, a sizeable number of objects this system stores are very small. For this reason the `postgres` backend, along with a byte threshold, is provided
 so that items smaller than the threshold specified can have thier bytes stored directly in the database.
+
+## Local Development
+
+In order to run locally a postgres connection and data directory is required. A base set of environment variables can be edited and sourced from `./bin/env`.
+
+## Running Locally
+
+The most common use case for `object-store` is to run it alongside `p8e` in order to write to the [Provenance Blockchain](https://provenance.io). The simplest way to get this
+up and running is [here](https://github.com/provenance-io/p8e-scope-sdk/tree/main/dev-tools/compose).
