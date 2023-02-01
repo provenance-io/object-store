@@ -57,4 +57,9 @@ so that items smaller than the threshold specified can have thier bytes stored d
 
 ## Local Development
 
-The minimum required environment variables can be sourced from `./bin/env`. A postgres database connection is also required. The simplest way to get up and running is to leverage the container [here](https://github.com/provenance-io/p8e-scope-sdk/tree/main/dev-tools/compose) with `docker-compose up postgres -d`.
+In order to run locally a postgres connection and data directory is required. A base set of environment variables can be edited and sourced from `./bin/env`.
+
+## Running Locally
+
+The most common use case for `object-store` is to run it alongside `p8e` in order to write to the [Provenance Blockchain](https://provenance.io). The simplest way to get this
+up and running is [here](https://github.com/provenance-io/p8e-scope-sdk/tree/main/dev-tools/compose).
