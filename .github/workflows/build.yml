@@ -19,7 +19,7 @@ jobs:
 
       - name: Setup Rust
         id: setup-rust
-        run: rustup update stable && rustup default stable && rustup component add rustfmt clippy
+        run: rustup show
 
       - name: Build
         id: build
