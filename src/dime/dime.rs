@@ -4,7 +4,10 @@ use crate::pb::Dime as DimeProto;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use prost::Message;
 use serde::{Deserialize, Serialize};
-use std::{collections::{HashMap, HashSet}, convert::TryFrom};
+use std::{
+    collections::{HashMap, HashSet},
+    convert::TryFrom,
+};
 use uuid::Uuid;
 
 const MAGIC_BYTES: u32 = 0x44494D45;
@@ -29,7 +32,6 @@ pub struct Dime {
 }
 
 impl Dime {
-
     pub fn unique_audience_base64(&self) -> Result<Vec<String>> {
         let mut res: HashSet<String> = HashSet::new();
 
@@ -37,7 +39,7 @@ impl Dime {
             res.insert(
                 std::str::from_utf8(&party.public_key)
                     .map_err(|e| DimeError::InternalInvalidState(format!("{:?}", e)))?
-                    .to_owned()
+                    .to_owned(),
             );
         }
 
@@ -51,9 +53,10 @@ impl Dime {
                 .to_owned();
             Ok(key)
         } else {
-            Err(DimeError::InternalInvalidState(
-                format!("dime uuid: {} is missing an owner", &self.proto.uuid.as_ref().map_or("", |v| &v.value))
-            ))
+            Err(DimeError::InternalInvalidState(format!(
+                "dime uuid: {} is missing an owner",
+                &self.proto.uuid.as_ref().map_or("", |v| &v.value)
+            )))
         }
     }
 
@@ -126,46 +129,71 @@ impl TryFrom<Bytes> for Dime {
 
     fn try_from(buffer: Bytes) -> Result<Self> {
         let mut buffer = buffer;
-        let size_err = Err(DimeError::BufferSizeError("Not enough bytes in buffer to parse Dime".to_owned()));
+        let size_err = Err(DimeError::BufferSizeError(
+            "Not enough bytes in buffer to parse Dime".to_owned(),
+        ));
 
-        if buffer.remaining() < 4 { return size_err }
+        if buffer.remaining() < 4 {
+            return size_err;
+        }
         let magic_bytes = buffer.get_u32();
         if magic_bytes != MAGIC_BYTES {
-            return Err(DimeError::InvalidMagicBytesError(format!("Invalid magic bytes of {}", magic_bytes)));
+            return Err(DimeError::InvalidMagicBytesError(format!(
+                "Invalid magic bytes of {}",
+                magic_bytes
+            )));
         }
 
-        if buffer.remaining() < 2 { return size_err }
+        if buffer.remaining() < 2 {
+            return size_err;
+        }
         let version = buffer.get_u16();
         if version != VERSION {
             return Err(DimeError::InvalidVersionError(version));
         }
 
-        if buffer.remaining() < 4 { return size_err }
+        if buffer.remaining() < 4 {
+            return size_err;
+        }
         let uuid_len = buffer.get_u32();
         if uuid_len != 16_u32 {
             return Err(DimeError::InvalidUuidSizeError(uuid_len));
         }
-        if buffer.remaining() < uuid_len as usize { return size_err }
+        if buffer.remaining() < uuid_len as usize {
+            return size_err;
+        }
         let uuid: Uuid = Uuid::from_u128(buffer.get_u128());
 
-        if buffer.remaining() < 4 { return size_err }
+        if buffer.remaining() < 4 {
+            return size_err;
+        }
         let metadata_len = buffer.get_u32();
-        if buffer.remaining() < metadata_len as usize { return size_err }
+        if buffer.remaining() < metadata_len as usize {
+            return size_err;
+        }
         let mut metadata = vec![0; metadata_len as usize];
         buffer.copy_to_slice(metadata.as_mut_slice());
         let metadata = serde_json::from_slice(metadata.as_slice())
             .map_err(|err| DimeError::SerdeDecodeError(format!("{:?}", err)))?;
 
-        if buffer.remaining() < 4 { return size_err }
+        if buffer.remaining() < 4 {
+            return size_err;
+        }
         let uri_len = buffer.get_u32();
-        if buffer.remaining() < uri_len as usize { return size_err }
+        if buffer.remaining() < uri_len as usize {
+            return size_err;
+        }
         let mut uri = vec![0; uri_len as usize];
         buffer.copy_to_slice(uri.as_mut_slice());
         let uri = String::from_utf8(uri)?;
 
-        if buffer.remaining() < 4 { return size_err }
+        if buffer.remaining() < 4 {
+            return size_err;
+        }
         let signature_len = buffer.get_u32();
-        if buffer.remaining() < signature_len as usize { return size_err }
+        if buffer.remaining() < signature_len as usize {
+            return size_err;
+        }
         let signatures = if signature_len > 0 {
             let mut signature = vec![0; signature_len as usize];
             buffer.copy_to_slice(signature.as_mut_slice());
@@ -175,24 +203,34 @@ impl TryFrom<Bytes> for Dime {
             Vec::new()
         };
 
-        if buffer.remaining() < 4 { return size_err }
+        if buffer.remaining() < 4 {
+            return size_err;
+        }
         let proto_len = buffer.get_u32();
-        if buffer.remaining() < proto_len as usize { return size_err }
+        if buffer.remaining() < proto_len as usize {
+            return size_err;
+        }
         let mut proto_buffer = vec![0; proto_len as usize];
         buffer.copy_to_slice(proto_buffer.as_mut_slice());
         let proto = DimeProto::decode(proto_buffer.as_slice())?;
 
-        Ok(Self { uuid, uri, proto, metadata, signatures })
+        Ok(Self {
+            uuid,
+            uri,
+            proto,
+            metadata,
+            signatures,
+        })
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::dime::*;
     use crate::dime::dime::*;
+    use crate::dime::*;
     use crate::pb;
 
-    use bytes::{BytesMut, BufMut};
+    use bytes::{BufMut, BytesMut};
     use std::convert::TryInto;
 
     #[test]
@@ -201,7 +239,12 @@ mod tests {
         let buffer = Bytes::copy_from_slice(buffer.as_ref());
         let actual: Result<Dime> = buffer.try_into();
 
-        assert_eq!(actual, Err(DimeError::BufferSizeError("Not enough bytes in buffer to parse Dime".to_owned())));
+        assert_eq!(
+            actual,
+            Err(DimeError::BufferSizeError(
+                "Not enough bytes in buffer to parse Dime".to_owned()
+            ))
+        );
     }
 
     #[test]
@@ -210,7 +253,13 @@ mod tests {
         let buffer = Bytes::copy_from_slice(buffer.as_ref());
         let actual: Result<Dime> = buffer.try_into();
 
-        assert_eq!(actual, Err(DimeError::InvalidMagicBytesError(format!("Invalid magic bytes of {}", 257))));
+        assert_eq!(
+            actual,
+            Err(DimeError::InvalidMagicBytesError(format!(
+                "Invalid magic bytes of {}",
+                257
+            )))
+        );
     }
 
     #[test]
@@ -265,11 +314,16 @@ mod tests {
             encrypted_dek: vec![10, 11, 12],
         };
         let proto = pb::Dime {
-            uuid: Some(pb::Uuid { value: "a uuid?".to_owned() }),
+            uuid: Some(pb::Uuid {
+                value: "a uuid?".to_owned(),
+            }),
             owner: Some(audience.clone()),
             metadata: std::collections::HashMap::default(),
             audience: vec![audience],
-            payload: vec![pb::Payload { id: 1, cipher_text: vec![1, 2, 3, 4, 5, 6, 7, 8] }],
+            payload: vec![pb::Payload {
+                id: 1,
+                cipher_text: vec![1, 2, 3, 4, 5, 6, 7, 8],
+            }],
             audit_fields: None,
         };
         let proto_len = proto.encoded_len();
@@ -307,7 +361,7 @@ mod tests {
         buffer.put_slice(json.as_slice());
         buffer.put_u32(10);
         buffer.put_slice(b"valid uri!");
-        let mut signatures= Vec::new();
+        let mut signatures = Vec::new();
         signatures.push(Signature {
             signature: "signature".to_owned(),
             public_key: "public_key".to_owned(),
@@ -329,11 +383,16 @@ mod tests {
             encrypted_dek: vec![10, 11, 12],
         };
         let proto = pb::Dime {
-            uuid: Some(pb::Uuid { value: "a uuid?".to_owned() }),
+            uuid: Some(pb::Uuid {
+                value: "a uuid?".to_owned(),
+            }),
             owner: Some(audience.clone()),
             metadata: std::collections::HashMap::default(),
             audience: vec![audience],
-            payload: vec![pb::Payload { id: 1, cipher_text: vec![1, 2, 3, 4, 5, 6, 7, 8] }],
+            payload: vec![pb::Payload {
+                id: 1,
+                cipher_text: vec![1, 2, 3, 4, 5, 6, 7, 8],
+            }],
             audit_fields: None,
         };
         let proto_len = proto.encoded_len();
@@ -384,11 +443,16 @@ mod tests {
             encrypted_dek: vec![10, 11, 12],
         };
         let proto = pb::Dime {
-            uuid: Some(pb::Uuid { value: "a uuid?".to_owned() }),
+            uuid: Some(pb::Uuid {
+                value: "a uuid?".to_owned(),
+            }),
             owner: Some(audience.clone()),
             metadata: HashMap::default(),
             audience: vec![audience],
-            payload: vec![pb::Payload { id: 1, cipher_text: vec![1, 2, 3, 4, 5, 6, 7, 8] }],
+            payload: vec![pb::Payload {
+                id: 1,
+                cipher_text: vec![1, 2, 3, 4, 5, 6, 7, 8],
+            }],
             audit_fields: None,
         };
         let proto_len = proto.encoded_len();

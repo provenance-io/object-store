@@ -1,11 +1,11 @@
-use tonic::{Status, metadata::MetadataMap};
+use tonic::{metadata::MetadataMap, Status};
 
 pub trait Authorization {
     fn authorize(&self, metadata: &MetadataMap) -> Result<(), Status>;
 }
 
 #[derive(Default)]
-pub struct NoAuthorization { }
+pub struct NoAuthorization {}
 
 impl Authorization for NoAuthorization {
     fn authorize(&self, _: &MetadataMap) -> Result<(), Status> {
@@ -22,7 +22,7 @@ impl Authorization for HeaderAuth<'_> {
     fn authorize(&self, metadata: &MetadataMap) -> Result<(), Status> {
         match metadata.get(self.header) {
             Some(value) if value == self.value => Ok(()),
-            _ => Err(Status::permission_denied("not authorized"))
+            _ => Err(Status::permission_denied("not authorized")),
         }
     }
 }

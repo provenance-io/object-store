@@ -16,7 +16,6 @@ pub struct Cache {
 }
 
 impl Cache {
-
     pub fn add_public_key(&mut self, key: PublicKey) -> Option<PublicKey> {
         self.public_keys.insert(key.public_key.clone(), key)
     }
@@ -30,7 +29,8 @@ impl Cache {
     }
 
     pub fn get_remote_public_keys(&self) -> Vec<(&String, &PublicKey)> {
-        self.public_keys.iter()
+        self.public_keys
+            .iter()
             .filter(|(_, v)| !v.url.is_empty())
             .collect()
     }

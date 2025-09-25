@@ -1,8 +1,11 @@
 use crate::config::Config;
 use crate::datastore::{AuthType, KeyType, Object, PublicKey};
-use crate::pb::{public_key::Key, HeaderAuth, PublicKey as PublicKeyProto, ObjectMetadata, PublicKeyResponse, ObjectResponse, Uuid};
 use crate::pb::public_key_response::Impl::HeaderAuth as HeaderAuthEnumResponse;
-use crate::types::{Result, OsError};
+use crate::pb::{
+    public_key::Key, HeaderAuth, ObjectMetadata, ObjectResponse, PublicKey as PublicKeyProto,
+    PublicKeyResponse, Uuid,
+};
+use crate::types::{OsError, Result};
 
 use prost::Message;
 
@@ -20,11 +23,14 @@ pub trait ObjectApiResponse {
 }
 
 impl ObjectApiResponse for Object {
-
     fn to_response(&self, config: &Config) -> Result<ObjectResponse> {
         Ok(ObjectResponse {
-            uuid: Some(Uuid { value: self.uuid.as_hyphenated().to_string() }),
-            dime_uuid: Some(Uuid { value: self.dime_uuid.as_hyphenated().to_string() }),
+            uuid: Some(Uuid {
+                value: self.uuid.as_hyphenated().to_string(),
+            }),
+            dime_uuid: Some(Uuid {
+                value: self.dime_uuid.as_hyphenated().to_string(),
+            }),
             hash: base64::decode(&self.hash)?,
             uri: format!("object://{}/{}", &config.uri_host, &self.hash),
             bucket: config.storage_base_path.clone(),
@@ -44,10 +50,9 @@ pub trait PublicKeyApiResponse {
 }
 
 impl PublicKeyApiResponse for PublicKey {
-
     fn to_response(self) -> Result<PublicKeyResponse> {
-        let key_bytes: Vec<u8> = base64::decode(&self.public_key)
-            .map_err(|err| sqlx::Error::Decode(Box::new(err)))?;
+        let key_bytes: Vec<u8> =
+            base64::decode(&self.public_key).map_err(|err| sqlx::Error::Decode(Box::new(err)))?;
         let public_key = match self.public_key_type {
             KeyType::Secp256k1 => Key::Secp256k1(key_bytes),
         };
@@ -62,24 +67,34 @@ impl PublicKeyApiResponse for PublicKey {
         };
         let r#impl = match self.auth_type {
             Some(AuthType::Header) => {
-                let auth_data = self.auth_data
-                    .ok_or(sqlx::Error::Decode(Box::new(OsError::InvalidApplicationState(String::from("auth_type was set but no auth_data")))))?;
-                let (header, value) = auth_data
-                    .split_once(":")
-                    .ok_or(sqlx::Error::Decode(Box::new(OsError::InvalidApplicationState(String::from("auth_data invalid format")))))?;
+                let auth_data = self.auth_data.ok_or(sqlx::Error::Decode(Box::new(
+                    OsError::InvalidApplicationState(String::from(
+                        "auth_type was set but no auth_data",
+                    )),
+                )))?;
+                let (header, value) =
+                    auth_data
+                        .split_once(":")
+                        .ok_or(sqlx::Error::Decode(Box::new(
+                            OsError::InvalidApplicationState(String::from(
+                                "auth_data invalid format",
+                            )),
+                        )))?;
 
                 Some(HeaderAuthEnumResponse(HeaderAuth {
                     header: header.to_string(),
                     value: value.to_string(),
                 }))
-            },
+            }
             None => None,
         };
         let response = PublicKeyResponse {
             uuid: Some(Uuid {
-                value: self.uuid.as_hyphenated().to_string()
+                value: self.uuid.as_hyphenated().to_string(),
             }),
-            public_key: Some(PublicKeyProto { key: Some(public_key) }),
+            public_key: Some(PublicKeyProto {
+                key: Some(public_key),
+            }),
             url: self.url,
             r#impl,
             metadata,
