@@ -30,6 +30,10 @@ jobs:
         id: test
         run: cargo test --verbose
 
-      - name: Lint
+      - name: Check formatting
+        id: check-formatting
+        run: cargo fmt --check
+
+      - name: Run linter
         id: lint
-        run: cargo fmt --workspace -- --check
+        run: cargo clippy
