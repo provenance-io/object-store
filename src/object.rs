@@ -1,22 +1,31 @@
-use crate::{cache::{Cache, PublicKeyState}, config::Config, dime::{Dime, Signature, format_dime_bytes}, storage::{Storage, StoragePath}};
 use crate::consts;
 use crate::datastore;
 use crate::domain::{DimeProperties, ObjectApiResponse};
-use crate::types::{GrpcResult, OsError};
+use crate::pb::chunk::Impl::{Data, End, Value};
 use crate::pb::chunk_bidi::Impl::{Chunk as ChunkEnum, MultiStreamHeader as MultiStreamHeaderEnum};
-use crate::pb::MultiStreamHeader;
-use crate::pb::chunk::Impl::{End, Data, Value};
-use crate::pb::{Chunk, ChunkBidi, ChunkEnd, ObjectResponse, HashRequest, StreamHeader};
 use crate::pb::object_service_server::ObjectService;
+use crate::pb::MultiStreamHeader;
+use crate::pb::{Chunk, ChunkBidi, ChunkEnd, HashRequest, ObjectResponse, StreamHeader};
+use crate::types::{GrpcResult, OsError};
+use crate::{
+    cache::{Cache, PublicKeyState},
+    config::Config,
+    dime::{format_dime_bytes, Dime, Signature},
+    storage::{Storage, StoragePath},
+};
 
 use bytes::{BufMut, Bytes, BytesMut};
 use futures_util::StreamExt;
 use linked_hash_map::LinkedHashMap;
 use minitrace_macro::trace;
 use prost::Message;
-use tokio::sync::mpsc;
-use std::{collections::HashMap, convert::TryInto, sync::{Arc, Mutex}};
 use sqlx::postgres::PgPool;
+use std::{
+    collections::HashMap,
+    convert::TryInto,
+    sync::{Arc, Mutex},
+};
+use tokio::sync::mpsc;
 use tonic::{Request, Response, Status, Streaming};
 
 // TODO add flag for whether object-replication can be ignored for a PUT
@@ -31,9 +40,18 @@ pub struct ObjectGrpc {
 }
 
 impl ObjectGrpc {
-    pub fn new(cache: Arc<Mutex<Cache>>, config: Arc<Config>, db_pool: Arc<PgPool>, storage: Arc<Box<dyn Storage>>) -> Self
-    {
-        Self { cache, config, db_pool, storage }
+    pub fn new(
+        cache: Arc<Mutex<Cache>>,
+        config: Arc<Config>,
+        db_pool: Arc<PgPool>,
+        storage: Arc<Box<dyn Storage>>,
+    ) -> Self {
+        Self {
+            cache,
+            config,
+            db_pool,
+            storage,
+        }
     }
 }
 
@@ -57,48 +75,72 @@ impl ObjectService for ObjectGrpc {
                     let mut buffer = BytesMut::with_capacity(chunk.encoded_len());
                     chunk.clone().encode(&mut buffer).unwrap();
                     chunk_buffer.push(chunk);
-                },
+                }
                 Err(e) => {
                     let message = format!("Error received instead of ChunkBidi - {:?}", e);
 
-                    return Err(Status::invalid_argument(message))
-                },
+                    return Err(Status::invalid_argument(message));
+                }
             }
         }
 
         // check validity of stream header
         if chunk_buffer.len() < 1 {
-            return Err(Status::invalid_argument("Multipart upload is empty"))
+            return Err(Status::invalid_argument("Multipart upload is empty"));
         }
         match chunk_buffer[0].r#impl {
             Some(MultiStreamHeaderEnum(ref header)) => {
                 if header.stream_count != 1 {
-                    return Err(Status::invalid_argument("Multipart upload must contain a single stream"))
+                    return Err(Status::invalid_argument(
+                        "Multipart upload must contain a single stream",
+                    ));
                 } else {
                     header
                 }
-            },
-            _ => return Err(Status::invalid_argument("Multipart upload must start with a multi stream header")),
+            }
+            _ => {
+                return Err(Status::invalid_argument(
+                    "Multipart upload must start with a multi stream header",
+                ))
+            }
         };
 
         // check validity of chunk header
         if chunk_buffer.len() < 2 {
-            return Err(Status::invalid_argument("Multi stream has a header but no chunks"))
+            return Err(Status::invalid_argument(
+                "Multi stream has a header but no chunks",
+            ));
         }
         let (header_chunk_header, header_chunk_data) = match chunk_buffer[1].r#impl {
             Some(ChunkEnum(ref chunk)) => {
                 let chunk_header = match chunk.header {
                     Some(ref header) => header,
-                    None => return Err(Status::invalid_argument("Multi stream must start with a header")),
+                    None => {
+                        return Err(Status::invalid_argument(
+                            "Multi stream must start with a header",
+                        ))
+                    }
                 };
 
                 match chunk.r#impl {
                     Some(Data(ref data)) => (chunk_header, data),
-                    Some(Value(_)) => return Err(Status::invalid_argument("Chunk header must have data and not a value")),
-                    Some(End(_)) => return Err(Status::invalid_argument("Chunk header must have data and not an end of chunk")),
-                    None => return Err(Status::invalid_argument("Chunk header must have data and not an empty impl")),
+                    Some(Value(_)) => {
+                        return Err(Status::invalid_argument(
+                            "Chunk header must have data and not a value",
+                        ))
+                    }
+                    Some(End(_)) => {
+                        return Err(Status::invalid_argument(
+                            "Chunk header must have data and not an end of chunk",
+                        ))
+                    }
+                    None => {
+                        return Err(Status::invalid_argument(
+                            "Chunk header must have data and not an empty impl",
+                        ))
+                    }
                 }
-            },
+            }
             _ => return Err(Status::invalid_argument("Chunk has no impl value")),
         };
 
@@ -106,48 +148,66 @@ impl ObjectService for ObjectGrpc {
 
         for chunk in &chunk_buffer[2..] {
             match chunk.r#impl {
-                Some(ChunkEnum(ref chunk)) => {
-                    match chunk.r#impl {
-                        Some(Data(ref data)) => {
-                            if end {
-                                return Err(Status::invalid_argument("Received data chunk after an end of data chunk"))
-                            } else {
-                                byte_buffer.put(data.as_ref())
-                            }
-                        },
-                        Some(Value(ref value)) => {
-                            let key = chunk.header
-                                .as_ref()
-                                .ok_or(Status::invalid_argument("Must have stream header when impl is value"))?
-                                .name
-                                .clone();
-                            properties.insert(key, value.to_vec());
-                        },
-                        Some(End(_)) => end = true,
-                        None => return Err(Status::invalid_argument("Chunk header must have data and not an empty impl")),
+                Some(ChunkEnum(ref chunk)) => match chunk.r#impl {
+                    Some(Data(ref data)) => {
+                        if end {
+                            return Err(Status::invalid_argument(
+                                "Received data chunk after an end of data chunk",
+                            ));
+                        } else {
+                            byte_buffer.put(data.as_ref())
+                        }
+                    }
+                    Some(Value(ref value)) => {
+                        let key = chunk
+                            .header
+                            .as_ref()
+                            .ok_or(Status::invalid_argument(
+                                "Must have stream header when impl is value",
+                            ))?
+                            .name
+                            .clone();
+                        properties.insert(key, value.to_vec());
+                    }
+                    Some(End(_)) => end = true,
+                    None => {
+                        return Err(Status::invalid_argument(
+                            "Chunk header must have data and not an empty impl",
+                        ))
                     }
                 },
                 _ => return Err(Status::invalid_argument("Non chunk detected in stream")),
             }
         }
 
-        let hash = properties.get(consts::HASH_FIELD_NAME)
+        let hash = properties
+            .get(consts::HASH_FIELD_NAME)
             .map(base64::encode)
             .ok_or(Status::invalid_argument("Properties must contain \"HASH\""))?;
-        let signature = properties.get(consts::SIGNATURE_FIELD_NAME)
+        let signature = properties
+            .get(consts::SIGNATURE_FIELD_NAME)
             .map(base64::encode)
-            .ok_or(Status::invalid_argument("Properties must contain \"SIGNATURE_FIELD_NAME\""))?;
-        let public_key = properties.get(consts::SIGNATURE_PUBLIC_KEY_FIELD_NAME)
+            .ok_or(Status::invalid_argument(
+                "Properties must contain \"SIGNATURE_FIELD_NAME\"",
+            ))?;
+        let public_key = properties
+            .get(consts::SIGNATURE_PUBLIC_KEY_FIELD_NAME)
             .map(base64::encode)
-            .ok_or(Status::invalid_argument("Properties must contain \"SIGNATURE_PUBLIC_KEY_FIELD_NAME\""))?;
+            .ok_or(Status::invalid_argument(
+                "Properties must contain \"SIGNATURE_PUBLIC_KEY_FIELD_NAME\"",
+            ))?;
 
-        let owner_signature = Signature { signature, public_key };
+        let owner_signature = Signature {
+            signature,
+            public_key,
+        };
         let mut byte_buffer: Bytes = byte_buffer.into();
-        let byte_buffer = format_dime_bytes(&mut byte_buffer, owner_signature)
-            .map_err(Into::<OsError>::into)?;
+        let byte_buffer =
+            format_dime_bytes(&mut byte_buffer, owner_signature).map_err(Into::<OsError>::into)?;
         // Bytes clones are cheap
         let raw_dime = byte_buffer.clone();
-        let dime: Dime = byte_buffer.try_into()
+        let dime: Dime = byte_buffer
+            .try_into()
             .map_err(|err| Into::<OsError>::into(err))?;
         let dime_properties = DimeProperties {
             hash,
@@ -157,7 +217,8 @@ impl ObjectService for ObjectGrpc {
         let mut replication_key_states = Vec::new();
 
         if self.config.user_auth_enabled {
-            let owner_public_key = dime.owner_public_key_base64()
+            let owner_public_key = dime
+                .owner_public_key_base64()
                 .map_err(|_| Status::invalid_argument("Invalid Dime proto - owner"))?;
             let cache = self.cache.lock().unwrap();
 
@@ -168,14 +229,21 @@ impl ObjectService for ObjectGrpc {
                     } else {
                         Err(Status::internal("this should not happen - key was resolved to Local state and then could not be fetched"))
                     }
-                },
-                PublicKeyState::Remote => Err(Status::permission_denied(format!("remote public key {} - use the replicate route", &owner_public_key))),
-                PublicKeyState::Unknown => Err(Status::permission_denied(format!("unknown public key {}", &owner_public_key))),
+                }
+                PublicKeyState::Remote => Err(Status::permission_denied(format!(
+                    "remote public key {} - use the replicate route",
+                    &owner_public_key
+                ))),
+                PublicKeyState::Unknown => Err(Status::permission_denied(format!(
+                    "unknown public key {}",
+                    &owner_public_key
+                ))),
             }?;
         }
 
         if self.config.replication_enabled {
-            let audience = dime.unique_audience_without_owner_base64()
+            let audience = dime
+                .unique_audience_without_owner_base64()
                 .map_err(|_| Status::invalid_argument("Invalid Dime proto - audience list"))?;
             let cache = self.cache.lock().unwrap();
 
@@ -186,23 +254,41 @@ impl ObjectService for ObjectGrpc {
 
         // mail items should be under any reasonable threshold set, but explicitly check for
         // mail and always used database storage
-        let response = if !dime.metadata.contains_key(consts::MAILBOX_KEY) &&
-            dime_properties.dime_length > self.config.storage_threshold.into()
+        let response = if !dime.metadata.contains_key(consts::MAILBOX_KEY)
+            && dime_properties.dime_length > self.config.storage_threshold.into()
         {
-            let response = datastore::put_object(&self.db_pool, &dime, &dime_properties, &properties, replication_key_states, None, self.config.replication_enabled)
-                .await?;
+            let response = datastore::put_object(
+                &self.db_pool,
+                &dime,
+                &dime_properties,
+                &properties,
+                replication_key_states,
+                None,
+                self.config.replication_enabled,
+            )
+            .await?;
             let storage_path = StoragePath {
                 dir: response.directory.clone(),
                 file: response.name.clone(),
             };
 
-            self.storage.store(&storage_path, response.dime_length as u64, &raw_dime).await
+            self.storage
+                .store(&storage_path, response.dime_length as u64, &raw_dime)
+                .await
                 .map_err(Into::<OsError>::into)?;
             response.to_response(&self.config)?
         } else {
-            datastore::put_object(&self.db_pool, &dime, &dime_properties, &properties, replication_key_states, Some(&raw_dime), self.config.replication_enabled)
-                .await?
-                .to_response(&self.config)?
+            datastore::put_object(
+                &self.db_pool,
+                &dime,
+                &dime_properties,
+                &properties,
+                replication_key_states,
+                Some(&raw_dime),
+                self.config.replication_enabled,
+            )
+            .await?
+            .to_response(&self.config)?
         };
 
         Ok(Response::new(response))
@@ -211,10 +297,7 @@ impl ObjectService for ObjectGrpc {
     type GetStream = tokio_stream::wrappers::ReceiverStream<GrpcResult<ChunkBidi>>;
 
     #[trace("object::get")]
-    async fn get(
-        &self,
-        request: Request<HashRequest>,
-    ) -> GrpcResult<Response<Self::GetStream>> {
+    async fn get(&self, request: Request<HashRequest>) -> GrpcResult<Response<Self::GetStream>> {
         let metadata = request.metadata().clone();
         let request = request.into_inner();
         let hash = base64::encode(request.hash);
@@ -230,13 +313,21 @@ impl ObjectService for ObjectGrpc {
                     } else {
                         Err(Status::internal("this should not happen - key was resolved to Local state and then could not be fetched"))
                     }
-                },
-                PublicKeyState::Remote => Err(Status::permission_denied(format!("remote public key {} - fetch on its own instance", &public_key))),
-                PublicKeyState::Unknown => Err(Status::permission_denied(format!("unknown public key {}", &public_key))),
+                }
+                PublicKeyState::Remote => Err(Status::permission_denied(format!(
+                    "remote public key {} - fetch on its own instance",
+                    &public_key
+                ))),
+                PublicKeyState::Unknown => Err(Status::permission_denied(format!(
+                    "unknown public key {}",
+                    &public_key
+                ))),
             }?;
         }
 
-        let object_uuid = datastore::get_public_key_object_uuid(&self.db_pool, hash.as_str(), &public_key).await?;
+        let object_uuid =
+            datastore::get_public_key_object_uuid(&self.db_pool, hash.as_str(), &public_key)
+                .await?;
         let object = datastore::get_object_by_uuid(&self.db_pool, &object_uuid).await?;
         let payload = if let Some(payload) = &object.payload {
             Bytes::copy_from_slice(payload.as_slice())
@@ -245,7 +336,10 @@ impl ObjectService for ObjectGrpc {
                 dir: object.directory.clone(),
                 file: object.name.clone(),
             };
-            let payload = self.storage.fetch(&storage_path, object.dime_length as u64).await
+            let payload = self
+                .storage
+                .fetch(&storage_path, object.dime_length as u64)
+                .await
                 .map_err(Into::<OsError>::into)?;
 
             Bytes::copy_from_slice(payload.as_slice())
@@ -256,9 +350,17 @@ impl ObjectService for ObjectGrpc {
             let _ = &object;
             // send multi stream header
             let mut metadata = HashMap::new();
-            metadata.insert(consts::CREATED_BY_HEADER.to_owned(), uuid::Uuid::nil().as_hyphenated().to_string());
-            let header = MultiStreamHeader { stream_count: 1, metadata };
-            let msg = ChunkBidi { r#impl: Some(MultiStreamHeaderEnum(header)) };
+            metadata.insert(
+                consts::CREATED_BY_HEADER.to_owned(),
+                uuid::Uuid::nil().as_hyphenated().to_string(),
+            );
+            let header = MultiStreamHeader {
+                stream_count: 1,
+                metadata,
+            };
+            let msg = ChunkBidi {
+                r#impl: Some(MultiStreamHeaderEnum(header)),
+            };
             if let Err(_) = tx.send(Ok(msg)).await {
                 log::debug!("stream closed early");
                 return;
@@ -274,8 +376,13 @@ impl ObjectService for ObjectGrpc {
                 } else {
                     None
                 };
-                let data_chunk = Chunk { header, r#impl: Some(Data(chunk.to_vec())) };
-                let msg = ChunkBidi { r#impl: Some(ChunkEnum(data_chunk)) };
+                let data_chunk = Chunk {
+                    header,
+                    r#impl: Some(Data(chunk.to_vec())),
+                };
+                let msg = ChunkBidi {
+                    r#impl: Some(ChunkEnum(data_chunk)),
+                };
                 if let Err(_) = tx.send(Ok(msg)).await {
                     log::debug!("stream closed early");
                     return;
@@ -283,37 +390,46 @@ impl ObjectService for ObjectGrpc {
             }
 
             // send end chunk
-            let end = Chunk { header: None, r#impl: Some(End(ChunkEnd::default())) };
-            let msg = ChunkBidi { r#impl: Some(ChunkEnum(end)) };
+            let end = Chunk {
+                header: None,
+                r#impl: Some(End(ChunkEnd::default())),
+            };
+            let msg = ChunkBidi {
+                r#impl: Some(ChunkEnum(end)),
+            };
             if let Err(_) = tx.send(Ok(msg)).await {
                 log::debug!("stream closed early");
                 return;
             }
         });
 
-        Ok(Response::new(tokio_stream::wrappers::ReceiverStream::new(rx)))
+        Ok(Response::new(tokio_stream::wrappers::ReceiverStream::new(
+            rx,
+        )))
     }
 }
 
 #[cfg(test)]
 pub mod tests {
-    use std::str::FromStr;
     use std::hash::Hasher;
+    use std::str::FromStr;
 
-    use crate::MIGRATOR;
     use crate::config::DatadogConfig;
     use crate::consts::*;
-    use crate::datastore::{AuthType, KeyType, MailboxPublicKey, ObjectPublicKey, PublicKey, replication_object_uuids};
+    use crate::datastore::{
+        replication_object_uuids, AuthType, KeyType, MailboxPublicKey, ObjectPublicKey, PublicKey,
+    };
     use crate::dime::Signature;
-    use crate::pb::{self, Audience, Dime as DimeProto, ObjectResponse};
     use crate::object::*;
+    use crate::pb::{self, Audience, Dime as DimeProto, ObjectResponse};
     use crate::storage::FileSystem;
+    use crate::MIGRATOR;
 
     use chrono::Utc;
     use futures::stream;
     use futures_util::TryStreamExt;
-    use sqlx::FromRow;
     use sqlx::postgres::PgPoolOptions;
+    use sqlx::FromRow;
 
     use serial_test::serial;
     use testcontainers::*;
@@ -351,10 +467,8 @@ pub mod tests {
     }
 
     pub async fn setup_postgres(port: u16) -> PgPool {
-        let connection_string = &format!(
-            "postgres://postgres:postgres@localhost:{}/postgres",
-            port,
-        );
+        let connection_string =
+            &format!("postgres://postgres:postgres@localhost:{}/postgres", port,);
 
         let pool = PgPoolOptions::new()
             .max_connections(5)
@@ -374,7 +488,9 @@ pub mod tests {
             let mut cache = Cache::default();
             cache.add_public_key(PublicKey {
                 uuid: uuid::Uuid::default(),
-                public_key: std::str::from_utf8(&party_1().0.public_key).unwrap().to_owned(),
+                public_key: std::str::from_utf8(&party_1().0.public_key)
+                    .unwrap()
+                    .to_owned(),
                 public_key_type: KeyType::Secp256k1,
                 url: String::from(""),
                 metadata: Vec::default(),
@@ -385,7 +501,9 @@ pub mod tests {
             });
             cache.add_public_key(PublicKey {
                 uuid: uuid::Uuid::default(),
-                public_key: std::str::from_utf8(&party_2().0.public_key).unwrap().to_owned(),
+                public_key: std::str::from_utf8(&party_2().0.public_key)
+                    .unwrap()
+                    .to_owned(),
                 public_key_type: KeyType::Secp256k1,
                 url: String::from("tcp://party2:8080"),
                 metadata: Vec::default(),
@@ -409,7 +527,9 @@ pub mod tests {
             tx.send(object_service.db_pool.clone()).await.unwrap();
 
             tonic::transport::Server::builder()
-                .add_service(pb::object_service_server::ObjectServiceServer::new(object_service))
+                .add_service(pb::object_service_server::ObjectServiceServer::new(
+                    object_service,
+                ))
                 .serve(url)
                 .await
                 .unwrap()
@@ -428,7 +548,10 @@ pub mod tests {
                 ephemeral_pubkey: Vec::default(),
                 encrypted_dek: Vec::default(),
             },
-            Signature { public_key: "1".to_owned(), signature: "a".to_owned() },
+            Signature {
+                public_key: "1".to_owned(),
+                signature: "a".to_owned(),
+            },
         )
     }
 
@@ -442,7 +565,10 @@ pub mod tests {
                 ephemeral_pubkey: Vec::default(),
                 encrypted_dek: Vec::default(),
             },
-            Signature { public_key: "2".to_owned(), signature: "b".to_owned() },
+            Signature {
+                public_key: "2".to_owned(),
+                signature: "b".to_owned(),
+            },
         )
     }
 
@@ -456,7 +582,10 @@ pub mod tests {
                 ephemeral_pubkey: Vec::default(),
                 encrypted_dek: Vec::default(),
             },
-            Signature { public_key: "3".to_owned(), signature: "c".to_owned() },
+            Signature {
+                public_key: "3".to_owned(),
+                signature: "c".to_owned(),
+            },
         )
     }
 
@@ -487,13 +616,27 @@ pub mod tests {
         hash.to_be_bytes().to_vec()
     }
 
-    pub async fn put_helper(dime: Dime, payload: bytes::Bytes, chunk_size: usize, extra_properties: HashMap<String, String>, grpc_metadata: Vec<(&'static str, &'static str)>) -> GrpcResult<Response<ObjectResponse>> {
+    pub async fn put_helper(
+        dime: Dime,
+        payload: bytes::Bytes,
+        chunk_size: usize,
+        extra_properties: HashMap<String, String>,
+        grpc_metadata: Vec<(&'static str, &'static str)>,
+    ) -> GrpcResult<Response<ObjectResponse>> {
         let mut packets = Vec::new();
 
         let mut metadata = HashMap::new();
-        metadata.insert(CREATED_BY_HEADER.to_owned(), uuid::Uuid::nil().as_hyphenated().to_string());
-        let header = MultiStreamHeader { stream_count: 1, metadata };
-        let msg = ChunkBidi { r#impl: Some(MultiStreamHeaderEnum(header)) };
+        metadata.insert(
+            CREATED_BY_HEADER.to_owned(),
+            uuid::Uuid::nil().as_hyphenated().to_string(),
+        );
+        let header = MultiStreamHeader {
+            stream_count: 1,
+            metadata,
+        };
+        let msg = ChunkBidi {
+            r#impl: Some(MultiStreamHeaderEnum(header)),
+        };
 
         packets.push(msg);
 
@@ -526,39 +669,84 @@ pub mod tests {
             } else {
                 None
             };
-            let data_chunk = Chunk { header, r#impl: Some(Data(chunk.to_vec())) };
-            let msg = ChunkBidi { r#impl: Some(ChunkEnum(data_chunk)) };
+            let data_chunk = Chunk {
+                header,
+                r#impl: Some(Data(chunk.to_vec())),
+            };
+            let msg = ChunkBidi {
+                r#impl: Some(ChunkEnum(data_chunk)),
+            };
             packets.push(msg);
         }
 
-        let header = StreamHeader { name: HASH_FIELD_NAME.to_owned(), content_length: 0 };
-        let value_chunk = Chunk { header: Some(header), r#impl: Some(Value(hash(payload))) };
-        let msg = ChunkBidi { r#impl: Some(ChunkEnum(value_chunk)) };
+        let header = StreamHeader {
+            name: HASH_FIELD_NAME.to_owned(),
+            content_length: 0,
+        };
+        let value_chunk = Chunk {
+            header: Some(header),
+            r#impl: Some(Value(hash(payload))),
+        };
+        let msg = ChunkBidi {
+            r#impl: Some(ChunkEnum(value_chunk)),
+        };
         packets.push(msg);
-        let header = StreamHeader { name: SIGNATURE_FIELD_NAME.to_owned(), content_length: 0 };
-        let value_chunk = Chunk { header: Some(header), r#impl: Some(Value("signature".as_bytes().to_owned())) };
-        let msg = ChunkBidi { r#impl: Some(ChunkEnum(value_chunk)) };
+        let header = StreamHeader {
+            name: SIGNATURE_FIELD_NAME.to_owned(),
+            content_length: 0,
+        };
+        let value_chunk = Chunk {
+            header: Some(header),
+            r#impl: Some(Value("signature".as_bytes().to_owned())),
+        };
+        let msg = ChunkBidi {
+            r#impl: Some(ChunkEnum(value_chunk)),
+        };
         packets.push(msg);
-        let header = StreamHeader { name: SIGNATURE_PUBLIC_KEY_FIELD_NAME.to_owned(), content_length: 0 };
-        let value_chunk = Chunk { header: Some(header), r#impl: Some(Value("signature public key".as_bytes().to_owned())) };
-        let msg = ChunkBidi { r#impl: Some(ChunkEnum(value_chunk)) };
+        let header = StreamHeader {
+            name: SIGNATURE_PUBLIC_KEY_FIELD_NAME.to_owned(),
+            content_length: 0,
+        };
+        let value_chunk = Chunk {
+            header: Some(header),
+            r#impl: Some(Value("signature public key".as_bytes().to_owned())),
+        };
+        let msg = ChunkBidi {
+            r#impl: Some(ChunkEnum(value_chunk)),
+        };
         packets.push(msg);
 
         for (key, value) in extra_properties {
-            let header = StreamHeader { name: key, content_length: 0 };
-            let value_chunk = Chunk { header: Some(header), r#impl: Some(Value(value.as_bytes().to_owned())) };
-            let msg = ChunkBidi { r#impl: Some(ChunkEnum(value_chunk)) };
+            let header = StreamHeader {
+                name: key,
+                content_length: 0,
+            };
+            let value_chunk = Chunk {
+                header: Some(header),
+                r#impl: Some(Value(value.as_bytes().to_owned())),
+            };
+            let msg = ChunkBidi {
+                r#impl: Some(ChunkEnum(value_chunk)),
+            };
             packets.push(msg);
         }
 
-        let end = Chunk { header: None, r#impl: Some(End(ChunkEnd::default())) };
-        let msg = ChunkBidi { r#impl: Some(ChunkEnum(end)) };
+        let end = Chunk {
+            header: None,
+            r#impl: Some(End(ChunkEnd::default())),
+        };
+        let msg = ChunkBidi {
+            r#impl: Some(ChunkEnum(end)),
+        };
         packets.push(msg);
 
         // allow server to start
         tokio::time::sleep(tokio::time::Duration::from_millis(1_000)).await;
 
-        let mut client = pb::object_service_client::ObjectServiceClient::connect("tcp://0.0.0.0:6789").await.unwrap();
+        let mut client =
+            pb::object_service_client::ObjectServiceClient::connect("tcp://0.0.0.0:6789")
+                .await
+                .unwrap();
         let stream = stream::iter(packets);
         let mut request = Request::new(stream);
         let metadata = request.metadata_mut();
@@ -569,12 +757,13 @@ pub mod tests {
         client.put(request).await
     }
 
-    pub async fn get_public_keys_by_object(db: &PgPool, object_uuid: &uuid::Uuid) -> Vec<ObjectPublicKey> {
+    pub async fn get_public_keys_by_object(
+        db: &PgPool,
+        object_uuid: &uuid::Uuid,
+    ) -> Vec<ObjectPublicKey> {
         let query_str = "SELECT * FROM object_public_key WHERE object_uuid = $1";
         let mut result = Vec::new();
-        let mut query_result = sqlx::query(query_str)
-            .bind(object_uuid)
-            .fetch(db);
+        let mut query_result = sqlx::query(query_str).bind(object_uuid).fetch(db);
 
         while let Some(row) = query_result.try_next().await.unwrap() {
             result.push(ObjectPublicKey::from_row(&row).unwrap());
@@ -595,12 +784,13 @@ pub mod tests {
         rows_affected
     }
 
-    pub async fn get_mailbox_keys_by_object(db: &PgPool, object_uuid: &uuid::Uuid) -> Vec<MailboxPublicKey> {
+    pub async fn get_mailbox_keys_by_object(
+        db: &PgPool,
+        object_uuid: &uuid::Uuid,
+    ) -> Vec<MailboxPublicKey> {
         let query_str = "SELECT * FROM mailbox_public_key WHERE object_uuid = $1";
         let mut result = Vec::new();
-        let mut query_result = sqlx::query(query_str)
-            .bind(object_uuid)
-            .fetch(db);
+        let mut query_result = sqlx::query(query_str).bind(object_uuid).fetch(db);
 
         while let Some(row) = query_result.try_next().await.unwrap() {
             result.push(MailboxPublicKey::from_row(&row).unwrap());
@@ -615,7 +805,8 @@ pub mod tests {
     #[serial(grpc_server)]
     async fn simple_put() {
         let docker = clients::Cli::default();
-        let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
+        let image =
+            RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
         let container = docker.run(image);
         let postgres_port = container.get_host_port_ipv4(5432);
 
@@ -627,24 +818,42 @@ pub mod tests {
         let payload: bytes::Bytes = "testing small payload".as_bytes().into();
         let payload_len = payload.len() as i64;
         let chunk_size = 500; // full payload in one packet
-        let response = put_helper(dime, payload, chunk_size, HashMap::default(), Vec::default()).await;
+        let response = put_helper(
+            dime,
+            payload,
+            chunk_size,
+            HashMap::default(),
+            Vec::default(),
+        )
+        .await;
 
         match response {
             Ok(response) => {
                 let response = response.into_inner();
                 let uuid = response.uuid.unwrap().value;
                 let uuid_typed = uuid::Uuid::from_str(uuid.as_str()).unwrap();
-                let object = datastore::get_object_by_uuid(&db, &uuid_typed).await.unwrap();
+                let object = datastore::get_object_by_uuid(&db, &uuid_typed)
+                    .await
+                    .unwrap();
                 let mut properties = LinkedHashMap::new();
-                properties.insert(HASH_FIELD_NAME.to_owned(), base64::decode(object.hash).unwrap());
-                properties.insert(SIGNATURE_FIELD_NAME.to_owned(), "signature".as_bytes().to_owned());
-                properties.insert(SIGNATURE_PUBLIC_KEY_FIELD_NAME.to_owned(), "signature public key".as_bytes().to_owned());
+                properties.insert(
+                    HASH_FIELD_NAME.to_owned(),
+                    base64::decode(object.hash).unwrap(),
+                );
+                properties.insert(
+                    SIGNATURE_FIELD_NAME.to_owned(),
+                    "signature".as_bytes().to_owned(),
+                );
+                properties.insert(
+                    SIGNATURE_PUBLIC_KEY_FIELD_NAME.to_owned(),
+                    "signature public key".as_bytes().to_owned(),
+                );
 
                 assert_ne!(uuid, dime_uuid);
                 assert_eq!(response.name, NOT_STORAGE_BACKED);
                 assert_eq!(response.metadata.unwrap().content_length, payload_len);
                 assert_eq!(object.properties, properties)
-            },
+            }
             _ => assert_eq!(format!("{:?}", response), ""),
         }
     }
@@ -653,7 +862,8 @@ pub mod tests {
     #[serial(grpc_server)]
     async fn simple_put_with_auth_failure_no_header() {
         let docker = clients::Cli::default();
-        let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
+        let image =
+            RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
         let container = docker.run(image);
         let postgres_port = container.get_host_port_ipv4(5432);
 
@@ -665,7 +875,14 @@ pub mod tests {
         let dime = generate_dime(vec![audience], vec![signature]);
         let payload: bytes::Bytes = "testing small payload".as_bytes().into();
         let chunk_size = 500; // full payload in one packet
-        let response = put_helper(dime, payload, chunk_size, HashMap::default(), Vec::default()).await;
+        let response = put_helper(
+            dime,
+            payload,
+            chunk_size,
+            HashMap::default(),
+            Vec::default(),
+        )
+        .await;
 
         match response {
             Err(err) => assert_eq!(err.code(), tonic::Code::PermissionDenied),
@@ -677,7 +894,8 @@ pub mod tests {
     #[serial(grpc_server)]
     async fn simple_put_with_auth_failure_incorrect_value() {
         let docker = clients::Cli::default();
-        let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
+        let image =
+            RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
         let container = docker.run(image);
         let postgres_port = container.get_host_port_ipv4(5432);
 
@@ -689,7 +907,14 @@ pub mod tests {
         let dime = generate_dime(vec![audience], vec![signature]);
         let payload: bytes::Bytes = "testing small payload".as_bytes().into();
         let chunk_size = 500; // full payload in one packet
-        let response = put_helper(dime, payload, chunk_size, HashMap::default(), vec![("x-test-header", "test_value_2")]).await;
+        let response = put_helper(
+            dime,
+            payload,
+            chunk_size,
+            HashMap::default(),
+            vec![("x-test-header", "test_value_2")],
+        )
+        .await;
 
         match response {
             Err(err) => assert_eq!(err.code(), tonic::Code::PermissionDenied),
@@ -701,7 +926,8 @@ pub mod tests {
     #[serial(grpc_server)]
     async fn simple_put_with_auth_success() {
         let docker = clients::Cli::default();
-        let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
+        let image =
+            RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
         let container = docker.run(image);
         let postgres_port = container.get_host_port_ipv4(5432);
 
@@ -715,24 +941,42 @@ pub mod tests {
         let payload: bytes::Bytes = "testing small payload".as_bytes().into();
         let payload_len = payload.len() as i64;
         let chunk_size = 500; // full payload in one packet
-        let response = put_helper(dime, payload, chunk_size, HashMap::default(), vec![("x-test-header", "test_value_1")]).await;
+        let response = put_helper(
+            dime,
+            payload,
+            chunk_size,
+            HashMap::default(),
+            vec![("x-test-header", "test_value_1")],
+        )
+        .await;
 
         match response {
             Ok(response) => {
                 let response = response.into_inner();
                 let uuid = response.uuid.unwrap().value;
                 let uuid_typed = uuid::Uuid::from_str(uuid.as_str()).unwrap();
-                let object = datastore::get_object_by_uuid(&db, &uuid_typed).await.unwrap();
+                let object = datastore::get_object_by_uuid(&db, &uuid_typed)
+                    .await
+                    .unwrap();
                 let mut properties = LinkedHashMap::new();
-                properties.insert(HASH_FIELD_NAME.to_owned(), base64::decode(object.hash).unwrap());
-                properties.insert(SIGNATURE_FIELD_NAME.to_owned(), "signature".as_bytes().to_owned());
-                properties.insert(SIGNATURE_PUBLIC_KEY_FIELD_NAME.to_owned(), "signature public key".as_bytes().to_owned());
+                properties.insert(
+                    HASH_FIELD_NAME.to_owned(),
+                    base64::decode(object.hash).unwrap(),
+                );
+                properties.insert(
+                    SIGNATURE_FIELD_NAME.to_owned(),
+                    "signature".as_bytes().to_owned(),
+                );
+                properties.insert(
+                    SIGNATURE_PUBLIC_KEY_FIELD_NAME.to_owned(),
+                    "signature public key".as_bytes().to_owned(),
+                );
 
                 assert_ne!(uuid, dime_uuid);
                 assert_eq!(response.name, NOT_STORAGE_BACKED);
                 assert_eq!(response.metadata.unwrap().content_length, payload_len);
                 assert_eq!(object.properties, properties)
-            },
+            }
             _ => assert_eq!(format!("{:?}", response), ""),
         }
     }
@@ -741,7 +985,8 @@ pub mod tests {
     #[serial(grpc_server)]
     async fn multi_packet_file_store_put() {
         let docker = clients::Cli::default();
-        let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
+        let image =
+            RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
         let container = docker.run(image);
         let postgres_port = container.get_host_port_ipv4(5432);
 
@@ -753,7 +998,14 @@ pub mod tests {
         let payload: bytes::Bytes = "testing larger payload ".repeat(250).into_bytes().into();
         let payload_len = payload.len() as i64;
         let chunk_size = 100; // split payload into packets
-        let response = put_helper(dime, payload, chunk_size, HashMap::default(), Vec::default()).await;
+        let response = put_helper(
+            dime,
+            payload,
+            chunk_size,
+            HashMap::default(),
+            Vec::default(),
+        )
+        .await;
 
         match response {
             Ok(response) => {
@@ -762,7 +1014,7 @@ pub mod tests {
                 assert_ne!(response.uuid.unwrap().value, dime_uuid);
                 assert_ne!(response.name, NOT_STORAGE_BACKED);
                 assert_eq!(response.metadata.unwrap().content_length, payload_len);
-            },
+            }
             _ => assert_eq!(format!("{:?}", response), ""),
         }
     }
@@ -771,7 +1023,8 @@ pub mod tests {
     #[serial(grpc_server)]
     async fn multi_party_put() {
         let docker = clients::Cli::default();
-        let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
+        let image =
+            RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
         let container = docker.run(image);
         let postgres_port = container.get_host_port_ipv4(5432);
 
@@ -780,10 +1033,20 @@ pub mod tests {
         let (audience1, signature1) = party_1();
         let (audience2, signature2) = party_2();
         let (audience3, signature3) = party_3();
-        let dime = generate_dime(vec![audience1, audience2, audience3], vec![signature1, signature2, signature3]);
+        let dime = generate_dime(
+            vec![audience1, audience2, audience3],
+            vec![signature1, signature2, signature3],
+        );
         let payload: bytes::Bytes = "testing small payload".as_bytes().into();
         let chunk_size = 500; // full payload in one packet
-        let response = put_helper(dime, payload, chunk_size, HashMap::default(), Vec::default()).await;
+        let response = put_helper(
+            dime,
+            payload,
+            chunk_size,
+            HashMap::default(),
+            Vec::default(),
+        )
+        .await;
 
         match response {
             Ok(response) => {
@@ -793,7 +1056,7 @@ pub mod tests {
 
                 assert_eq!(get_public_keys_by_object(&db, &uuid).await.len(), 3);
                 assert_eq!(get_mailbox_keys_by_object(&db, &uuid).await.len(), 0);
-            },
+            }
             _ => assert_eq!(format!("{:?}", response), ""),
         }
     }
@@ -802,7 +1065,8 @@ pub mod tests {
     #[serial(grpc_server)]
     async fn small_mailbox_put() {
         let docker = clients::Cli::default();
-        let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
+        let image =
+            RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
         let container = docker.run(image);
         let postgres_port = container.get_host_port_ipv4(5432);
 
@@ -811,11 +1075,22 @@ pub mod tests {
         let (audience1, signature1) = party_1();
         let (audience2, signature2) = party_2();
         let (audience3, signature3) = party_3();
-        let mut dime = generate_dime(vec![audience1, audience2, audience3], vec![signature1, signature2, signature3]);
-        dime.metadata.insert(MAILBOX_KEY.to_owned(), MAILBOX_FRAGMENT_REQUEST.to_owned());
+        let mut dime = generate_dime(
+            vec![audience1, audience2, audience3],
+            vec![signature1, signature2, signature3],
+        );
+        dime.metadata
+            .insert(MAILBOX_KEY.to_owned(), MAILBOX_FRAGMENT_REQUEST.to_owned());
         let payload: bytes::Bytes = "testing small payload".as_bytes().into();
         let chunk_size = 500; // full payload in one packet
-        let response = put_helper(dime, payload, chunk_size, HashMap::default(), Vec::default()).await;
+        let response = put_helper(
+            dime,
+            payload,
+            chunk_size,
+            HashMap::default(),
+            Vec::default(),
+        )
+        .await;
 
         match response {
             Ok(response) => {
@@ -826,7 +1101,7 @@ pub mod tests {
                 assert_eq!(response.name, NOT_STORAGE_BACKED);
                 assert_eq!(get_public_keys_by_object(&db, &uuid).await.len(), 3);
                 assert_eq!(get_mailbox_keys_by_object(&db, &uuid).await.len(), 2);
-            },
+            }
             _ => assert_eq!(format!("{:?}", response), ""),
         }
     }
@@ -835,7 +1110,8 @@ pub mod tests {
     #[serial(grpc_server)]
     async fn large_mailbox_put() {
         let docker = clients::Cli::default();
-        let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
+        let image =
+            RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
         let container = docker.run(image);
         let postgres_port = container.get_host_port_ipv4(5432);
 
@@ -844,11 +1120,22 @@ pub mod tests {
         let (audience1, signature1) = party_1();
         let (audience2, signature2) = party_2();
         let (audience3, signature3) = party_3();
-        let mut dime = generate_dime(vec![audience1, audience2, audience3], vec![signature1, signature2, signature3]);
-        dime.metadata.insert(MAILBOX_KEY.to_owned(), MAILBOX_FRAGMENT_REQUEST.to_owned());
+        let mut dime = generate_dime(
+            vec![audience1, audience2, audience3],
+            vec![signature1, signature2, signature3],
+        );
+        dime.metadata
+            .insert(MAILBOX_KEY.to_owned(), MAILBOX_FRAGMENT_REQUEST.to_owned());
         let payload: bytes::Bytes = "testing larger payload ".repeat(250).into_bytes().into();
         let chunk_size = 100; // split payload into packets
-        let response = put_helper(dime, payload, chunk_size, HashMap::default(), Vec::default()).await;
+        let response = put_helper(
+            dime,
+            payload,
+            chunk_size,
+            HashMap::default(),
+            Vec::default(),
+        )
+        .await;
 
         match response {
             Ok(response) => {
@@ -859,7 +1146,7 @@ pub mod tests {
                 assert_eq!(response.name, NOT_STORAGE_BACKED);
                 assert_eq!(get_public_keys_by_object(&db, &uuid).await.len(), 3);
                 assert_eq!(get_mailbox_keys_by_object(&db, &uuid).await.len(), 2);
-            },
+            }
             _ => assert_eq!(format!("{:?}", response), ""),
         }
     }
@@ -868,7 +1155,8 @@ pub mod tests {
     #[serial(grpc_server)]
     async fn simple_get() {
         let docker = clients::Cli::default();
-        let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
+        let image =
+            RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
         let container = docker.run(image);
         let postgres_port = container.get_host_port_ipv4(5432);
 
@@ -878,20 +1166,33 @@ pub mod tests {
         let dime = generate_dime(vec![audience.clone()], vec![signature]);
         let payload: bytes::Bytes = "testing small payload".as_bytes().into();
         let chunk_size = 500; // full payload in one packet
-        let response = put_helper(dime, payload.clone(), chunk_size, HashMap::default(), Vec::default()).await;
+        let response = put_helper(
+            dime,
+            payload.clone(),
+            chunk_size,
+            HashMap::default(),
+            Vec::default(),
+        )
+        .await;
 
         match response {
             Ok(response) => {
                 let response = response.into_inner();
 
                 assert_eq!(response.name, NOT_STORAGE_BACKED);
-            },
+            }
             _ => assert_eq!(format!("{:?}", response), ""),
         }
 
-        let mut client = pb::object_service_client::ObjectServiceClient::connect("tcp://0.0.0.0:6789").await.unwrap();
+        let mut client =
+            pb::object_service_client::ObjectServiceClient::connect("tcp://0.0.0.0:6789")
+                .await
+                .unwrap();
         let public_key = base64::decode(audience.public_key).unwrap();
-        let request = HashRequest { hash: hash(payload), public_key };
+        let request = HashRequest {
+            hash: hash(payload),
+            public_key,
+        };
         let response = client.get(Request::new(request)).await;
 
         match response {
@@ -904,7 +1205,7 @@ pub mod tests {
                     match msg.r#impl {
                         Some(MultiStreamHeaderEnum(stream_header)) => {
                             assert_eq!(stream_header.stream_count, 1);
-                        },
+                        }
                         _ => assert_eq!(format!("{:?}", msg), ""),
                     }
                 } else {
@@ -915,11 +1216,9 @@ pub mod tests {
                 let msg = response.message().await.unwrap();
                 if let Some(msg) = msg {
                     match msg.clone().r#impl {
-                        Some(ChunkEnum(chunk)) => {
-                            match chunk.r#impl {
-                                Some(Data(_)) => (),
-                                _ => assert_eq!(format!("{:?}", msg), ""),
-                            }
+                        Some(ChunkEnum(chunk)) => match chunk.r#impl {
+                            Some(Data(_)) => (),
+                            _ => assert_eq!(format!("{:?}", msg), ""),
                         },
                         _ => assert_eq!(format!("{:?}", msg), ""),
                     }
@@ -931,18 +1230,16 @@ pub mod tests {
                 let msg = response.message().await.unwrap();
                 if let Some(msg) = msg {
                     match msg.clone().r#impl {
-                        Some(ChunkEnum(chunk)) => {
-                            match chunk.r#impl {
-                                Some(End(_)) => (),
-                                _ => assert_eq!(format!("{:?}", msg), ""),
-                            }
+                        Some(ChunkEnum(chunk)) => match chunk.r#impl {
+                            Some(End(_)) => (),
+                            _ => assert_eq!(format!("{:?}", msg), ""),
                         },
                         _ => assert_eq!(format!("{:?}", msg), ""),
                     }
                 } else {
                     assert_eq!(format!("{:?}", msg), "");
                 }
-            },
+            }
             _ => assert_eq!(format!("{:?}", response), ""),
         }
     }
@@ -951,7 +1248,8 @@ pub mod tests {
     #[serial(grpc_server)]
     async fn auth_get_failure_no_key() {
         let docker = clients::Cli::default();
-        let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
+        let image =
+            RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
         let container = docker.run(image);
         let postgres_port = container.get_host_port_ipv4(5432);
 
@@ -963,20 +1261,33 @@ pub mod tests {
         let dime = generate_dime(vec![audience.clone()], vec![signature]);
         let payload: bytes::Bytes = "testing larger payload ".repeat(250).into_bytes().into();
         let chunk_size = 100; // split payload into packets
-        let response = put_helper(dime, payload.clone(), chunk_size, HashMap::default(), vec![("x-test-header", "test_value_1")]).await;
+        let response = put_helper(
+            dime,
+            payload.clone(),
+            chunk_size,
+            HashMap::default(),
+            vec![("x-test-header", "test_value_1")],
+        )
+        .await;
 
         match response {
             Ok(response) => {
                 let response = response.into_inner();
 
                 assert_ne!(response.name, NOT_STORAGE_BACKED);
-            },
+            }
             _ => assert_eq!(format!("{:?}", response), ""),
         }
 
-        let mut client = pb::object_service_client::ObjectServiceClient::connect("tcp://0.0.0.0:6789").await.unwrap();
+        let mut client =
+            pb::object_service_client::ObjectServiceClient::connect("tcp://0.0.0.0:6789")
+                .await
+                .unwrap();
         let public_key = base64::decode(audience.public_key).unwrap();
-        let request = HashRequest { hash: hash(payload), public_key };
+        let request = HashRequest {
+            hash: hash(payload),
+            public_key,
+        };
         let response = client.get(Request::new(request)).await;
 
         match response {
@@ -989,7 +1300,8 @@ pub mod tests {
     #[serial(grpc_server)]
     async fn auth_get_failure_invalid_key() {
         let docker = clients::Cli::default();
-        let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
+        let image =
+            RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
         let container = docker.run(image);
         let postgres_port = container.get_host_port_ipv4(5432);
 
@@ -1001,20 +1313,33 @@ pub mod tests {
         let dime = generate_dime(vec![audience.clone()], vec![signature]);
         let payload: bytes::Bytes = "testing larger payload ".repeat(250).into_bytes().into();
         let chunk_size = 100; // split payload into packets
-        let response = put_helper(dime, payload.clone(), chunk_size, HashMap::default(), vec![("x-test-header", "test_value_1")]).await;
+        let response = put_helper(
+            dime,
+            payload.clone(),
+            chunk_size,
+            HashMap::default(),
+            vec![("x-test-header", "test_value_1")],
+        )
+        .await;
 
         match response {
             Ok(response) => {
                 let response = response.into_inner();
 
                 assert_ne!(response.name, NOT_STORAGE_BACKED);
-            },
+            }
             _ => assert_eq!(format!("{:?}", response), ""),
         }
 
-        let mut client = pb::object_service_client::ObjectServiceClient::connect("tcp://0.0.0.0:6789").await.unwrap();
+        let mut client =
+            pb::object_service_client::ObjectServiceClient::connect("tcp://0.0.0.0:6789")
+                .await
+                .unwrap();
         let public_key = base64::decode(audience.public_key).unwrap();
-        let mut request = Request::new(HashRequest { hash: hash(payload), public_key });
+        let mut request = Request::new(HashRequest {
+            hash: hash(payload),
+            public_key,
+        });
         let metadata = request.metadata_mut();
         metadata.insert("x-test-header", "test_value_2".parse().unwrap());
         let response = client.get(request).await;
@@ -1029,7 +1354,8 @@ pub mod tests {
     #[serial(grpc_server)]
     async fn auth_get_success() {
         let docker = clients::Cli::default();
-        let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
+        let image =
+            RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
         let container = docker.run(image);
         let postgres_port = container.get_host_port_ipv4(5432);
 
@@ -1041,20 +1367,33 @@ pub mod tests {
         let dime = generate_dime(vec![audience.clone()], vec![signature]);
         let payload: bytes::Bytes = "testing larger payload ".repeat(250).into_bytes().into();
         let chunk_size = 100; // split payload into packets
-        let response = put_helper(dime, payload.clone(), chunk_size, HashMap::default(), vec![("x-test-header", "test_value_1")]).await;
+        let response = put_helper(
+            dime,
+            payload.clone(),
+            chunk_size,
+            HashMap::default(),
+            vec![("x-test-header", "test_value_1")],
+        )
+        .await;
 
         match response {
             Ok(response) => {
                 let response = response.into_inner();
 
                 assert_ne!(response.name, NOT_STORAGE_BACKED);
-            },
+            }
             _ => assert_eq!(format!("{:?}", response), ""),
         }
 
-        let mut client = pb::object_service_client::ObjectServiceClient::connect("tcp://0.0.0.0:6789").await.unwrap();
+        let mut client =
+            pb::object_service_client::ObjectServiceClient::connect("tcp://0.0.0.0:6789")
+                .await
+                .unwrap();
         let public_key = base64::decode(audience.public_key).unwrap();
-        let mut request = Request::new(HashRequest { hash: hash(payload), public_key });
+        let mut request = Request::new(HashRequest {
+            hash: hash(payload),
+            public_key,
+        });
         let metadata = request.metadata_mut();
         metadata.insert("x-test-header", "test_value_1".parse().unwrap());
         let response = client.get(request).await;
@@ -1069,7 +1408,8 @@ pub mod tests {
     #[serial(grpc_server)]
     async fn multi_packet_file_store_get() {
         let docker = clients::Cli::default();
-        let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
+        let image =
+            RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
         let container = docker.run(image);
         let postgres_port = container.get_host_port_ipv4(5432);
 
@@ -1079,20 +1419,33 @@ pub mod tests {
         let dime = generate_dime(vec![audience.clone()], vec![signature]);
         let payload: bytes::Bytes = "testing larger payload ".repeat(250).into_bytes().into();
         let chunk_size = 100; // split payload into packets
-        let response = put_helper(dime, payload.clone(), chunk_size, HashMap::default(), Vec::default()).await;
+        let response = put_helper(
+            dime,
+            payload.clone(),
+            chunk_size,
+            HashMap::default(),
+            Vec::default(),
+        )
+        .await;
 
         match response {
             Ok(response) => {
                 let response = response.into_inner();
 
                 assert_ne!(response.name, NOT_STORAGE_BACKED);
-            },
+            }
             _ => assert_eq!(format!("{:?}", response), ""),
         }
 
-        let mut client = pb::object_service_client::ObjectServiceClient::connect("tcp://0.0.0.0:6789").await.unwrap();
+        let mut client =
+            pb::object_service_client::ObjectServiceClient::connect("tcp://0.0.0.0:6789")
+                .await
+                .unwrap();
         let public_key = base64::decode(audience.public_key).unwrap();
-        let request = HashRequest { hash: hash(payload), public_key };
+        let request = HashRequest {
+            hash: hash(payload),
+            public_key,
+        };
         let response = client.get(Request::new(request)).await;
 
         match response {
@@ -1105,7 +1458,8 @@ pub mod tests {
     #[serial(grpc_server)]
     async fn multi_party_non_owner_get() {
         let docker = clients::Cli::default();
-        let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
+        let image =
+            RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
         let container = docker.run(image);
         let postgres_port = container.get_host_port_ipv4(5432);
 
@@ -1114,18 +1468,34 @@ pub mod tests {
         let (audience1, signature1) = party_1();
         let (audience2, signature2) = party_2();
         let (audience3, signature3) = party_3();
-        let dime = generate_dime(vec![audience1, audience2, audience3.clone()], vec![signature1, signature2, signature3]);
+        let dime = generate_dime(
+            vec![audience1, audience2, audience3.clone()],
+            vec![signature1, signature2, signature3],
+        );
         let payload: bytes::Bytes = "testing small payload".as_bytes().into();
         let chunk_size = 500; // full payload in one packet
-        let response = put_helper(dime, payload.clone(), chunk_size, HashMap::default(), Vec::default()).await;
+        let response = put_helper(
+            dime,
+            payload.clone(),
+            chunk_size,
+            HashMap::default(),
+            Vec::default(),
+        )
+        .await;
 
         match response {
             Ok(_) => (),
             _ => assert_eq!(format!("{:?}", response), ""),
         }
-        let mut client = pb::object_service_client::ObjectServiceClient::connect("tcp://0.0.0.0:6789").await.unwrap();
+        let mut client =
+            pb::object_service_client::ObjectServiceClient::connect("tcp://0.0.0.0:6789")
+                .await
+                .unwrap();
         let public_key = base64::decode(audience3.public_key).unwrap();
-        let request = HashRequest { hash: hash(payload), public_key };
+        let request = HashRequest {
+            hash: hash(payload),
+            public_key,
+        };
         let response = client.get(Request::new(request)).await;
 
         match response {
@@ -1138,7 +1508,8 @@ pub mod tests {
     #[serial(grpc_server)]
     async fn dupe_objects_noop() {
         let docker = clients::Cli::default();
-        let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
+        let image =
+            RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
         let container = docker.run(image);
         let postgres_port = container.get_host_port_ipv4(5432);
 
@@ -1148,8 +1519,22 @@ pub mod tests {
         let dime = generate_dime(vec![audience], vec![signature]);
         let payload: bytes::Bytes = "testing small payload".as_bytes().into();
         let chunk_size = 500; // full payload in one packet
-        let response = put_helper(dime.clone(), payload.clone(), chunk_size, HashMap::default(), Vec::default()).await;
-        let response_dupe = put_helper(dime, payload, chunk_size, HashMap::default(), Vec::default()).await;
+        let response = put_helper(
+            dime.clone(),
+            payload.clone(),
+            chunk_size,
+            HashMap::default(),
+            Vec::default(),
+        )
+        .await;
+        let response_dupe = put_helper(
+            dime,
+            payload,
+            chunk_size,
+            HashMap::default(),
+            Vec::default(),
+        )
+        .await;
 
         assert!(response.is_ok() && response_dupe.is_ok());
 
@@ -1163,7 +1548,8 @@ pub mod tests {
     #[serial(grpc_server)]
     async fn dupe_objects_added_audience() {
         let docker = clients::Cli::default();
-        let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
+        let image =
+            RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
         let container = docker.run(image);
         let postgres_port = container.get_host_port_ipv4(5432);
 
@@ -1175,8 +1561,22 @@ pub mod tests {
         let dime2 = generate_dime(vec![audience, audience2], vec![signature, signature2]);
         let payload: bytes::Bytes = "testing small payload".as_bytes().into();
         let chunk_size = 500; // full payload in one packet
-        let response = put_helper(dime.clone(), payload.clone(), chunk_size, HashMap::default(), Vec::default()).await;
-        let response_dupe = put_helper(dime2, payload, chunk_size, HashMap::default(), Vec::default()).await;
+        let response = put_helper(
+            dime.clone(),
+            payload.clone(),
+            chunk_size,
+            HashMap::default(),
+            Vec::default(),
+        )
+        .await;
+        let response_dupe = put_helper(
+            dime2,
+            payload,
+            chunk_size,
+            HashMap::default(),
+            Vec::default(),
+        )
+        .await;
 
         assert!(response.is_ok() && response_dupe.is_ok());
 
@@ -1190,7 +1590,8 @@ pub mod tests {
     #[serial(grpc_server)]
     async fn get_with_wrong_key() {
         let docker = clients::Cli::default();
-        let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
+        let image =
+            RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
         let container = docker.run(image);
         let postgres_port = container.get_host_port_ipv4(5432);
 
@@ -1202,15 +1603,28 @@ pub mod tests {
         let dime = generate_dime(vec![audience1, audience2], vec![signature1, signature2]);
         let payload: bytes::Bytes = "testing small payload".as_bytes().into();
         let chunk_size = 500; // full payload in one packet
-        let response = put_helper(dime, payload.clone(), chunk_size, HashMap::default(), Vec::default()).await;
+        let response = put_helper(
+            dime,
+            payload.clone(),
+            chunk_size,
+            HashMap::default(),
+            Vec::default(),
+        )
+        .await;
 
         match response {
             Ok(_) => (),
             _ => assert_eq!(format!("{:?}", response), ""),
         }
-        let mut client = pb::object_service_client::ObjectServiceClient::connect("tcp://0.0.0.0:6789").await.unwrap();
+        let mut client =
+            pb::object_service_client::ObjectServiceClient::connect("tcp://0.0.0.0:6789")
+                .await
+                .unwrap();
         let public_key = base64::decode(audience3.public_key).unwrap();
-        let request = HashRequest { hash: hash(payload), public_key };
+        let request = HashRequest {
+            hash: hash(payload),
+            public_key,
+        };
         let response = client.get(Request::new(request)).await;
 
         match response {
@@ -1223,7 +1637,8 @@ pub mod tests {
     #[serial(grpc_server)]
     async fn get_nonexistent_hash() {
         let docker = clients::Cli::default();
-        let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
+        let image =
+            RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
         let container = docker.run(image);
         let postgres_port = container.get_host_port_ipv4(5432);
 
@@ -1231,9 +1646,15 @@ pub mod tests {
 
         let (audience1, _) = party_1();
         let payload: bytes::Bytes = "testing small payload".as_bytes().into();
-        let mut client = pb::object_service_client::ObjectServiceClient::connect("tcp://0.0.0.0:6789").await.unwrap();
+        let mut client =
+            pb::object_service_client::ObjectServiceClient::connect("tcp://0.0.0.0:6789")
+                .await
+                .unwrap();
         let public_key = base64::decode(audience1.public_key).unwrap();
-        let request = HashRequest { hash: hash(payload), public_key };
+        let request = HashRequest {
+            hash: hash(payload),
+            public_key,
+        };
         let response = client.get(Request::new(request)).await;
 
         match response {
@@ -1248,7 +1669,8 @@ pub mod tests {
     #[serial(grpc_server)]
     async fn put_with_replication() {
         let docker = clients::Cli::default();
-        let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
+        let image =
+            RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
         let container = docker.run(image);
         let postgres_port = container.get_host_port_ipv4(5432);
 
@@ -1257,12 +1679,16 @@ pub mod tests {
         let (audience1, signature1) = party_1();
         let (audience2, signature2) = party_2();
         let (audience3, signature3) = party_3();
-        let dime = generate_dime(vec![audience1.clone(), audience2.clone(), audience3.clone()], vec![signature1, signature2, signature3]);
+        let dime = generate_dime(
+            vec![audience1.clone(), audience2.clone(), audience3.clone()],
+            vec![signature1, signature2, signature3],
+        );
         let mut extra_properties = HashMap::new();
         extra_properties.insert(SOURCE_KEY.to_owned(), String::from("standard key"));
         let payload: bytes::Bytes = "testing small payload".as_bytes().into();
         let chunk_size = 500; // full payload in one packet
-        let response = put_helper(dime, payload, chunk_size, extra_properties, Vec::default()).await;
+        let response =
+            put_helper(dime, payload, chunk_size, extra_properties, Vec::default()).await;
 
         match response {
             Ok(response) => {
@@ -1272,10 +1698,40 @@ pub mod tests {
 
                 assert_eq!(response.name, NOT_STORAGE_BACKED);
                 assert_eq!(get_public_keys_by_object(&db, &uuid).await.len(), 3);
-                assert_eq!(replication_object_uuids(&db, String::from_utf8(audience1.public_key).unwrap().as_str(), 50).await.unwrap().len(), 0);
-                assert_eq!(replication_object_uuids(&db, String::from_utf8(audience2.public_key).unwrap().as_str(), 50).await.unwrap().len(), 1);
-                assert_eq!(replication_object_uuids(&db, String::from_utf8(audience3.public_key).unwrap().as_str(), 50).await.unwrap().len(), 1);
-            },
+                assert_eq!(
+                    replication_object_uuids(
+                        &db,
+                        String::from_utf8(audience1.public_key).unwrap().as_str(),
+                        50
+                    )
+                    .await
+                    .unwrap()
+                    .len(),
+                    0
+                );
+                assert_eq!(
+                    replication_object_uuids(
+                        &db,
+                        String::from_utf8(audience2.public_key).unwrap().as_str(),
+                        50
+                    )
+                    .await
+                    .unwrap()
+                    .len(),
+                    1
+                );
+                assert_eq!(
+                    replication_object_uuids(
+                        &db,
+                        String::from_utf8(audience3.public_key).unwrap().as_str(),
+                        50
+                    )
+                    .await
+                    .unwrap()
+                    .len(),
+                    1
+                );
+            }
             _ => assert_eq!(format!("{:?}", response), ""),
         }
     }
@@ -1284,7 +1740,8 @@ pub mod tests {
     #[serial(grpc_server)]
     async fn put_with_replication_different_owner() {
         let docker = clients::Cli::default();
-        let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
+        let image =
+            RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
         let container = docker.run(image);
         let postgres_port = container.get_host_port_ipv4(5432);
 
@@ -1293,12 +1750,16 @@ pub mod tests {
         let (audience1, signature1) = party_1();
         let (audience2, signature2) = party_2();
         let (audience3, signature3) = party_3();
-        let dime = generate_dime(vec![audience2.clone(), audience1.clone(), audience3.clone()], vec![signature2, signature1, signature3]);
+        let dime = generate_dime(
+            vec![audience2.clone(), audience1.clone(), audience3.clone()],
+            vec![signature2, signature1, signature3],
+        );
         let mut extra_properties = HashMap::new();
         extra_properties.insert(SOURCE_KEY.to_owned(), String::from("standard key"));
         let payload: bytes::Bytes = "testing small payload".as_bytes().into();
         let chunk_size = 500; // full payload in one packet
-        let response = put_helper(dime, payload, chunk_size, extra_properties, Vec::default()).await;
+        let response =
+            put_helper(dime, payload, chunk_size, extra_properties, Vec::default()).await;
 
         match response {
             Ok(response) => {
@@ -1308,10 +1769,40 @@ pub mod tests {
 
                 assert_eq!(response.name, NOT_STORAGE_BACKED);
                 assert_eq!(get_public_keys_by_object(&db, &uuid).await.len(), 3);
-                assert_eq!(replication_object_uuids(&db, String::from_utf8(audience1.public_key).unwrap().as_str(), 50).await.unwrap().len(), 0);
-                assert_eq!(replication_object_uuids(&db, String::from_utf8(audience2.public_key).unwrap().as_str(), 50).await.unwrap().len(), 0);
-                assert_eq!(replication_object_uuids(&db, String::from_utf8(audience3.public_key).unwrap().as_str(), 50).await.unwrap().len(), 1);
-            },
+                assert_eq!(
+                    replication_object_uuids(
+                        &db,
+                        String::from_utf8(audience1.public_key).unwrap().as_str(),
+                        50
+                    )
+                    .await
+                    .unwrap()
+                    .len(),
+                    0
+                );
+                assert_eq!(
+                    replication_object_uuids(
+                        &db,
+                        String::from_utf8(audience2.public_key).unwrap().as_str(),
+                        50
+                    )
+                    .await
+                    .unwrap()
+                    .len(),
+                    0
+                );
+                assert_eq!(
+                    replication_object_uuids(
+                        &db,
+                        String::from_utf8(audience3.public_key).unwrap().as_str(),
+                        50
+                    )
+                    .await
+                    .unwrap()
+                    .len(),
+                    1
+                );
+            }
             _ => assert_eq!(format!("{:?}", response), ""),
         }
     }
@@ -1320,7 +1811,8 @@ pub mod tests {
     #[serial(grpc_server)]
     async fn put_with_double_replication() {
         let docker = clients::Cli::default();
-        let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
+        let image =
+            RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
         let container = docker.run(image);
         let postgres_port = container.get_host_port_ipv4(5432);
 
@@ -1329,12 +1821,16 @@ pub mod tests {
         let (audience1, signature1) = party_1();
         let (audience2, signature2) = party_2();
         let (audience3, signature3) = party_3();
-        let dime = generate_dime(vec![audience1.clone(), audience2.clone(), audience3.clone()], vec![signature1, signature2, signature3]);
+        let dime = generate_dime(
+            vec![audience1.clone(), audience2.clone(), audience3.clone()],
+            vec![signature1, signature2, signature3],
+        );
         let mut extra_properties = HashMap::new();
         extra_properties.insert(SOURCE_KEY.to_owned(), SOURCE_REPLICATION.to_owned());
         let payload: bytes::Bytes = "testing small payload".as_bytes().into();
         let chunk_size = 500; // full payload in one packet
-        let response = put_helper(dime, payload, chunk_size, extra_properties, Vec::default()).await;
+        let response =
+            put_helper(dime, payload, chunk_size, extra_properties, Vec::default()).await;
 
         match response {
             Ok(response) => {
@@ -1344,10 +1840,40 @@ pub mod tests {
 
                 assert_eq!(response.name, NOT_STORAGE_BACKED);
                 assert_eq!(get_public_keys_by_object(&db, &uuid).await.len(), 3);
-                assert_eq!(replication_object_uuids(&db, base64::encode(audience1.public_key).as_str(), 50).await.unwrap().len(), 0);
-                assert_eq!(replication_object_uuids(&db, base64::encode(audience2.public_key).as_str(), 50).await.unwrap().len(), 0);
-                assert_eq!(replication_object_uuids(&db, base64::encode(audience3.public_key).as_str(), 50).await.unwrap().len(), 0);
-            },
+                assert_eq!(
+                    replication_object_uuids(
+                        &db,
+                        base64::encode(audience1.public_key).as_str(),
+                        50
+                    )
+                    .await
+                    .unwrap()
+                    .len(),
+                    0
+                );
+                assert_eq!(
+                    replication_object_uuids(
+                        &db,
+                        base64::encode(audience2.public_key).as_str(),
+                        50
+                    )
+                    .await
+                    .unwrap()
+                    .len(),
+                    0
+                );
+                assert_eq!(
+                    replication_object_uuids(
+                        &db,
+                        base64::encode(audience3.public_key).as_str(),
+                        50
+                    )
+                    .await
+                    .unwrap()
+                    .len(),
+                    0
+                );
+            }
             _ => assert_eq!(format!("{:?}", response), ""),
         }
     }
@@ -1356,7 +1882,8 @@ pub mod tests {
     #[serial(grpc_server)]
     async fn get_object_no_properties() {
         let docker = clients::Cli::default();
-        let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
+        let image =
+            RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
         let container = docker.run(image);
         let postgres_port = container.get_host_port_ipv4(5432);
 
@@ -1366,7 +1893,14 @@ pub mod tests {
         let dime = generate_dime(vec![audience.clone()], vec![signature]);
         let payload: bytes::Bytes = "testing small payload".as_bytes().into();
         let chunk_size = 500; // full payload in one packet
-        let response = put_helper(dime, payload.clone(), chunk_size, HashMap::default(), Vec::default()).await;
+        let response = put_helper(
+            dime,
+            payload.clone(),
+            chunk_size,
+            HashMap::default(),
+            Vec::default(),
+        )
+        .await;
 
         match response {
             Ok(response) => {
@@ -1376,13 +1910,19 @@ pub mod tests {
 
                 assert_eq!(response.name, NOT_STORAGE_BACKED);
                 assert_eq!(delete_properties(&db, &uuid).await, 1);
-            },
+            }
             _ => assert_eq!(format!("{:?}", response), ""),
         }
 
-        let mut client = pb::object_service_client::ObjectServiceClient::connect("tcp://0.0.0.0:6789").await.unwrap();
+        let mut client =
+            pb::object_service_client::ObjectServiceClient::connect("tcp://0.0.0.0:6789")
+                .await
+                .unwrap();
         let public_key = base64::decode(audience.public_key).unwrap();
-        let request = HashRequest { hash: hash(payload), public_key };
+        let request = HashRequest {
+            hash: hash(payload),
+            public_key,
+        };
         let response = client.get(Request::new(request)).await;
 
         match response {
@@ -1395,7 +1935,7 @@ pub mod tests {
                     match msg.r#impl {
                         Some(MultiStreamHeaderEnum(stream_header)) => {
                             assert_eq!(stream_header.stream_count, 1);
-                        },
+                        }
                         _ => assert_eq!(format!("{:?}", msg), ""),
                     }
                 } else {
@@ -1406,11 +1946,9 @@ pub mod tests {
                 let msg = response.message().await.unwrap();
                 if let Some(msg) = msg {
                     match msg.clone().r#impl {
-                        Some(ChunkEnum(chunk)) => {
-                            match chunk.r#impl {
-                                Some(Data(_)) => (),
-                                _ => assert_eq!(format!("{:?}", msg), ""),
-                            }
+                        Some(ChunkEnum(chunk)) => match chunk.r#impl {
+                            Some(Data(_)) => (),
+                            _ => assert_eq!(format!("{:?}", msg), ""),
                         },
                         _ => assert_eq!(format!("{:?}", msg), ""),
                     }
@@ -1422,18 +1960,16 @@ pub mod tests {
                 let msg = response.message().await.unwrap();
                 if let Some(msg) = msg {
                     match msg.clone().r#impl {
-                        Some(ChunkEnum(chunk)) => {
-                            match chunk.r#impl {
-                                Some(End(_)) => (),
-                                _ => assert_eq!(format!("{:?}", msg), ""),
-                            }
+                        Some(ChunkEnum(chunk)) => match chunk.r#impl {
+                            Some(End(_)) => (),
+                            _ => assert_eq!(format!("{:?}", msg), ""),
                         },
                         _ => assert_eq!(format!("{:?}", msg), ""),
                     }
                 } else {
                     assert_eq!(format!("{:?}", msg), "");
                 }
-            },
+            }
             _ => assert_eq!(format!("{:?}", response), ""),
         }
     }

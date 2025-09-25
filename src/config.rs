@@ -50,7 +50,9 @@ impl Config {
             .expect("OS_PORT not set")
             .parse()
             .expect("OS_PORT could not be parsed into a u16");
-        let url = format!("{}:{}", &url, &port).parse().expect("url could not be parsed");
+        let url = format!("{}:{}", &url, &port)
+            .parse()
+            .expect("url could not be parsed");
         let db_connection_pool_size = env::var("DB_CONNECTION_POOL_SIZE")
             .unwrap_or("10".to_owned())
             .parse()
@@ -64,7 +66,7 @@ impl Config {
         let db_password = env::var("DB_PASS").expect("DB_PASS not set");
         let db_database = env::var("DB_NAME").expect("DB_NAME not set");
         let db_schema = env::var("DB_SCHEMA").expect("DB_SCHEMA not set");
-        let storage_type  = env::var("STORAGE_TYPE").expect("STORAGE_TYPE not set");
+        let storage_type = env::var("STORAGE_TYPE").expect("STORAGE_TYPE not set");
         let storage_base_url = env::var("STORAGE_BASE_URL").ok();
         let storage_base_path = env::var("STORAGE_BASE_PATH").expect("STORAGE_BASE_PATH not set");
         let storage_threshold = env::var("STORAGE_THRESHOLD")
@@ -90,19 +92,21 @@ impl Config {
                 .unwrap_or("8126".to_owned())
                 .parse()
                 .expect("DD_AGENT_PORT could not be parsed into a u16");
-            let service = env::var("DD_SERVICE")
-                .unwrap_or("object-store".to_owned());
-            let version = env::var("DD_VERSION")
-                .unwrap_or("undefined".to_owned());
-            let environment = env::var("DD_ENV")
-                .expect("DD_ENV not set");
+            let service = env::var("DD_SERVICE").unwrap_or("object-store".to_owned());
+            let version = env::var("DD_VERSION").unwrap_or("undefined".to_owned());
+            let environment = env::var("DD_ENV").expect("DD_ENV not set");
             let mut span_tags = Vec::default();
             span_tags.extend(BASE_SPAN_TAGS.into_iter().map(|(k, v)| (k, v.to_string())));
             span_tags.push(("app", service.clone()));
             span_tags.push(("version", version));
             span_tags.push(("env", environment));
 
-            Some(DatadogConfig { agent_host, agent_port, service, span_tags })
+            Some(DatadogConfig {
+                agent_host,
+                agent_port,
+                service,
+                span_tags,
+            })
         } else {
             None
         };
@@ -134,7 +138,8 @@ impl Config {
             url,
             uri_host,
             db_connection_pool_size,
-            db_host, db_port,
+            db_host,
+            db_port,
             db_user,
             db_password,
             db_database,
@@ -155,14 +160,12 @@ impl Config {
     }
 
     pub fn db_connection_string(&self) -> String {
-        let password = percent_encoding::percent_encode(self.db_password.as_bytes(), NON_ALPHANUMERIC);
+        let password =
+            percent_encoding::percent_encode(self.db_password.as_bytes(), NON_ALPHANUMERIC);
 
         format!(
             "postgres://{}:{}@{}/{}",
-            self.db_user,
-            password,
-            self.db_host,
-            self.db_database,
+            self.db_user, password, self.db_host, self.db_database,
         )
     }
 }

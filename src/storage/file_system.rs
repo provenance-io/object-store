@@ -13,7 +13,9 @@ pub struct FileSystem {
 
 impl FileSystem {
     pub fn new(base_url: &str) -> Self {
-        FileSystem { base_url: PathBuf::from(base_url) }
+        FileSystem {
+            base_url: PathBuf::from(base_url),
+        }
     }
 
     fn get_path(&self, path: &StoragePath) -> PathBuf {
@@ -33,7 +35,7 @@ impl FileSystem {
             Err(e) => match e.kind() {
                 std::io::ErrorKind::AlreadyExists => Ok(()),
                 _ => Err(StorageError::IoError(format!("{:?}", e))),
-            }
+            },
         }
     }
 }
@@ -53,16 +55,16 @@ impl Storage for FileSystem {
             .await;
 
         match file {
-            Ok(mut file) =>  {
-                file.write_all(data).await
-                    .map_err(|e| StorageError::IoError(format!("{:?}", e)))
-            },
+            Ok(mut file) => file
+                .write_all(data)
+                .await
+                .map_err(|e| StorageError::IoError(format!("{:?}", e))),
             Err(e) => match e.kind() {
                 std::io::ErrorKind::AlreadyExists => Ok(()),
                 std::io::ErrorKind::NotFound => {
                     self.create_dir(&path).await?;
                     self.store(&path, content_length, data).await
-                },
+                }
                 _ => Err(StorageError::IoError(format!("{:?}", e))),
             },
         }
@@ -70,7 +72,8 @@ impl Storage for FileSystem {
 
     #[trace("file_system::fetch")]
     async fn fetch(&self, path: &StoragePath, content_length: u64) -> Result<Vec<u8>> {
-        let data = tokio::fs::read(self.get_path(path)).await
+        let data = tokio::fs::read(self.get_path(path))
+            .await
             .map_err(|e| StorageError::IoError(format!("{:?}", e)))?;
 
         if let Err(e) = self.validate_content_length(&path, content_length, &data) {
@@ -86,18 +89,23 @@ mod tests {
 
     use crate::storage::*;
 
-    use rand::{thread_rng, Rng};
     use rand::distributions::Alphanumeric;
+    use rand::{thread_rng, Rng};
 
     #[tokio::test]
     async fn store_file() {
-        let storage = FileSystem { base_url: std::env::temp_dir() };
+        let storage = FileSystem {
+            base_url: std::env::temp_dir(),
+        };
         let rand_string: String = thread_rng()
             .sample_iter(&Alphanumeric)
             .take(10)
             .map(char::from)
             .collect();
-        let path = StoragePath { dir: rand_string.clone(), file: rand_string };
+        let path = StoragePath {
+            dir: rand_string.clone(),
+            file: rand_string,
+        };
         let data = b"hello world";
 
         assert!(storage.store(&path, 11_u64, data).await.is_ok());
@@ -105,13 +113,18 @@ mod tests {
 
     #[tokio::test]
     async fn idempotent_store_file() {
-        let storage = FileSystem { base_url: std::env::temp_dir() };
+        let storage = FileSystem {
+            base_url: std::env::temp_dir(),
+        };
         let rand_string: String = thread_rng()
             .sample_iter(&Alphanumeric)
             .take(10)
             .map(char::from)
             .collect();
-        let path = StoragePath { dir: rand_string.clone(), file: rand_string };
+        let path = StoragePath {
+            dir: rand_string.clone(),
+            file: rand_string,
+        };
         let data = b"hello world";
         let data_overwrite = b"world hello";
 
@@ -167,13 +180,18 @@ mod tests {
 
     #[tokio::test]
     async fn fetch_nonexistent_file() {
-        let storage = FileSystem { base_url: std::env::temp_dir() };
+        let storage = FileSystem {
+            base_url: std::env::temp_dir(),
+        };
         let rand_string: String = thread_rng()
             .sample_iter(&Alphanumeric)
             .take(10)
             .map(char::from)
             .collect();
-        let path = StoragePath { dir: rand_string, file: "nonexistent".to_owned() };
+        let path = StoragePath {
+            dir: rand_string,
+            file: "nonexistent".to_owned(),
+        };
 
         assert!(storage.fetch(&path, 10_u64).await.is_err());
         assert!(storage.create_dir(&path).await.is_ok());
@@ -182,13 +200,18 @@ mod tests {
 
     #[tokio::test]
     async fn fetch_file() {
-        let storage = FileSystem { base_url: std::env::temp_dir() };
+        let storage = FileSystem {
+            base_url: std::env::temp_dir(),
+        };
         let rand_string: String = thread_rng()
             .sample_iter(&Alphanumeric)
             .take(10)
             .map(char::from)
             .collect();
-        let path = StoragePath { dir: rand_string.clone(), file: rand_string };
+        let path = StoragePath {
+            dir: rand_string.clone(),
+            file: rand_string,
+        };
         let data = b"hello world";
 
         assert!(storage.store(&path, 11_u64, data).await.is_ok());
@@ -198,13 +221,18 @@ mod tests {
 
     #[tokio::test]
     async fn create_dir_that_exists() {
-        let storage = FileSystem { base_url: std::env::temp_dir() };
+        let storage = FileSystem {
+            base_url: std::env::temp_dir(),
+        };
         let rand_string: String = thread_rng()
             .sample_iter(&Alphanumeric)
             .take(10)
             .map(char::from)
             .collect();
-        let path = StoragePath { dir: rand_string.clone(), file: rand_string };
+        let path = StoragePath {
+            dir: rand_string.clone(),
+            file: rand_string,
+        };
 
         assert!(storage.create_dir(&path).await.is_ok());
         assert!(storage.create_dir(&path).await.is_ok());

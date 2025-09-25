@@ -1,31 +1,37 @@
 mod authorization;
 mod cache;
-mod consts;
 mod config;
+mod consts;
 mod datastore;
 mod dime;
 mod domain;
 mod mailbox;
+mod middleware;
 mod object;
-mod public_key;
 mod proto_helpers;
+mod public_key;
 mod replication;
 mod storage;
 mod types;
-mod middleware;
 
 use crate::cache::Cache;
 use crate::config::Config;
-use crate::middleware::{LoggingMiddlewareLayer, MinitraceGrpcMiddlewareLayer, MinitraceSpans, report_datadog_traces};
+use crate::mailbox::MailboxGrpc;
+use crate::middleware::{
+    report_datadog_traces, LoggingMiddlewareLayer, MinitraceGrpcMiddlewareLayer, MinitraceSpans,
+};
 use crate::object::ObjectGrpc;
 use crate::public_key::PublicKeyGrpc;
-use crate::mailbox::MailboxGrpc;
-use crate::types::{OsError, Result};
-use crate::storage::{FileSystem, GoogleCloud, Storage};
 use crate::replication::{reap_unknown_keys, replicate, ReplicationState};
+use crate::storage::{FileSystem, GoogleCloud, Storage};
+use crate::types::{OsError, Result};
 
+use sqlx::{
+    migrate::Migrator,
+    postgres::{PgPool, PgPoolOptions},
+    Executor,
+};
 use std::sync::{Arc, Mutex};
-use sqlx::{migrate::Migrator, postgres::{PgPool, PgPoolOptions}, Executor};
 use tokio::sync::mpsc::channel;
 use tonic::transport::Server;
 
@@ -33,9 +39,9 @@ mod pb {
     tonic::include_proto!("objectstore");
 }
 
-use pb::public_key_service_server::PublicKeyServiceServer;
-use pb::object_service_server::ObjectServiceServer;
 use pb::mailbox_service_server::MailboxServiceServer;
+use pb::object_service_server::ObjectServiceServer;
+use pb::public_key_service_server::PublicKeyServiceServer;
 
 static MIGRATOR: Migrator = sqlx::migrate!();
 
@@ -71,16 +77,22 @@ async fn main() -> Result<()> {
     let mut cache = Cache::default();
     let config = Config::new();
     let storage = match config.storage_type.as_str() {
-        "file_system" => Ok(Box::new(FileSystem::new(config.storage_base_path.as_str())) as Box<dyn Storage>),
-        "google_cloud" => Ok(Box::new(GoogleCloud::new(config.storage_base_url.clone(), config.storage_base_path.clone())) as Box<dyn Storage>),
-        _ => Err(OsError::InvalidApplicationState("".to_owned()))
+        "file_system" => {
+            Ok(Box::new(FileSystem::new(config.storage_base_path.as_str())) as Box<dyn Storage>)
+        }
+        "google_cloud" => Ok(Box::new(GoogleCloud::new(
+            config.storage_base_url.clone(),
+            config.storage_base_path.clone(),
+        )) as Box<dyn Storage>),
+        _ => Err(OsError::InvalidApplicationState("".to_owned())),
     }?;
     let schema = Arc::new(config.db_schema.clone());
     let pool = PgPoolOptions::new()
         .after_connect(move |conn, _meta| {
             let schema = Arc::clone(&schema);
             Box::pin(async move {
-                conn.execute(format!("SET search_path = '{}';", &schema).as_ref()).await?;
+                conn.execute(format!("SET search_path = '{}';", &schema).as_ref())
+                    .await?;
 
                 Ok(())
             })
@@ -95,7 +107,11 @@ async fn main() -> Result<()> {
 
     // populate initial cache
     for key in datastore::get_all_public_keys(&pool).await? {
-        log::debug!("Adding public key {} with url {}", &key.public_key, &key.url);
+        log::debug!(
+            "Adding public key {} with url {}",
+            &key.public_key,
+            &key.url
+        );
 
         cache.add_public_key(key);
     }
@@ -107,9 +123,20 @@ async fn main() -> Result<()> {
 
     let (mut health_reporter, health_service) = tonic_health::server::health_reporter();
     let public_key_service = PublicKeyGrpc::new(Arc::clone(&cache), Arc::clone(&pool));
-    let mailbox_service = MailboxGrpc::new(Arc::clone(&cache), Arc::clone(&config), Arc::clone(&pool));
-    let object_service = ObjectGrpc::new(Arc::clone(&cache), Arc::clone(&config), Arc::clone(&pool), Arc::clone(&storage));
-    let replication_state = ReplicationState::new(Arc::clone(&cache), Arc::clone(&config), Arc::clone(&pool), Arc::clone(&storage));
+    let mailbox_service =
+        MailboxGrpc::new(Arc::clone(&cache), Arc::clone(&config), Arc::clone(&pool));
+    let object_service = ObjectGrpc::new(
+        Arc::clone(&cache),
+        Arc::clone(&config),
+        Arc::clone(&pool),
+        Arc::clone(&storage),
+    );
+    let replication_state = ReplicationState::new(
+        Arc::clone(&cache),
+        Arc::clone(&config),
+        Arc::clone(&pool),
+        Arc::clone(&storage),
+    );
 
     // set initial health status and start a background
     health_reporter
@@ -141,7 +168,11 @@ async fn main() -> Result<()> {
     if let Some(ref dd_config) = config.dd_config {
         Server::builder()
             .layer(LoggingMiddlewareLayer::new(Arc::clone(&config)))
-            .layer(MinitraceGrpcMiddlewareLayer::new(Arc::clone(&config), dd_config.span_tags.clone(), datadog_sender))
+            .layer(MinitraceGrpcMiddlewareLayer::new(
+                Arc::clone(&config),
+                dd_config.span_tags.clone(),
+                datadog_sender,
+            ))
             .add_service(health_service)
             .add_service(PublicKeyServiceServer::new(public_key_service))
             .add_service(MailboxServiceServer::new(mailbox_service))

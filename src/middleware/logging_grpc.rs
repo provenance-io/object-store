@@ -41,7 +41,12 @@ pub struct LoggingGrpcMiddleware<S> {
 
 impl<S> Service<tonic::codegen::http::Request<Body>> for LoggingGrpcMiddleware<S>
 where
-    S: Service<tonic::codegen::http::Request<Body>, Response = tonic::codegen::http::Response<BoxBody>> + Clone + Send + 'static,
+    S: Service<
+            tonic::codegen::http::Request<Body>,
+            Response = tonic::codegen::http::Response<BoxBody>,
+        > + Clone
+        + Send
+        + 'static,
     S::Future: Send + 'static,
 {
     type Response = S::Response;
@@ -64,8 +69,10 @@ where
         let upper_logging_bounds = self.upper_logging_bounds;
 
         Box::pin(async move {
-            let default_trace_id = HeaderValue::from_str(&uuid::Uuid::new_v4().as_hyphenated().to_string()).unwrap();
-            let trace_id = headers.get(trace_header)
+            let default_trace_id =
+                HeaderValue::from_str(&uuid::Uuid::new_v4().as_hyphenated().to_string()).unwrap();
+            let trace_id = headers
+                .get(trace_header)
                 .unwrap_or(&default_trace_id)
                 .to_str()
                 .unwrap();

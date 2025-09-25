@@ -11,9 +11,12 @@ pub struct GoogleCloud {
 }
 
 impl GoogleCloud {
-
     pub fn new(base_url: Option<String>, bucket: String) -> Self {
-        GoogleCloud { client: Client::default(), base_url, bucket }
+        GoogleCloud {
+            client: Client::default(),
+            base_url,
+            bucket,
+        }
     }
 
     fn base_url_ref(&self) -> Option<&str> {
@@ -35,7 +38,12 @@ impl Storage for GoogleCloud {
 
         self.client
             .object(self.base_url_ref())
-            .create(self.bucket.as_str(), data.to_vec(), &path.file, "application/octet-stream")
+            .create(
+                self.bucket.as_str(),
+                data.to_vec(),
+                &path.file,
+                "application/octet-stream",
+            )
             .await
             .map_err(|e| StorageError::IoError(format!("{:?}", e)))?;
 
@@ -44,7 +52,8 @@ impl Storage for GoogleCloud {
 
     #[trace("google_cloud::fetch")]
     async fn fetch(&self, path: &StoragePath, content_length: u64) -> Result<Vec<u8>> {
-        let data = self.client
+        let data = self
+            .client
             .object(self.base_url_ref())
             .download(self.bucket.as_str(), &path.file)
             .await
