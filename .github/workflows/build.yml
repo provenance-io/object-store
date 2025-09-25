@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - main
-      - chore/upgrade-gha
   pull_request:
     branches:
       - main
