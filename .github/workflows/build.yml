@@ -13,43 +13,26 @@ jobs:
     name: Build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
-      - uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
-      - uses: actions-rs/cargo@v1
-        with:
-          command: build
-      - uses: actions-rs/cargo@v1
-        with:
-          command: test
+      - name: Checkout Repository
+        id: checkout
+        uses: actions/checkout@v5
 
-          # fmt:
-          #   name: Test
-          #   runs-on: ubuntu-latest
-          #   steps:
-          #     - uses: actions/checkout@v2
-          #     - uses: actions-rs/toolchain@v1
-          #       with:
-          #         profile: minimal
-          #         toolchain: stable
-          #         override: true
-          #     - uses: actions-rs/cargo@v1
-          #       with:
-          #         command: test
+      - name: Setup Rust
+        id: setup-rust
+        run: rustup update stable && rustup default stable && rustup component add rustfmt clippy
 
-          # clippy:
-          #   name: Test
-          #   runs-on: ubuntu-latest
-          #   steps:
-          #     - uses: actions/checkout@v2
-          #     - uses: actions-rs/toolchain@v1
-          #       with:
-          #         profile: minimal
-          #         toolchain: stable
-          #         override: true
-          #     - uses: actions-rs/cargo@v1
-          #       with:
-          #         command: test
+      - name: Build
+        id: build
+        run: cargo build --verbose
+
+      - name: Test
+        id: test
+        run: cargo test --verbose
+
+      - name: Check formatting
+        id: check-formatting
+        run: cargo fmt --check
+
+      - name: Run linter
+        id: lint
+        run: cargo clippy
