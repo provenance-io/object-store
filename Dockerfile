@@ -1,4 +1,4 @@
-FROM rust:1.65 as builder
+FROM rust:1.65 AS builder
 
 RUN rustup component add rustfmt
 
@@ -9,7 +9,7 @@ RUN cargo install --locked --path .
 RUN GRPC_HEALTH_PROBE_VERSION=v0.4.2 && \
     wget -qO/bin/grpc_health_probe https://github.com/grpc-ecosystem/grpc-health-probe/releases/download/${GRPC_HEALTH_PROBE_VERSION}/grpc_health_probe-linux-amd64
 
-FROM debian:buster-slim
+FROM debian:bookworm-slim
 
 LABEL org.opencontainers.image.source=https://github.com/provenance-io/object-store
 
