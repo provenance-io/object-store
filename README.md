@@ -17,8 +17,8 @@
 [loc-report]: https://github.com/provenance-io/object-store
 
 A object storage system with a gRPC interface and strong encryption properties. Currently, only the
-[Provenance DIME](https://docs.provenance.io/p8e/overview/encrypted-object-store/dime-encryption-envelope-specification)
-format is accepted. Supporting material can be found [here](https://docs.provenance.io/p8e/overview/encrypted-object-store).
+[Provenance DIME](https://developer.provenance.io/docs/pb/p8e/overview/encrypted-object-store/dime-encryption-envelope-specification/)
+format is accepted. Supporting material can be found [here](https://developer.provenance.io/docs/pb/p8e/overview/encrypted-object-store/).
 
 This service can be used directly, but the most common case is to use this alongside the [P8e Execution Environment](https://github.com/provenance-io/p8e-scope-sdk)
 in order to process Provenance scopes and memorialize them on chain.
