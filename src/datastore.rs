@@ -514,7 +514,7 @@ UPDATE mailbox_public_key SET acked_at = $1 WHERE uuid = $2
 
         sqlx::query(query_str)
             .bind(Utc::now())
-            .bind(&uuid)
+            .bind(uuid)
             .execute(db)
             .await?
             .rows_affected()
@@ -641,7 +641,7 @@ RETURNING uuid, public_key, public_key_type, auth_type, auth_data, url, metadata
         Ok(record) => Ok(record),
         Err(sqlx::Error::Database(e)) => {
             if e.code() == Some(std::borrow::Cow::Borrowed("23505")) {
-                update_public_key(&db, public_key).await
+                update_public_key(db, public_key).await
             } else {
                 Err(sqlx::Error::Database(e)).map_err(Into::<OsError>::into)
             }
