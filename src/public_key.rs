@@ -47,20 +47,17 @@ impl PublicKeyService for PublicKeyGrpc {
         }
 
         // validate auth methods
-        match request.r#impl {
-            Some(HeaderAuthEnumRequest(ref auth)) => {
-                if auth.header.trim().is_empty() {
-                    return Err(Status::invalid_argument(
-                        "must specify non empty auth header",
-                    ));
-                }
-                if auth.value.trim().is_empty() {
-                    return Err(Status::invalid_argument(
-                        "must specify non empty auth value",
-                    ));
-                }
+        if let Some(HeaderAuthEnumRequest(ref auth)) = request.r#impl {
+            if auth.header.trim().is_empty() {
+                return Err(Status::invalid_argument(
+                    "must specify non empty auth header",
+                ));
             }
-            _ => (),
+            if auth.value.trim().is_empty() {
+                return Err(Status::invalid_argument(
+                    "must specify non empty auth value",
+                ));
+            }
         };
 
         // validate url if it is not empty

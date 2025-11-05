@@ -297,15 +297,9 @@ impl<T> CachedClient<T> {
     }
 
     pub fn wait_longer(&mut self) {
-        match self.state {
-            ClientState::Waiting(_, wait_time, max_wait_time) => {
-                self.state = ClientState::Waiting(
-                    Utc::now(),
-                    min(wait_time * 2, max_wait_time),
-                    max_wait_time,
-                )
-            }
-            _ => {}
+        if let ClientState::Waiting(_, wait_time, max_wait_time) = self.state {
+            self.state =
+                ClientState::Waiting(Utc::now(), min(wait_time * 2, max_wait_time), max_wait_time)
         }
     }
 }
