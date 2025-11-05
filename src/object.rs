@@ -87,7 +87,7 @@ impl ObjectService for ObjectGrpc {
         }
 
         // check validity of stream header
-        if chunk_buffer.len() < 1 {
+        if chunk_buffer.is_empty() {
             return Err(Status::invalid_argument("Multipart upload is empty"));
         }
         match chunk_buffer[0].r#impl {
@@ -208,9 +208,7 @@ impl ObjectService for ObjectGrpc {
             format_dime_bytes(&mut byte_buffer, owner_signature).map_err(Into::<OsError>::into)?;
         // Bytes clones are cheap
         let raw_dime = byte_buffer.clone();
-        let dime: Dime = byte_buffer
-            .try_into()
-            .map_err(|err| Into::<OsError>::into(err))?;
+        let dime: Dime = byte_buffer.try_into().map_err(Into::<OsError>::into)?;
         let dime_properties = DimeProperties {
             hash,
             content_length: header_chunk_header.content_length,
