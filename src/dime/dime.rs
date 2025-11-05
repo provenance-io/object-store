@@ -117,7 +117,7 @@ pub fn format_dime_bytes(input: &mut Bytes, owner_signature: Signature) -> Resul
 
     // remaining
     let length = input.remaining();
-    let mut remaining = vec![0; length as usize];
+    let mut remaining = vec![0; length];
     input.copy_to_slice(remaining.as_mut_slice());
     buffer.put_slice(remaining.as_slice());
 
