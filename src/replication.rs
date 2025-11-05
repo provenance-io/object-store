@@ -501,7 +501,7 @@ async fn replicate_iteration(inner: &mut ReplicationState, client_cache: &mut Cl
         match client_cache.request(&value.url).await {
             Ok(Some(client)) => {
                 futures.push(replicate_public_key(
-                    &inner,
+                    inner,
                     client,
                     public_key.clone(),
                     &value.url,
@@ -579,12 +579,12 @@ async fn reap_unknown_keys_iteration(db_pool: &Arc<PgPool>, cache: &Arc<Mutex<Ca
     let public_keys = cache.lock().unwrap().public_keys.clone();
 
     for (public_key, _) in public_keys.iter().filter(|(_, v)| v.url.is_empty()) {
-        let result = replication_object_uuids(&db_pool, &public_key, 1).await;
+        let result = replication_object_uuids(db_pool, public_key, 1).await;
 
         match result {
             Ok(result) => {
                 if !result.is_empty() {
-                    match reap_object_replication(&db_pool, &public_key).await {
+                    match reap_object_replication(db_pool, public_key).await {
                         Ok(rows_affected) => log::info!(
                             "Reaping public_key {} - rows_affected {}",
                             &public_key,
