@@ -152,13 +152,13 @@ impl ClientCache {
     /// Potential TODO: expire clients beyond a certain age to force reconnection.
     async fn request(
         &mut self,
-        url: &String,
+        url: &str,
     ) -> Result<Option<ID<ObjectServiceClient<tonic::transport::Channel>>>> {
-        let error_url = url.clone();
+        let error_url = url.to_owned();
         let min_wait_time = self.backoff_min_wait;
         let max_wait_time = self.backoff_max_wait;
 
-        match self.clients.entry(url.clone()) {
+        match self.clients.entry(url.to_owned()) {
             // A client was already marked as being created for the given url.
             // If it was returned via `restore`, take the client instance from
             // the cache entry and return it immediately. Otherwise, try to create a
@@ -170,7 +170,7 @@ impl ClientCache {
                     None => {
                         // if enough time has elapsed, we can try to create another client:
                         if cache_entry.ready_to_try() {
-                            match ObjectServiceClient::connect(url.clone()).await {
+                            match ObjectServiceClient::connect(url.to_owned()).await {
                                 Ok(client) => {
                                     // mark the client in the entry as used and return it:
                                     cache_entry.used();
@@ -198,7 +198,7 @@ impl ClientCache {
             // return it immediately, otherwise record the attempt and
             // signal the initial waiting period should begin before attempting
             // to create a client again.
-            Entry::Vacant(entry) => match ObjectServiceClient::connect(url.clone()).await {
+            Entry::Vacant(entry) => match ObjectServiceClient::connect(url.to_owned()).await {
                 Ok(client) => {
                     entry.insert(CachedClient::using());
                     Ok(Some(ID::new(client)))
@@ -218,17 +218,17 @@ impl ClientCache {
     /// to the `clients` map so it can be reused later.
     async fn restore(
         &mut self,
-        url: &String,
+        url: &str,
         client: ID<ObjectServiceClient<tonic::transport::Channel>>,
     ) -> Result<()> {
-        match self.clients.entry(url.clone()) {
+        match self.clients.entry(url.to_owned()) {
             Entry::Occupied(mut entry) => {
                 entry.get_mut().replace(client);
                 Ok(())
             }
             // Attempting to place a client into the map without having gone through
             // `request` is an error:
-            Entry::Vacant(_) => Err(ReplicationError::ClientCacheError(url.clone())),
+            Entry::Vacant(_) => Err(ReplicationError::ClientCacheError(url.to_owned())),
         }
     }
 }
@@ -376,7 +376,7 @@ async fn replicate_public_key(
     inner: &ReplicationState,
     mut client: ID<ObjectServiceClient<tonic::transport::Channel>>,
     public_key: PublicKey,
-    url: &String,
+    url: &str,
 ) -> std::result::Result<ReplicationOk, ReplicationErr> {
     // unfortunately, `?` cannot be used because `client` is considered moved into
     // `ReplicationResult:err`, whereas, the use of return makes the fact explicit
@@ -389,19 +389,19 @@ async fn replicate_public_key(
     .await
     {
         Ok(data) => data,
-        Err(e) => return Err(ReplicationErr::new(e, public_key, url.clone(), client)),
+        Err(e) => return Err(ReplicationErr::new(e, public_key, url.to_owned(), client)),
     };
 
     let batch_size = batch.len();
 
     if batch_size == 0 {
-        return Ok(ReplicationOk::new(public_key, url.clone(), 0, client));
+        return Ok(ReplicationOk::new(public_key, url.to_owned(), 0, client));
     }
 
     for (uuid, object_uuid) in batch.iter() {
         let object = match datastore::get_object_by_uuid(&inner.db_pool, object_uuid).await {
             Ok(data) => data,
-            Err(e) => return Err(ReplicationErr::new(e, public_key, url.clone(), client)),
+            Err(e) => return Err(ReplicationErr::new(e, public_key, url.to_owned(), client)),
         };
 
         let payload = if let Some(payload) = &object.payload {
@@ -422,7 +422,7 @@ async fn replicate_public_key(
                     return Err(ReplicationErr::new(
                         Into::<OsError>::into(e),
                         public_key,
-                        url.clone(),
+                        url.to_owned(),
                         client,
                     ))
                 }
@@ -461,7 +461,9 @@ async fn replicate_public_key(
             Ok(_) => {
                 match datastore::ack_object_replication(&inner.db_pool, uuid).await {
                     Ok(data) => data,
-                    Err(e) => return Err(ReplicationErr::new(e, public_key, url.clone(), client)),
+                    Err(e) => {
+                        return Err(ReplicationErr::new(e, public_key, url.to_owned(), client))
+                    }
                 };
             }
             Err(status) => {
@@ -477,7 +479,7 @@ async fn replicate_public_key(
 
     Ok(ReplicationOk::new(
         public_key,
-        url.clone(),
+        url.to_owned(),
         batch_size,
         client,
     ))
