@@ -7,6 +7,8 @@ use crate::pb::{
 };
 use crate::types::{OsError, Result};
 
+use base64::prelude::BASE64_STANDARD;
+use base64::Engine;
 use prost::Message;
 
 use std::time::SystemTime;
@@ -31,7 +33,7 @@ impl ObjectApiResponse for Object {
             dime_uuid: Some(Uuid {
                 value: self.dime_uuid.as_hyphenated().to_string(),
             }),
-            hash: base64::decode(&self.hash)?,
+            hash: BASE64_STANDARD.decode(&self.hash)?,
             uri: format!("object://{}/{}", &config.uri_host, &self.hash),
             bucket: config.storage_base_path.clone(),
             name: self.name.clone(),
@@ -51,8 +53,9 @@ pub trait PublicKeyApiResponse {
 
 impl PublicKeyApiResponse for PublicKey {
     fn to_response(self) -> Result<PublicKeyResponse> {
-        let key_bytes: Vec<u8> =
-            base64::decode(&self.public_key).map_err(|err| sqlx::Error::Decode(Box::new(err)))?;
+        let key_bytes: Vec<u8> = BASE64_STANDARD
+            .decode(&self.public_key)
+            .map_err(|err| sqlx::Error::Decode(Box::new(err)))?;
         let public_key = match self.public_key_type {
             KeyType::Secp256k1 => Key::Secp256k1(key_bytes),
         };

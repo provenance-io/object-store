@@ -14,6 +14,8 @@ use crate::{
     storage::{Storage, StoragePath},
 };
 
+use base64::prelude::BASE64_STANDARD;
+use base64::Engine;
 use bytes::{BufMut, Bytes, BytesMut};
 use futures_util::StreamExt;
 use linked_hash_map::LinkedHashMap;
@@ -182,17 +184,17 @@ impl ObjectService for ObjectGrpc {
 
         let hash = properties
             .get(consts::HASH_FIELD_NAME)
-            .map(base64::encode)
+            .map(|f| BASE64_STANDARD.encode(f))
             .ok_or(Status::invalid_argument("Properties must contain \"HASH\""))?;
         let signature = properties
             .get(consts::SIGNATURE_FIELD_NAME)
-            .map(base64::encode)
+            .map(|f| BASE64_STANDARD.encode(f))
             .ok_or(Status::invalid_argument(
                 "Properties must contain \"SIGNATURE_FIELD_NAME\"",
             ))?;
         let public_key = properties
             .get(consts::SIGNATURE_PUBLIC_KEY_FIELD_NAME)
-            .map(base64::encode)
+            .map(|f| BASE64_STANDARD.encode(f))
             .ok_or(Status::invalid_argument(
                 "Properties must contain \"SIGNATURE_PUBLIC_KEY_FIELD_NAME\"",
             ))?;
@@ -300,8 +302,8 @@ impl ObjectService for ObjectGrpc {
     async fn get(&self, request: Request<HashRequest>) -> GrpcResult<Response<Self::GetStream>> {
         let metadata = request.metadata().clone();
         let request = request.into_inner();
-        let hash = base64::encode(request.hash);
-        let public_key = base64::encode(&request.public_key);
+        let hash = BASE64_STANDARD.encode(request.hash);
+        let public_key = BASE64_STANDARD.encode(&request.public_key);
 
         if self.config.user_auth_enabled {
             let cache = self.cache.lock().unwrap();
@@ -542,7 +544,7 @@ pub mod tests {
         (
             Audience {
                 payload_id: 0,
-                public_key: base64::encode("1").into_bytes(),
+                public_key: BASE64_STANDARD.encode("1").into_bytes(),
                 context: 0,
                 tag: Vec::default(),
                 ephemeral_pubkey: Vec::default(),
@@ -559,7 +561,7 @@ pub mod tests {
         (
             Audience {
                 payload_id: 0,
-                public_key: base64::encode("2").into_bytes(),
+                public_key: BASE64_STANDARD.encode("2").into_bytes(),
                 context: 0,
                 tag: Vec::default(),
                 ephemeral_pubkey: Vec::default(),
@@ -576,7 +578,7 @@ pub mod tests {
         (
             Audience {
                 payload_id: 0,
-                public_key: base64::encode("3").into_bytes(),
+                public_key: BASE64_STANDARD.encode("3").into_bytes(),
                 context: 0,
                 tag: Vec::default(),
                 ephemeral_pubkey: Vec::default(),
@@ -838,7 +840,7 @@ pub mod tests {
                 let mut properties = LinkedHashMap::new();
                 properties.insert(
                     HASH_FIELD_NAME.to_owned(),
-                    base64::decode(object.hash).unwrap(),
+                    BASE64_STANDARD.decode(object.hash).unwrap(),
                 );
                 properties.insert(
                     SIGNATURE_FIELD_NAME.to_owned(),
@@ -961,7 +963,7 @@ pub mod tests {
                 let mut properties = LinkedHashMap::new();
                 properties.insert(
                     HASH_FIELD_NAME.to_owned(),
-                    base64::decode(object.hash).unwrap(),
+                    BASE64_STANDARD.decode(object.hash).unwrap(),
                 );
                 properties.insert(
                     SIGNATURE_FIELD_NAME.to_owned(),
@@ -1188,7 +1190,7 @@ pub mod tests {
             pb::object_service_client::ObjectServiceClient::connect("tcp://0.0.0.0:6789")
                 .await
                 .unwrap();
-        let public_key = base64::decode(audience.public_key).unwrap();
+        let public_key = audience.public_key_decoded();
         let request = HashRequest {
             hash: hash(payload),
             public_key,
@@ -1283,7 +1285,7 @@ pub mod tests {
             pb::object_service_client::ObjectServiceClient::connect("tcp://0.0.0.0:6789")
                 .await
                 .unwrap();
-        let public_key = base64::decode(audience.public_key).unwrap();
+        let public_key = audience.public_key_decoded();
         let request = HashRequest {
             hash: hash(payload),
             public_key,
@@ -1335,7 +1337,7 @@ pub mod tests {
             pb::object_service_client::ObjectServiceClient::connect("tcp://0.0.0.0:6789")
                 .await
                 .unwrap();
-        let public_key = base64::decode(audience.public_key).unwrap();
+        let public_key = audience.public_key_decoded();
         let mut request = Request::new(HashRequest {
             hash: hash(payload),
             public_key,
@@ -1389,7 +1391,7 @@ pub mod tests {
             pb::object_service_client::ObjectServiceClient::connect("tcp://0.0.0.0:6789")
                 .await
                 .unwrap();
-        let public_key = base64::decode(audience.public_key).unwrap();
+        let public_key = audience.public_key_decoded();
         let mut request = Request::new(HashRequest {
             hash: hash(payload),
             public_key,
@@ -1441,7 +1443,7 @@ pub mod tests {
             pb::object_service_client::ObjectServiceClient::connect("tcp://0.0.0.0:6789")
                 .await
                 .unwrap();
-        let public_key = base64::decode(audience.public_key).unwrap();
+        let public_key = audience.public_key_decoded();
         let request = HashRequest {
             hash: hash(payload),
             public_key,
@@ -1491,7 +1493,7 @@ pub mod tests {
             pb::object_service_client::ObjectServiceClient::connect("tcp://0.0.0.0:6789")
                 .await
                 .unwrap();
-        let public_key = base64::decode(audience3.public_key).unwrap();
+        let public_key = audience3.public_key_decoded();
         let request = HashRequest {
             hash: hash(payload),
             public_key,
@@ -1620,7 +1622,7 @@ pub mod tests {
             pb::object_service_client::ObjectServiceClient::connect("tcp://0.0.0.0:6789")
                 .await
                 .unwrap();
-        let public_key = base64::decode(audience3.public_key).unwrap();
+        let public_key = audience3.public_key_decoded();
         let request = HashRequest {
             hash: hash(payload),
             public_key,
@@ -1650,7 +1652,7 @@ pub mod tests {
             pb::object_service_client::ObjectServiceClient::connect("tcp://0.0.0.0:6789")
                 .await
                 .unwrap();
-        let public_key = base64::decode(audience1.public_key).unwrap();
+        let public_key = audience1.public_key_decoded();
         let request = HashRequest {
             hash: hash(payload),
             public_key,
@@ -1843,7 +1845,7 @@ pub mod tests {
                 assert_eq!(
                     replication_object_uuids(
                         &db,
-                        base64::encode(audience1.public_key).as_str(),
+                        BASE64_STANDARD.encode(audience1.public_key).as_str(),
                         50
                     )
                     .await
@@ -1854,7 +1856,7 @@ pub mod tests {
                 assert_eq!(
                     replication_object_uuids(
                         &db,
-                        base64::encode(audience2.public_key).as_str(),
+                        BASE64_STANDARD.encode(audience2.public_key).as_str(),
                         50
                     )
                     .await
@@ -1865,7 +1867,7 @@ pub mod tests {
                 assert_eq!(
                     replication_object_uuids(
                         &db,
-                        base64::encode(audience3.public_key).as_str(),
+                        BASE64_STANDARD.encode(audience3.public_key).as_str(),
                         50
                     )
                     .await
@@ -1918,7 +1920,7 @@ pub mod tests {
             pb::object_service_client::ObjectServiceClient::connect("tcp://0.0.0.0:6789")
                 .await
                 .unwrap();
-        let public_key = base64::decode(audience.public_key).unwrap();
+        let public_key = audience.public_key_decoded();
         let request = HashRequest {
             hash: hash(payload),
             public_key,

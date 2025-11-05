@@ -91,6 +91,8 @@ mod tests {
     use crate::pb::public_key_response::Impl::HeaderAuth as HeaderAuthEnumResponse;
     use crate::pb::{public_key::Key, HeaderAuth, PublicKey};
 
+    use base64::prelude::BASE64_STANDARD;
+    use base64::Engine;
     use testcontainers::images::postgres::Postgres;
     use testcontainers::*;
 
@@ -456,11 +458,11 @@ mod tests {
         assert_eq!(cache.public_keys.len(), 1);
         assert!(cache
             .public_keys
-            .contains_key(&base64::encode(&vec![1u8, 2u8, 3u8])));
+            .contains_key(&BASE64_STANDARD.encode(&vec![1u8, 2u8, 3u8])));
         assert_eq!(
             cache
                 .public_keys
-                .get(&base64::encode(&vec![1u8, 2u8, 3u8]))
+                .get(&BASE64_STANDARD.encode(&vec![1u8, 2u8, 3u8]))
                 .unwrap()
                 .url,
             String::from("")
@@ -499,11 +501,11 @@ mod tests {
         assert_eq!(cache.public_keys.len(), 1);
         assert!(cache
             .public_keys
-            .contains_key(&base64::encode(&vec![1u8, 2u8, 3u8])));
+            .contains_key(&BASE64_STANDARD.encode(&vec![1u8, 2u8, 3u8])));
         assert_ne!(
             cache
                 .public_keys
-                .get(&base64::encode(&vec![1u8, 2u8, 3u8]))
+                .get(&BASE64_STANDARD.encode(&vec![1u8, 2u8, 3u8]))
                 .unwrap()
                 .url,
             String::from("")

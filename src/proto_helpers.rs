@@ -1,4 +1,7 @@
-use crate::consts;
+use base64::prelude::BASE64_STANDARD;
+use base64::Engine;
+
+use crate::{consts, pb};
 use std::collections::HashMap;
 
 use crate::pb::chunk::Impl::{Data, End, Value};
@@ -74,5 +77,12 @@ pub fn create_stream_end() -> ChunkBidi {
 
     ChunkBidi {
         r#impl: Some(ChunkEnum(end)),
+    }
+}
+
+impl pb::Audience {
+    #[allow(dead_code)]
+    pub fn public_key_decoded(&self) -> Vec<u8> {
+        BASE64_STANDARD.decode(&self.public_key).unwrap()
     }
 }
