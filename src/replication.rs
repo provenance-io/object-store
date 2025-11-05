@@ -1438,7 +1438,7 @@ pub mod tests {
                     let response_one = response_one.into_inner();
                     let response_two = response_two.into_inner();
 
-                    for (one, two) in response_one.zip(response_two).next().await {
+                    if let Some((one, two)) = response_one.zip(response_two).next().await {
                         assert_eq!(one.unwrap(), two.unwrap());
                     }
                 }

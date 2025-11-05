@@ -151,7 +151,7 @@ where
                     trace_id,
                     parent_span_id,
                     span_id_prefix,
-                    spans: Box::new(spans),
+                    spans,
                 })
                 .await
                 .unwrap_or(());
@@ -168,7 +168,7 @@ pub struct MinitraceSpans {
     trace_id: u64,
     parent_span_id: u64,
     span_id_prefix: u32,
-    spans: Box<Vec<SpanRecord>>,
+    spans: Vec<SpanRecord>,
 }
 
 pub async fn report_datadog_traces(
