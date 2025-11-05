@@ -164,8 +164,8 @@ impl Config {
             percent_encoding::percent_encode(self.db_password.as_bytes(), NON_ALPHANUMERIC);
 
         format!(
-            "postgres://{}:{}@{}/{}",
-            self.db_user, password, self.db_host, self.db_database,
+            "postgres://{}:{}@{}:{}/{}",
+            self.db_user, password, self.db_host, self.db_port, self.db_database,
         )
     }
 }
