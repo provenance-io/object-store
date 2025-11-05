@@ -197,7 +197,7 @@ pub async fn report_datadog_traces(
                     spans.trace_id,
                     spans.parent_span_id,
                     spans.span_id_prefix,
-                    &*spans.spans,
+                    &spans.spans,
                 );
 
                 match bytes {
