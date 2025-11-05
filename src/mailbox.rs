@@ -89,12 +89,13 @@ impl MailboxService for MailboxGrpc {
                             object.uuid.as_hyphenated().to_string()
                         );
 
-                        if let Err(_) = tx
+                        if tx
                             .send(Err(tonic::Status::new(
                                 tonic::Code::Internal,
                                 "mailbox object without a payload",
                             )))
                             .await
+                            .is_err()
                         {
                             log::debug!("stream closed early");
                         }
@@ -102,7 +103,7 @@ impl MailboxService for MailboxGrpc {
                         return;
                     }
                 };
-                if let Err(_) = tx.send(Ok(payload)).await {
+                if tx.send(Ok(payload)).await.is_err() {
                     log::debug!("stream closed early");
                     return;
                 }

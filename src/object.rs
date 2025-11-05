@@ -361,7 +361,8 @@ impl ObjectService for ObjectGrpc {
             let msg = ChunkBidi {
                 r#impl: Some(MultiStreamHeaderEnum(header)),
             };
-            if let Err(_) = tx.send(Ok(msg)).await {
+
+            if (tx.send(Ok(msg)).await).is_err() {
                 log::debug!("stream closed early");
                 return;
             }
@@ -383,7 +384,8 @@ impl ObjectService for ObjectGrpc {
                 let msg = ChunkBidi {
                     r#impl: Some(ChunkEnum(data_chunk)),
                 };
-                if let Err(_) = tx.send(Ok(msg)).await {
+
+                if (tx.send(Ok(msg)).await).is_err() {
                     log::debug!("stream closed early");
                     return;
                 }
@@ -397,7 +399,8 @@ impl ObjectService for ObjectGrpc {
             let msg = ChunkBidi {
                 r#impl: Some(ChunkEnum(end)),
             };
-            if let Err(_) = tx.send(Ok(msg)).await {
+
+            if (tx.send(Ok(msg)).await).is_err() {
                 log::debug!("stream closed early");
                 return;
             }
