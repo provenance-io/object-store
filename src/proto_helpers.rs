@@ -51,11 +51,14 @@ pub fn create_stream_header_field(key: String, value: Vec<u8>) -> ChunkBidi {
 }
 
 pub fn create_data_chunk(content_length: Option<i64>, chunk: Vec<u8>) -> ChunkBidi {
-    let header = content_length.map(|len| StreamHeader {
-        name: consts::DIME_FIELD_NAME.to_owned(),
-        content_length: len,
-    });
-
+    let header = if let Some(content_length) = content_length {
+        Some(StreamHeader {
+            name: consts::DIME_FIELD_NAME.to_owned(),
+            content_length,
+        })
+    } else {
+        None
+    };
     let data_chunk = Chunk {
         header,
         r#impl: Some(Data(chunk)),
