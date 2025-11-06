@@ -89,15 +89,15 @@ mod tests {
 
     use crate::storage::*;
 
-    use rand::distributions::Alphanumeric;
-    use rand::{thread_rng, Rng};
+    use rand::distr::Alphanumeric;
+    use rand::{rng, Rng};
 
     #[tokio::test]
     async fn store_file() {
         let storage = FileSystem {
             base_url: std::env::temp_dir(),
         };
-        let rand_string: String = thread_rng()
+        let rand_string: String = rng()
             .sample_iter(&Alphanumeric)
             .take(10)
             .map(char::from)
@@ -116,7 +116,7 @@ mod tests {
         let storage = FileSystem {
             base_url: std::env::temp_dir(),
         };
-        let rand_string: String = thread_rng()
+        let rand_string: String = rng()
             .sample_iter(&Alphanumeric)
             .take(10)
             .map(char::from)
@@ -183,7 +183,7 @@ mod tests {
         let storage = FileSystem {
             base_url: std::env::temp_dir(),
         };
-        let rand_string: String = thread_rng()
+        let rand_string: String = rng()
             .sample_iter(&Alphanumeric)
             .take(10)
             .map(char::from)
@@ -203,7 +203,7 @@ mod tests {
         let storage = FileSystem {
             base_url: std::env::temp_dir(),
         };
-        let rand_string: String = thread_rng()
+        let rand_string: String = rng()
             .sample_iter(&Alphanumeric)
             .take(10)
             .map(char::from)
@@ -224,7 +224,7 @@ mod tests {
         let storage = FileSystem {
             base_url: std::env::temp_dir(),
         };
-        let rand_string: String = thread_rng()
+        let rand_string: String = rng()
             .sample_iter(&Alphanumeric)
             .take(10)
             .map(char::from)
