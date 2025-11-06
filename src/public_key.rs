@@ -89,8 +89,6 @@ mod tests {
     use crate::pb::{public_key::Key, HeaderAuth, PublicKey};
 
     use base64::prelude::BASE64_STANDARD;
-    use base64::prelude::BASE64_STANDARD;
-    use base64::Engine;
     use base64::Engine;
     use testcontainers::images::postgres::Postgres;
     use testcontainers::*;
