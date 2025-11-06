@@ -1,5 +1,6 @@
 {
     "recommendations": [
-        "rust-lang.rust-analyzer"
+        "fill-labs.dependi",
+        "rust-lang.rust-analyzer",
     ]
 }
