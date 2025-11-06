@@ -39,6 +39,10 @@ impl From<PgQueryResult> for UpsertOutcome {
     }
 }
 
+#[allow(
+    dead_code,
+    reason = "https://github.com/provenance-io/object-store/issues/47"
+)]
 #[derive(Debug)]
 pub struct Object {
     pub uuid: uuid::Uuid,
@@ -81,6 +85,10 @@ impl FromRow<'_, sqlx::postgres::PgRow> for Object {
     }
 }
 
+#[allow(
+    dead_code,
+    reason = "https://github.com/provenance-io/object-store/issues/47"
+)]
 #[derive(FromRow, Debug)]
 pub struct ObjectPublicKey {
     pub object_uuid: uuid::Uuid,
@@ -89,6 +97,10 @@ pub struct ObjectPublicKey {
     pub created_at: DateTime<Utc>,
 }
 
+#[allow(
+    dead_code,
+    reason = "https://github.com/provenance-io/object-store/issues/47"
+)]
 #[derive(FromRow, Debug)]
 pub struct MailboxPublicKey {
     pub uuid: uuid::Uuid,
