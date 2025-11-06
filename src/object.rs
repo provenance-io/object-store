@@ -776,7 +776,6 @@ pub mod tests {
 
     pub async fn delete_properties(db: &PgPool, object_uuid: &uuid::Uuid) -> u64 {
         let query_str = "UPDATE object SET properties = null WHERE uuid = $1";
-        
 
         sqlx::query(query_str)
             .bind(object_uuid)

@@ -901,9 +901,7 @@ pub mod tests {
         // Check that ReplicationState connection caching works when given the same URL:
         let client_one = client_cache.request(&url_one).await.unwrap().unwrap();
         // the result from calling again with the same URL should be empty since the client is in use:
-        assert!(
-            client_cache.request(&url_one).await.unwrap().is_none()
-        );
+        assert!(client_cache.request(&url_one).await.unwrap().is_none());
 
         let client_one_id_first = *client_one.id();
         client_cache.restore(&url_one, client_one).await.unwrap();
