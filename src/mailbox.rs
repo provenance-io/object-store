@@ -89,12 +89,13 @@ impl MailboxService for MailboxGrpc {
                             object.uuid.as_hyphenated().to_string()
                         );
 
-                        if let Err(_) = tx
+                        if tx
                             .send(Err(tonic::Status::new(
                                 tonic::Code::Internal,
                                 "mailbox object without a payload",
                             )))
                             .await
+                            .is_err()
                         {
                             log::debug!("stream closed early");
                         }
@@ -102,7 +103,7 @@ impl MailboxService for MailboxGrpc {
                         return;
                     }
                 };
-                if let Err(_) = tx.send(Ok(payload)).await {
+                if tx.send(Ok(payload)).await.is_err() {
                     log::debug!("stream closed early");
                     return;
                 }
@@ -221,7 +222,7 @@ mod tests {
             });
             let cache = Mutex::new(cache);
             let config = default_config.unwrap_or(test_config());
-            let url = config.url.clone();
+            let url = config.url;
             let pool = setup_postgres(postgres_port).await;
             let pool = Arc::new(pool);
             let cache = Arc::new(cache);

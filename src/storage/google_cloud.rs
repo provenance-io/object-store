@@ -32,7 +32,7 @@ impl GoogleCloud {
 impl Storage for GoogleCloud {
     #[trace("google_cloud::store")]
     async fn store(&self, path: &StoragePath, content_length: u64, data: &[u8]) -> Result<()> {
-        if let Err(e) = self.validate_content_length(&path, content_length, &data) {
+        if let Err(e) = self.validate_content_length(path, content_length, data) {
             log::warn!("{:?}", e);
         }
 
@@ -59,7 +59,7 @@ impl Storage for GoogleCloud {
             .await
             .map_err(|e| StorageError::IoError(format!("{:?}", e)))?;
 
-        if let Err(e) = self.validate_content_length(&path, content_length, &data) {
+        if let Err(e) = self.validate_content_length(path, content_length, &data) {
             log::warn!("{:?}", e);
         }
 

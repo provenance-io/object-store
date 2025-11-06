@@ -87,7 +87,7 @@ impl ObjectService for ObjectGrpc {
         }
 
         // check validity of stream header
-        if chunk_buffer.len() < 1 {
+        if chunk_buffer.is_empty() {
             return Err(Status::invalid_argument("Multipart upload is empty"));
         }
         match chunk_buffer[0].r#impl {
@@ -208,9 +208,7 @@ impl ObjectService for ObjectGrpc {
             format_dime_bytes(&mut byte_buffer, owner_signature).map_err(Into::<OsError>::into)?;
         // Bytes clones are cheap
         let raw_dime = byte_buffer.clone();
-        let dime: Dime = byte_buffer
-            .try_into()
-            .map_err(|err| Into::<OsError>::into(err))?;
+        let dime: Dime = byte_buffer.try_into().map_err(Into::<OsError>::into)?;
         let dime_properties = DimeProperties {
             hash,
             content_length: header_chunk_header.content_length,
@@ -363,7 +361,8 @@ impl ObjectService for ObjectGrpc {
             let msg = ChunkBidi {
                 r#impl: Some(MultiStreamHeaderEnum(header)),
             };
-            if let Err(_) = tx.send(Ok(msg)).await {
+
+            if (tx.send(Ok(msg)).await).is_err() {
                 log::debug!("stream closed early");
                 return;
             }
@@ -385,7 +384,8 @@ impl ObjectService for ObjectGrpc {
                 let msg = ChunkBidi {
                     r#impl: Some(ChunkEnum(data_chunk)),
                 };
-                if let Err(_) = tx.send(Ok(msg)).await {
+
+                if (tx.send(Ok(msg)).await).is_err() {
                     log::debug!("stream closed early");
                     return;
                 }
@@ -399,9 +399,9 @@ impl ObjectService for ObjectGrpc {
             let msg = ChunkBidi {
                 r#impl: Some(ChunkEnum(end)),
             };
-            if let Err(_) = tx.send(Ok(msg)).await {
+
+            if (tx.send(Ok(msg)).await).is_err() {
                 log::debug!("stream closed early");
-                return;
             }
         });
 
@@ -474,7 +474,7 @@ pub mod tests {
 
         let pool = PgPoolOptions::new()
             .max_connections(5)
-            .connect(&connection_string)
+            .connect(connection_string)
             .await
             .unwrap();
 
@@ -516,7 +516,7 @@ pub mod tests {
             });
             let cache = Mutex::new(cache);
             let config = default_config.unwrap_or(test_config());
-            let url = config.url.clone();
+            let url = config.url;
             let pool = setup_postgres(postgres_port).await;
             let storage = FileSystem::new(config.storage_base_path.as_str());
             let object_service = ObjectGrpc {
@@ -643,7 +643,7 @@ pub mod tests {
         packets.push(msg);
 
         let mut buffer = BytesMut::new();
-        buffer.put_u32(0x44494D45 as u32);
+        buffer.put_u32(0x44494D45_u32);
         buffer.put_u16(1);
         buffer.put_u32(16);
         buffer.put_u128(dime.uuid.as_u128());
@@ -776,14 +776,13 @@ pub mod tests {
 
     pub async fn delete_properties(db: &PgPool, object_uuid: &uuid::Uuid) -> u64 {
         let query_str = "UPDATE object SET properties = null WHERE uuid = $1";
-        let rows_affected = sqlx::query(&query_str)
+
+        sqlx::query(query_str)
             .bind(object_uuid)
             .execute(db)
             .await
             .unwrap()
-            .rows_affected();
-
-        rows_affected
+            .rows_affected()
     }
 
     pub async fn get_mailbox_keys_by_object(

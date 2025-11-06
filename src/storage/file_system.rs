@@ -44,7 +44,7 @@ impl FileSystem {
 impl Storage for FileSystem {
     #[trace("file_system::store")]
     async fn store(&self, path: &StoragePath, content_length: u64, data: &[u8]) -> Result<()> {
-        if let Err(e) = self.validate_content_length(&path, content_length, &data) {
+        if let Err(e) = self.validate_content_length(path, content_length, data) {
             log::warn!("{:?}", e);
         }
 
@@ -62,8 +62,8 @@ impl Storage for FileSystem {
             Err(e) => match e.kind() {
                 std::io::ErrorKind::AlreadyExists => Ok(()),
                 std::io::ErrorKind::NotFound => {
-                    self.create_dir(&path).await?;
-                    self.store(&path, content_length, data).await
+                    self.create_dir(path).await?;
+                    self.store(path, content_length, data).await
                 }
                 _ => Err(StorageError::IoError(format!("{:?}", e))),
             },
@@ -76,7 +76,7 @@ impl Storage for FileSystem {
             .await
             .map_err(|e| StorageError::IoError(format!("{:?}", e)))?;
 
-        if let Err(e) = self.validate_content_length(&path, content_length, &data) {
+        if let Err(e) = self.validate_content_length(path, content_length, &data) {
             log::warn!("{:?}", e);
         }
 

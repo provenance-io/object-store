@@ -152,13 +152,13 @@ impl ClientCache {
     /// Potential TODO: expire clients beyond a certain age to force reconnection.
     async fn request(
         &mut self,
-        url: &String,
+        url: &str,
     ) -> Result<Option<ID<ObjectServiceClient<tonic::transport::Channel>>>> {
-        let error_url = url.clone();
+        let error_url = url.to_owned();
         let min_wait_time = self.backoff_min_wait;
         let max_wait_time = self.backoff_max_wait;
 
-        match self.clients.entry(url.clone()) {
+        match self.clients.entry(url.to_owned()) {
             // A client was already marked as being created for the given url.
             // If it was returned via `restore`, take the client instance from
             // the cache entry and return it immediately. Otherwise, try to create a
@@ -170,7 +170,7 @@ impl ClientCache {
                     None => {
                         // if enough time has elapsed, we can try to create another client:
                         if cache_entry.ready_to_try() {
-                            match ObjectServiceClient::connect(url.clone()).await {
+                            match ObjectServiceClient::connect(url.to_owned()).await {
                                 Ok(client) => {
                                     // mark the client in the entry as used and return it:
                                     cache_entry.used();
@@ -198,7 +198,7 @@ impl ClientCache {
             // return it immediately, otherwise record the attempt and
             // signal the initial waiting period should begin before attempting
             // to create a client again.
-            Entry::Vacant(entry) => match ObjectServiceClient::connect(url.clone()).await {
+            Entry::Vacant(entry) => match ObjectServiceClient::connect(url.to_owned()).await {
                 Ok(client) => {
                     entry.insert(CachedClient::using());
                     Ok(Some(ID::new(client)))
@@ -218,17 +218,17 @@ impl ClientCache {
     /// to the `clients` map so it can be reused later.
     async fn restore(
         &mut self,
-        url: &String,
+        url: &str,
         client: ID<ObjectServiceClient<tonic::transport::Channel>>,
     ) -> Result<()> {
-        match self.clients.entry(url.clone()) {
+        match self.clients.entry(url.to_owned()) {
             Entry::Occupied(mut entry) => {
                 entry.get_mut().replace(client);
                 Ok(())
             }
             // Attempting to place a client into the map without having gone through
             // `request` is an error:
-            Entry::Vacant(_) => Err(ReplicationError::ClientCacheError(url.clone())),
+            Entry::Vacant(_) => Err(ReplicationError::ClientCacheError(url.to_owned())),
         }
     }
 }
@@ -297,15 +297,9 @@ impl<T> CachedClient<T> {
     }
 
     pub fn wait_longer(&mut self) {
-        match self.state {
-            ClientState::Waiting(_, wait_time, max_wait_time) => {
-                self.state = ClientState::Waiting(
-                    Utc::now(),
-                    min(wait_time * 2, max_wait_time),
-                    max_wait_time,
-                )
-            }
-            _ => {}
+        if let ClientState::Waiting(_, wait_time, max_wait_time) = self.state {
+            self.state =
+                ClientState::Waiting(Utc::now(), min(wait_time * 2, max_wait_time), max_wait_time)
         }
     }
 }
@@ -376,7 +370,7 @@ async fn replicate_public_key(
     inner: &ReplicationState,
     mut client: ID<ObjectServiceClient<tonic::transport::Channel>>,
     public_key: PublicKey,
-    url: &String,
+    url: &str,
 ) -> std::result::Result<ReplicationOk, ReplicationErr> {
     // unfortunately, `?` cannot be used because `client` is considered moved into
     // `ReplicationResult:err`, whereas, the use of return makes the fact explicit
@@ -389,19 +383,19 @@ async fn replicate_public_key(
     .await
     {
         Ok(data) => data,
-        Err(e) => return Err(ReplicationErr::new(e, public_key, url.clone(), client)),
+        Err(e) => return Err(ReplicationErr::new(e, public_key, url.to_owned(), client)),
     };
 
     let batch_size = batch.len();
 
     if batch_size == 0 {
-        return Ok(ReplicationOk::new(public_key, url.clone(), 0, client));
+        return Ok(ReplicationOk::new(public_key, url.to_owned(), 0, client));
     }
 
     for (uuid, object_uuid) in batch.iter() {
         let object = match datastore::get_object_by_uuid(&inner.db_pool, object_uuid).await {
             Ok(data) => data,
-            Err(e) => return Err(ReplicationErr::new(e, public_key, url.clone(), client)),
+            Err(e) => return Err(ReplicationErr::new(e, public_key, url.to_owned(), client)),
         };
 
         let payload = if let Some(payload) = &object.payload {
@@ -422,7 +416,7 @@ async fn replicate_public_key(
                     return Err(ReplicationErr::new(
                         Into::<OsError>::into(e),
                         public_key,
-                        url.clone(),
+                        url.to_owned(),
                         client,
                     ))
                 }
@@ -461,7 +455,9 @@ async fn replicate_public_key(
             Ok(_) => {
                 match datastore::ack_object_replication(&inner.db_pool, uuid).await {
                     Ok(data) => data,
-                    Err(e) => return Err(ReplicationErr::new(e, public_key, url.clone(), client)),
+                    Err(e) => {
+                        return Err(ReplicationErr::new(e, public_key, url.to_owned(), client))
+                    }
                 };
             }
             Err(status) => {
@@ -477,7 +473,7 @@ async fn replicate_public_key(
 
     Ok(ReplicationOk::new(
         public_key,
-        url.clone(),
+        url.to_owned(),
         batch_size,
         client,
     ))
@@ -501,7 +497,7 @@ async fn replicate_iteration(inner: &mut ReplicationState, client_cache: &mut Cl
         match client_cache.request(&value.url).await {
             Ok(Some(client)) => {
                 futures.push(replicate_public_key(
-                    &inner,
+                    inner,
                     client,
                     public_key.clone(),
                     &value.url,
@@ -579,12 +575,12 @@ async fn reap_unknown_keys_iteration(db_pool: &Arc<PgPool>, cache: &Arc<Mutex<Ca
     let public_keys = cache.lock().unwrap().public_keys.clone();
 
     for (public_key, _) in public_keys.iter().filter(|(_, v)| v.url.is_empty()) {
-        let result = replication_object_uuids(&db_pool, &public_key, 1).await;
+        let result = replication_object_uuids(db_pool, public_key, 1).await;
 
         match result {
             Ok(result) => {
                 if !result.is_empty() {
-                    match reap_object_replication(&db_pool, &public_key).await {
+                    match reap_object_replication(db_pool, public_key).await {
                         Ok(rows_affected) => log::info!(
                             "Reaping public_key {} - rows_affected {}",
                             &public_key,
@@ -723,7 +719,7 @@ pub mod tests {
 
         let pool = PgPoolOptions::new()
             .max_connections(5)
-            .connect(&connection_string)
+            .connect(connection_string)
             .await
             .unwrap();
 
@@ -772,7 +768,7 @@ pub mod tests {
             set_cache(&mut cache);
             let cache = Mutex::new(cache);
             let config = config_override.unwrap_or(test_config_one());
-            let url = config.url.clone();
+            let url = config.url;
             let pool = setup_postgres(postgres_port).await;
             let storage = FileSystem::new(config.storage_base_path.as_str());
             let cache = Arc::new(cache);
@@ -814,7 +810,7 @@ pub mod tests {
             set_cache(&mut cache);
             let cache = Mutex::new(cache);
             let config = test_config_two();
-            let url = config.url.clone();
+            let url = config.url;
             let pool = setup_postgres(postgres_port).await;
             let storage = FileSystem::new(config.storage_base_path.as_str());
             let cache = Arc::new(cache);
@@ -905,16 +901,13 @@ pub mod tests {
         // Check that ReplicationState connection caching works when given the same URL:
         let client_one = client_cache.request(&url_one).await.unwrap().unwrap();
         // the result from calling again with the same URL should be empty since the client is in use:
-        assert_eq!(
-            client_cache.request(&url_one).await.unwrap().is_none(),
-            true
-        );
+        assert!(client_cache.request(&url_one).await.unwrap().is_none());
 
-        let client_one_id_first = client_one.id().clone();
+        let client_one_id_first = *client_one.id();
         client_cache.restore(&url_one, client_one).await.unwrap();
         // we should get an instance again:
         let client_one = client_cache.request(&url_one).await.unwrap().unwrap();
-        let client_one_id_second = client_one.id().clone();
+        let client_one_id_second = *client_one.id();
         // The IDs of the the two clients should be the same, since they originated from the
         // same URL:
         assert_eq!(client_one_id_first, client_one_id_second);
@@ -923,13 +916,13 @@ pub mod tests {
 
         let client_two = client_cache.request(&url_two).await.unwrap();
         // client 2 should be empty because server two is not running:
-        assert_eq!(client_two.is_none(), true);
+        assert!(client_two.is_none());
 
         let _state_two = start_server_two(postgres_port_two).await;
         let client_two = client_cache.request(&url_two).await.unwrap();
         // client 2 will still fail even if state_two is ready because there's still time to wait
         // out until the client can attempt to be created again.
-        assert_eq!(client_two.is_none(), true);
+        assert!(client_two.is_none());
 
         // wait a little more and it should work:
         tokio::time::sleep(tokio::time::Duration::from_millis(5_000)).await;
@@ -1436,7 +1429,7 @@ pub mod tests {
                     let response_one = response_one.into_inner();
                     let response_two = response_two.into_inner();
 
-                    for (one, two) in response_one.zip(response_two).next().await {
+                    if let Some((one, two)) = response_one.zip(response_two).next().await {
                         assert_eq!(one.unwrap(), two.unwrap());
                     }
                 }

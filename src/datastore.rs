@@ -39,6 +39,10 @@ impl From<PgQueryResult> for UpsertOutcome {
     }
 }
 
+#[allow(
+    dead_code,
+    reason = "https://github.com/provenance-io/object-store/issues/47"
+)]
 #[derive(Debug)]
 pub struct Object {
     pub uuid: uuid::Uuid,
@@ -81,6 +85,10 @@ impl FromRow<'_, sqlx::postgres::PgRow> for Object {
     }
 }
 
+#[allow(
+    dead_code,
+    reason = "https://github.com/provenance-io/object-store/issues/47"
+)]
 #[derive(FromRow, Debug)]
 pub struct ObjectPublicKey {
     pub object_uuid: uuid::Uuid,
@@ -89,6 +97,10 @@ pub struct ObjectPublicKey {
     pub created_at: DateTime<Utc>,
 }
 
+#[allow(
+    dead_code,
+    reason = "https://github.com/provenance-io/object-store/issues/47"
+)]
 #[derive(FromRow, Debug)]
 pub struct MailboxPublicKey {
     pub uuid: uuid::Uuid,
@@ -331,7 +343,7 @@ UPDATE object_replication SET replicated_at = $1 WHERE uuid = $2
 
     let rows_affected = sqlx::query(query_str)
         .bind(Utc::now())
-        .bind(&uuid)
+        .bind(uuid)
         .execute(db)
         .await?
         .rows_affected();
@@ -502,8 +514,8 @@ UPDATE mailbox_public_key SET acked_at = $1 WHERE uuid = $2 AND public_key = $3
 
         sqlx::query(query_str)
             .bind(Utc::now())
-            .bind(&uuid)
-            .bind(&public_key)
+            .bind(uuid)
+            .bind(public_key)
             .execute(db)
             .await?
             .rows_affected()
@@ -514,7 +526,7 @@ UPDATE mailbox_public_key SET acked_at = $1 WHERE uuid = $2
 
         sqlx::query(query_str)
             .bind(Utc::now())
-            .bind(&uuid)
+            .bind(uuid)
             .execute(db)
             .await?
             .rows_affected()
@@ -554,12 +566,12 @@ ON CONFLICT DO NOTHING
 
     let uuid = uuid::Uuid::new_v4();
     let query = sqlx::query(query_str)
-        .bind(&uuid)
-        .bind(&dime.uuid)
+        .bind(uuid)
+        .bind(dime.uuid)
         .bind(&dime_properties.hash)
         .bind(&unique_hash)
-        .bind(&dime_properties.content_length)
-        .bind(&dime_properties.dime_length);
+        .bind(dime_properties.content_length)
+        .bind(dime_properties.dime_length);
     let query = if let Some(raw_dime) = raw_dime {
         query
             .bind(NOT_STORAGE_BACKED)
@@ -570,7 +582,7 @@ ON CONFLICT DO NOTHING
             .bind(raw_dime.to_vec())
     } else {
         query
-            .bind(&uuid)
+            .bind(uuid)
             .bind(serde_json::to_string(properties).map_err(|e| {
                 sqlx::Error::Protocol(format!("Error serializing \"properties\" {:?}", e))
             })?)
@@ -610,7 +622,7 @@ RETURNING uuid, public_key, public_key_type, auth_type, auth_data, url, metadata
         "#)
         .bind(&public_key.public_key)
         .bind(&public_key.url)
-        .bind(&public_key.metadata.as_slice())
+        .bind(public_key.metadata.as_slice())
         .bind(&public_key.auth_type)
         .bind(&public_key.auth_data)
         .fetch_one(db)
@@ -627,7 +639,7 @@ INSERT INTO public_key (uuid, public_key, public_key_type, auth_type, auth_data,
 VALUES ($1, $2, $3::key_type, $4::auth_type, $5, $6, $7)
 RETURNING uuid, public_key, public_key_type, auth_type, auth_data, url, metadata, created_at, updated_at
         "#)
-        .bind(&public_key.uuid)
+        .bind(public_key.uuid)
         .bind(&public_key.public_key)
         .bind(&public_key.public_key_type)
         .bind(&public_key.auth_type)
@@ -641,12 +653,12 @@ RETURNING uuid, public_key, public_key_type, auth_type, auth_data, url, metadata
         Ok(record) => Ok(record),
         Err(sqlx::Error::Database(e)) => {
             if e.code() == Some(std::borrow::Cow::Borrowed("23505")) {
-                update_public_key(&db, public_key).await
+                update_public_key(db, public_key).await
             } else {
-                Err(sqlx::Error::Database(e)).map_err(Into::<OsError>::into)
+                Err(Into::<OsError>::into(sqlx::Error::Database(e)))
             }
         }
-        Err(e) => Err(e).map_err(Into::<OsError>::into),
+        Err(e) => Err(Into::<OsError>::into(e)),
     }
 }
 

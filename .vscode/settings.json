@@ -1,0 +1,8 @@
+{
+    "editor.formatOnSave": true,
+    "editor.formatOnSaveMode": "modificationsIfAvailable",
+    "[rust]": {
+        "editor.defaultFormatter": "rust-lang.rust-analyzer",
+    },
+    "dependi.decoration.compatible.template": "",
+}

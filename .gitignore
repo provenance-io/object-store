@@ -1,3 +1,7 @@
 /target
 /storage_bucket
 /key-file
+
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json

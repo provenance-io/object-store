@@ -36,7 +36,7 @@ pub struct Config {
     pub user_auth_enabled: bool,
 }
 
-const BASE_SPAN_TAGS: [(&'static str, &'static str); 3] = [
+const BASE_SPAN_TAGS: [(&str, &str); 3] = [
     ("component", "grpc-server"),
     ("language", "rust"),
     ("span.kind", "server"),
@@ -164,8 +164,8 @@ impl Config {
             percent_encoding::percent_encode(self.db_password.as_bytes(), NON_ALPHANUMERIC);
 
         format!(
-            "postgres://{}:{}@{}/{}",
-            self.db_user, password, self.db_host, self.db_database,
+            "postgres://{}:{}@{}:{}/{}",
+            self.db_user, password, self.db_host, self.db_port, self.db_database,
         )
     }
 }
