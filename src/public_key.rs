@@ -101,7 +101,7 @@ mod tests {
 
         let pool = PgPoolOptions::new()
             .max_connections(5)
-            .connect(&connection_string)
+            .connect(connection_string)
             .await
             .unwrap();
 
@@ -169,15 +169,15 @@ mod tests {
         match response {
             Ok(result) => {
                 let result = result.into_inner();
-                assert!(!result.uuid.is_none());
+                assert!(result.uuid.is_some());
                 assert_eq!(
                     result.public_key.unwrap().key.unwrap(),
                     Key::Secp256k1(vec![1u8, 2u8, 3u8])
                 );
                 assert!(result.url.is_empty());
                 assert!(result.metadata.is_none());
-                assert!(!result.created_at.is_none());
-                assert!(!result.updated_at.is_none());
+                assert!(result.created_at.is_some());
+                assert!(result.updated_at.is_some());
             }
             _ => {
                 assert_eq!(format!("{:?}", response), "");
@@ -350,7 +350,7 @@ mod tests {
         let (uuid, url) = match response {
             Ok(result) => {
                 let result = result.into_inner();
-                assert!(!result.uuid.is_none());
+                assert!(result.uuid.is_some());
                 (result.uuid, result.url)
             }
             _ => {
@@ -364,7 +364,7 @@ mod tests {
         match response {
             Ok(result) => {
                 let result = result.into_inner();
-                assert!(!result.uuid.is_none());
+                assert!(result.uuid.is_some());
                 assert_eq!(uuid, result.uuid);
                 assert_ne!(url, result.url);
                 assert_eq!("http://test2.com", result.url);
@@ -402,7 +402,7 @@ mod tests {
         match response {
             Ok(result) => {
                 let result = result.into_inner();
-                assert!(!result.uuid.is_none());
+                assert!(result.uuid.is_some());
                 assert_eq!(
                     result.public_key.unwrap().key.unwrap(),
                     Key::Secp256k1(vec![1u8, 2u8, 3u8])
@@ -416,8 +416,8 @@ mod tests {
                 );
                 assert_eq!(result.url, String::from("http://test.com"));
                 assert!(result.metadata.is_none());
-                assert!(!result.created_at.is_none());
-                assert!(!result.updated_at.is_none());
+                assert!(result.created_at.is_some());
+                assert!(result.updated_at.is_some());
             }
             _ => assert_eq!(format!("{:?}", response), ""),
         }
@@ -455,11 +455,11 @@ mod tests {
         assert_eq!(cache.public_keys.len(), 1);
         assert!(cache
             .public_keys
-            .contains_key(&BASE64_STANDARD.encode(&vec![1u8, 2u8, 3u8])));
+            .contains_key(&BASE64_STANDARD.encode(vec![1u8, 2u8, 3u8])));
         assert_eq!(
             cache
                 .public_keys
-                .get(&BASE64_STANDARD.encode(&vec![1u8, 2u8, 3u8]))
+                .get(&BASE64_STANDARD.encode(vec![1u8, 2u8, 3u8]))
                 .unwrap()
                 .url,
             String::from("")
@@ -498,11 +498,11 @@ mod tests {
         assert_eq!(cache.public_keys.len(), 1);
         assert!(cache
             .public_keys
-            .contains_key(&BASE64_STANDARD.encode(&vec![1u8, 2u8, 3u8])));
+            .contains_key(&BASE64_STANDARD.encode(vec![1u8, 2u8, 3u8])));
         assert_ne!(
             cache
                 .public_keys
-                .get(&BASE64_STANDARD.encode(&vec![1u8, 2u8, 3u8]))
+                .get(&BASE64_STANDARD.encode(vec![1u8, 2u8, 3u8]))
                 .unwrap()
                 .url,
             String::from("")

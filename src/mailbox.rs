@@ -222,7 +222,7 @@ mod tests {
             });
             let cache = Mutex::new(cache);
             let config = default_config.unwrap_or(test_config());
-            let url = config.url.clone();
+            let url = config.url;
             let pool = setup_postgres(postgres_port).await;
             let pool = Arc::new(pool);
             let cache = Arc::new(cache);

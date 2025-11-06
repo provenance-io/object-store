@@ -402,7 +402,6 @@ impl ObjectService for ObjectGrpc {
 
             if (tx.send(Ok(msg)).await).is_err() {
                 log::debug!("stream closed early");
-                return;
             }
         });
 
@@ -475,7 +474,7 @@ pub mod tests {
 
         let pool = PgPoolOptions::new()
             .max_connections(5)
-            .connect(&connection_string)
+            .connect(connection_string)
             .await
             .unwrap();
 
@@ -517,7 +516,7 @@ pub mod tests {
             });
             let cache = Mutex::new(cache);
             let config = default_config.unwrap_or(test_config());
-            let url = config.url.clone();
+            let url = config.url;
             let pool = setup_postgres(postgres_port).await;
             let storage = FileSystem::new(config.storage_base_path.as_str());
             let object_service = ObjectGrpc {
@@ -644,7 +643,7 @@ pub mod tests {
         packets.push(msg);
 
         let mut buffer = BytesMut::new();
-        buffer.put_u32(0x44494D45 as u32);
+        buffer.put_u32(0x44494D45_u32);
         buffer.put_u16(1);
         buffer.put_u32(16);
         buffer.put_u128(dime.uuid.as_u128());
@@ -777,14 +776,14 @@ pub mod tests {
 
     pub async fn delete_properties(db: &PgPool, object_uuid: &uuid::Uuid) -> u64 {
         let query_str = "UPDATE object SET properties = null WHERE uuid = $1";
-        let rows_affected = sqlx::query(&query_str)
+        
+
+        sqlx::query(query_str)
             .bind(object_uuid)
             .execute(db)
             .await
             .unwrap()
-            .rows_affected();
-
-        rows_affected
+            .rows_affected()
     }
 
     pub async fn get_mailbox_keys_by_object(

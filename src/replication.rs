@@ -719,7 +719,7 @@ pub mod tests {
 
         let pool = PgPoolOptions::new()
             .max_connections(5)
-            .connect(&connection_string)
+            .connect(connection_string)
             .await
             .unwrap();
 
@@ -768,7 +768,7 @@ pub mod tests {
             set_cache(&mut cache);
             let cache = Mutex::new(cache);
             let config = config_override.unwrap_or(test_config_one());
-            let url = config.url.clone();
+            let url = config.url;
             let pool = setup_postgres(postgres_port).await;
             let storage = FileSystem::new(config.storage_base_path.as_str());
             let cache = Arc::new(cache);
@@ -810,7 +810,7 @@ pub mod tests {
             set_cache(&mut cache);
             let cache = Mutex::new(cache);
             let config = test_config_two();
-            let url = config.url.clone();
+            let url = config.url;
             let pool = setup_postgres(postgres_port).await;
             let storage = FileSystem::new(config.storage_base_path.as_str());
             let cache = Arc::new(cache);
@@ -901,16 +901,15 @@ pub mod tests {
         // Check that ReplicationState connection caching works when given the same URL:
         let client_one = client_cache.request(&url_one).await.unwrap().unwrap();
         // the result from calling again with the same URL should be empty since the client is in use:
-        assert_eq!(
-            client_cache.request(&url_one).await.unwrap().is_none(),
-            true
+        assert!(
+            client_cache.request(&url_one).await.unwrap().is_none()
         );
 
-        let client_one_id_first = client_one.id().clone();
+        let client_one_id_first = *client_one.id();
         client_cache.restore(&url_one, client_one).await.unwrap();
         // we should get an instance again:
         let client_one = client_cache.request(&url_one).await.unwrap().unwrap();
-        let client_one_id_second = client_one.id().clone();
+        let client_one_id_second = *client_one.id();
         // The IDs of the the two clients should be the same, since they originated from the
         // same URL:
         assert_eq!(client_one_id_first, client_one_id_second);
@@ -919,13 +918,13 @@ pub mod tests {
 
         let client_two = client_cache.request(&url_two).await.unwrap();
         // client 2 should be empty because server two is not running:
-        assert_eq!(client_two.is_none(), true);
+        assert!(client_two.is_none());
 
         let _state_two = start_server_two(postgres_port_two).await;
         let client_two = client_cache.request(&url_two).await.unwrap();
         // client 2 will still fail even if state_two is ready because there's still time to wait
         // out until the client can attempt to be created again.
-        assert_eq!(client_two.is_none(), true);
+        assert!(client_two.is_none());
 
         // wait a little more and it should work:
         tokio::time::sleep(tokio::time::Duration::from_millis(5_000)).await;

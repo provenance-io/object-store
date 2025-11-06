@@ -655,10 +655,10 @@ RETURNING uuid, public_key, public_key_type, auth_type, auth_data, url, metadata
             if e.code() == Some(std::borrow::Cow::Borrowed("23505")) {
                 update_public_key(db, public_key).await
             } else {
-                Err(sqlx::Error::Database(e)).map_err(Into::<OsError>::into)
+                Err(Into::<OsError>::into(sqlx::Error::Database(e)))
             }
         }
-        Err(e) => Err(e).map_err(Into::<OsError>::into),
+        Err(e) => Err(Into::<OsError>::into(e)),
     }
 }
 
