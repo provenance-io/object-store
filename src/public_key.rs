@@ -455,11 +455,11 @@ mod tests {
         assert_eq!(cache.public_keys.len(), 1);
         assert!(cache
             .public_keys
-            .contains_key(&BASE64_STANDARD.encode(vec![1u8, 2u8, 3u8])));
+            .contains_key(&BASE64_STANDARD.encode(&vec![1u8, 2u8, 3u8])));
         assert_eq!(
             cache
                 .public_keys
-                .get(&BASE64_STANDARD.encode(vec![1u8, 2u8, 3u8]))
+                .get(&BASE64_STANDARD.encode(&vec![1u8, 2u8, 3u8]))
                 .unwrap()
                 .url,
             String::from("")
@@ -498,11 +498,11 @@ mod tests {
         assert_eq!(cache.public_keys.len(), 1);
         assert!(cache
             .public_keys
-            .contains_key(&BASE64_STANDARD.encode(vec![1u8, 2u8, 3u8])));
+            .contains_key(&BASE64_STANDARD.encode(&vec![1u8, 2u8, 3u8])));
         assert_ne!(
             cache
                 .public_keys
-                .get(&BASE64_STANDARD.encode(vec![1u8, 2u8, 3u8]))
+                .get(&BASE64_STANDARD.encode(&vec![1u8, 2u8, 3u8]))
                 .unwrap()
                 .url,
             String::from("")
