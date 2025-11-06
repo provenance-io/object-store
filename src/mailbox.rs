@@ -7,6 +7,8 @@ use crate::{
     config::Config,
 };
 
+use base64::prelude::BASE64_STANDARD;
+use base64::Engine;
 use minitrace_macro::trace;
 use sqlx::postgres::PgPool;
 use std::{
@@ -43,7 +45,7 @@ impl MailboxService for MailboxGrpc {
     async fn get(&self, request: Request<GetRequest>) -> GrpcResult<Response<Self::GetStream>> {
         let metadata = request.metadata().clone();
         let request = request.into_inner();
-        let public_key = base64::encode(&request.public_key);
+        let public_key = BASE64_STANDARD.encode(&request.public_key);
 
         if self.config.user_auth_enabled {
             let cache = self.cache.lock().unwrap();
@@ -128,7 +130,7 @@ impl MailboxService for MailboxGrpc {
         let public_key = if request.public_key.is_empty() {
             None
         } else {
-            Some(base64::encode(&request.public_key))
+            Some(BASE64_STANDARD.encode(&request.public_key))
         };
 
         if self.config.user_auth_enabled {
@@ -268,7 +270,7 @@ mod tests {
         audience: Audience,
         expected_size: usize,
     ) {
-        let public_key = base64::decode(&audience.public_key).unwrap();
+        let public_key = audience.public_key_decoded();
         let request = GetRequest {
             public_key,
             max_results: 50,
@@ -309,7 +311,7 @@ mod tests {
         expected_size: usize,
         grpc_metadata: Vec<(&'static str, &'static str)>,
     ) {
-        let public_key = base64::decode(&audience.public_key).unwrap();
+        let public_key = audience.public_key_decoded();
         let mut request = Request::new(GetRequest {
             public_key: public_key.clone(),
             max_results: 50,
@@ -715,7 +717,7 @@ mod tests {
             _ => assert_eq!(format!("{:?}", response), ""),
         }
 
-        let public_key = base64::decode(&audience2.public_key).unwrap();
+        let public_key = audience2.public_key_decoded();
         let mut request = Request::new(GetRequest {
             public_key,
             max_results: 50,
@@ -773,7 +775,7 @@ mod tests {
             _ => assert_eq!(format!("{:?}", response), ""),
         }
 
-        let public_key = base64::decode(&audience2.public_key).unwrap();
+        let public_key = audience2.public_key_decoded();
         let mut request = Request::new(AckRequest {
             uuid: response.unwrap().into_inner().uuid,
             public_key,
@@ -831,7 +833,7 @@ mod tests {
             _ => assert_eq!(format!("{:?}", response), ""),
         }
 
-        let public_key = base64::decode(&audience2.public_key).unwrap();
+        let public_key = audience2.public_key_decoded();
         let request = Request::new(GetRequest {
             public_key,
             max_results: 50,
@@ -887,7 +889,7 @@ mod tests {
             _ => assert_eq!(format!("{:?}", response), ""),
         }
 
-        let public_key = base64::decode(&audience2.public_key).unwrap();
+        let public_key = audience2.public_key_decoded();
         let request = Request::new(AckRequest {
             uuid: response.unwrap().into_inner().uuid,
             public_key,

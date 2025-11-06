@@ -9,6 +9,8 @@ use crate::pb::public_key_request::Impl::HeaderAuth as HeaderAuthEnumRequest;
 use crate::pb::{public_key::Key, PublicKeyRequest};
 use crate::types::{OsError, Result};
 
+use base64::prelude::BASE64_STANDARD;
+use base64::Engine;
 use bytes::{Bytes, BytesMut};
 use chrono::prelude::*;
 use futures_util::TryStreamExt;
@@ -151,7 +153,7 @@ impl TryFrom<PublicKeyRequest> for PublicKey {
 
     fn try_from(request: PublicKeyRequest) -> Result<Self> {
         let (public_key_type, public_key) = match request.public_key.unwrap().key.unwrap() {
-            Key::Secp256k1(data) => (KeyType::Secp256k1, base64::encode(data)),
+            Key::Secp256k1(data) => (KeyType::Secp256k1, BASE64_STANDARD.encode(data)),
         };
         let metadata = if let Some(metadata) = request.metadata {
             let mut buffer = BytesMut::with_capacity(metadata.encoded_len());

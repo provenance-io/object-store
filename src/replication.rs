@@ -1422,7 +1422,7 @@ pub mod tests {
         let mut client_one = get_client_one().await;
         let mut client_two = get_client_two().await;
 
-        let public_key = base64::decode(audience3.public_key).unwrap();
+        let public_key = audience3.public_key_decoded();
         let request = pb::HashRequest {
             hash: hash(payload),
             public_key,
