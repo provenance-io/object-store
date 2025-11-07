@@ -91,11 +91,9 @@ impl Storage for FileSystem {
 
 #[cfg(test)]
 mod tests {
-
     use crate::storage::*;
 
-    use rand::distr::Alphanumeric;
-    use rand::{rng, Rng};
+    use rand::distr::{Alphanumeric, SampleString};
 
     impl FileSystem {
         fn temp() -> FileSystem {
@@ -109,15 +107,13 @@ mod tests {
     async fn store_file() {
         let storage = FileSystem::temp();
 
-        let rand_string: String = rng()
-            .sample_iter(&Alphanumeric)
-            .take(10)
-            .map(char::from)
-            .collect();
+        let rand_string = Alphanumeric.sample_string(&mut rand::rng(), 10);
+
         let path = StoragePath {
             dir: rand_string.clone(),
             file: rand_string,
         };
+
         let data = b"hello world";
 
         assert!(storage.store(&path, 11_u64, data).await.is_ok());
@@ -127,11 +123,8 @@ mod tests {
     async fn idempotent_store_file() {
         let storage = FileSystem::temp();
 
-        let rand_string: String = rng()
-            .sample_iter(&Alphanumeric)
-            .take(10)
-            .map(char::from)
-            .collect();
+        let rand_string: String = Alphanumeric.sample_string(&mut rand::rng(), 10);
+
         let path = StoragePath {
             dir: rand_string.clone(),
             file: rand_string,
@@ -193,11 +186,8 @@ mod tests {
     async fn fetch_nonexistent_file() {
         let storage = FileSystem::temp();
 
-        let rand_string: String = rng()
-            .sample_iter(&Alphanumeric)
-            .take(10)
-            .map(char::from)
-            .collect();
+        let rand_string: String = Alphanumeric.sample_string(&mut rand::rng(), 10);
+
         let path = StoragePath {
             dir: rand_string,
             file: "nonexistent".to_owned(),
@@ -212,11 +202,7 @@ mod tests {
     async fn fetch_file() {
         let storage = FileSystem::temp();
 
-        let rand_string: String = rng()
-            .sample_iter(&Alphanumeric)
-            .take(10)
-            .map(char::from)
-            .collect();
+        let rand_string: String = Alphanumeric.sample_string(&mut rand::rng(), 10);
         let path = StoragePath {
             dir: rand_string.clone(),
             file: rand_string,
@@ -232,11 +218,8 @@ mod tests {
     async fn create_dir_that_exists() {
         let storage = FileSystem::temp();
 
-        let rand_string: String = rng()
-            .sample_iter(&Alphanumeric)
-            .take(10)
-            .map(char::from)
-            .collect();
+        let rand_string: String = Alphanumeric.sample_string(&mut rand::rng(), 10);
+
         let path = StoragePath {
             dir: rand_string.clone(),
             file: rand_string,
