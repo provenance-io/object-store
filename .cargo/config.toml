@@ -1,5 +1,4 @@
 [target.'cfg(all())']
 rustflags = [
     "-Dclippy::suspicious",
-    "-Aclippy::module_inception", # https://github.com/provenance-io/object-store/issues/47
 ]
