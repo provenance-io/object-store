@@ -12,6 +12,7 @@ pub struct FileSystem {
 }
 
 impl FileSystem {
+    /// Create new file system with `base_url` as the root
     pub fn new(base_url: &str) -> Self {
         FileSystem {
             base_url: PathBuf::from(base_url),
@@ -27,6 +28,9 @@ impl FileSystem {
         path_buf
     }
 
+    /// Create directory `base_url + path.dir`
+    ///
+    /// Returns Ok(()) if created or if it already exists
     #[trace("file_system::create_dir")]
     async fn create_dir(&self, path: &StoragePath) -> Result<()> {
         let path_buf = self.base_url.join(&path.dir);
@@ -93,11 +97,18 @@ mod tests {
     use rand::distr::Alphanumeric;
     use rand::{rng, Rng};
 
+    impl FileSystem {
+        fn temp() -> FileSystem {
+            FileSystem {
+                base_url: std::env::temp_dir(),
+            }
+        }
+    }
+
     #[tokio::test]
     async fn store_file() {
-        let storage = FileSystem {
-            base_url: std::env::temp_dir(),
-        };
+        let storage = FileSystem::temp();
+
         let rand_string: String = rng()
             .sample_iter(&Alphanumeric)
             .take(10)
@@ -114,9 +125,8 @@ mod tests {
 
     #[tokio::test]
     async fn idempotent_store_file() {
-        let storage = FileSystem {
-            base_url: std::env::temp_dir(),
-        };
+        let storage = FileSystem::temp();
+
         let rand_string: String = rng()
             .sample_iter(&Alphanumeric)
             .take(10)
@@ -181,9 +191,8 @@ mod tests {
 
     #[tokio::test]
     async fn fetch_nonexistent_file() {
-        let storage = FileSystem {
-            base_url: std::env::temp_dir(),
-        };
+        let storage = FileSystem::temp();
+
         let rand_string: String = rng()
             .sample_iter(&Alphanumeric)
             .take(10)
@@ -201,9 +210,8 @@ mod tests {
 
     #[tokio::test]
     async fn fetch_file() {
-        let storage = FileSystem {
-            base_url: std::env::temp_dir(),
-        };
+        let storage = FileSystem::temp();
+
         let rand_string: String = rng()
             .sample_iter(&Alphanumeric)
             .take(10)
@@ -222,9 +230,8 @@ mod tests {
 
     #[tokio::test]
     async fn create_dir_that_exists() {
-        let storage = FileSystem {
-            base_url: std::env::temp_dir(),
-        };
+        let storage = FileSystem::temp();
+
         let rand_string: String = rng()
             .sample_iter(&Alphanumeric)
             .take(10)
