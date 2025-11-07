@@ -18,6 +18,9 @@ impl FileSystem {
         }
     }
 
+    /// Constructs full path for the file
+    ///
+    /// base_url + path.dir + path.file
     fn get_path(&self, path: &StoragePath) -> PathBuf {
         let mut path_buf = self.base_url.clone();
         path_buf.push(&path.dir);
