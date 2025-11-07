@@ -21,7 +21,7 @@ impl FileSystem {
     fn get_path(&self, path: &StoragePath) -> PathBuf {
         let mut path_buf = self.base_url.clone();
         path_buf.push(&path.dir);
-        path_buf.push(&path.file);
+        path_buf.set_file_name(&path.file);
         path_buf
     }
 
