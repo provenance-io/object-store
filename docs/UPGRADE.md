@@ -121,3 +121,66 @@ Name               Project  Compat   Latest   Kind
 ----               -------  ------   ------   ----
 serial_test        0.6.0    3.2.0    3.2.0    Development
 ```
+### Patch upgrades
+Per LLM:
+Here are the major changes for each upgrade:
+
+#### async-trait (0.1.53 → 0.1.89)
+**Documentation:** https://docs.rs/async-trait
+
+- [ ] **0.1.68+**: Added support for `async fn` in traits (natively supported in Rust 1.75+), though the macro still provides value for older compiler versions and additional features
+- [ ] **0.1.74**: Improved handling of `Self` in return position impl trait
+- [ ] **0.1.77**: Better support for generic associated types (GATs)
+- [x] **Multiple versions**: Continuous improvements to compile times and macro expansion quality
+- [x] **Throughout**: Bug fixes for edge cases with lifetimes, bounds, and where clauses
+
+#### chrono (0.4.23 → 0.4.42)
+**Documentation:** https://docs.rs/chrono
+
+- [ ] **0.4.31**: Major security and correctness fixes for timezone handling
+- [x] **0.4.35+**: Significant internal refactoring to reduce unsafe code
+- [ ] **0.4.38**: New `DateTime::from_timestamp` API (replacing deprecated methods)
+- [ ] **0.4.42**: Improved error handling and deprecation of some footgun APIs
+- [x] **Overall**: Better WASM support, performance improvements, and preparation for 0.5.0 breaking changes
+
+#### futures (0.3.19 → 0.3.31)
+**Documentation:** https://docs.rs/futures
+
+- [ ] **0.3.21**: Added `FuturesUnordered::into_iter`
+- [ ] **0.3.28**: Improvements to `select!` macro
+- [ ] **0.3.30**: Better support for `async fn` in traits
+- [x] **Throughout**: Performance optimizations, better error messages, and compatibility fixes for newer Rust versions
+
+#### futures-util (0.3.19 → 0.3.31)
+**Documentation:** https://docs.rs/futures-util
+
+Same changes as `futures` above since this is part of the same workspace. Notable additions:
+- [ ] Enhanced stream combinators
+- [ ] Better `AsyncRead`/`AsyncWrite` utilities
+- [ ] Improvements to buffering and IO helpers
+
+#### minstant (0.1.2 → 0.1.7)
+**Documentation:** https://docs.rs/minstant
+
+This is a small crate providing `std::time::Instant` that works on WASM:
+- [ ] **0.1.3-0.1.7**: Primarily WASM target improvements and bug fixes
+- [ ] Better accuracy for web targets
+- [x] Reduced dependencies
+
+#### serde_json (1.0.91 → 1.0.145)
+**Documentation:** https://docs.rs/serde_json
+
+- [ ] **1.0.96**: Added `Map::shift_insert` and `Map::shift_remove`
+- [x] **1.0.108**: Performance improvements for string escaping
+- [ ] **1.0.116+**: Better error messages with context
+- [ ] **1.0.120+**: Improved handling of arbitrary precision numbers
+- [ ] **1.0.132**: `Value::pointer_mut` added for mutable JSON pointer access
+- [x] **Throughout**: Significant performance optimizations, especially for serialization
+
+#### tokio-stream (0.1.11 → 0.1.17)
+**Documentation:** https://docs.rs/tokio-stream
+
+- [ ] **0.1.12**: Added `StreamExt::take_until`
+- [ ] **0.1.14**: Better integration with `tokio::sync` primitives
+- [ ] **0.1.15**: New `StreamExt::then` combinator improvements
+- [ ] **Throughout**: Bug fixes and API refinements aligned with Tokio's evolution
