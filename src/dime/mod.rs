@@ -365,15 +365,16 @@ mod tests {
         buffer.put_slice(json.as_slice());
         buffer.put_u32(10);
         buffer.put_slice(b"valid uri!");
-        let mut signatures = Vec::new();
-        signatures.push(Signature {
-            signature: "signature".to_owned(),
-            public_key: "public_key".to_owned(),
-        });
-        signatures.push(Signature {
-            signature: "signature".to_owned(),
-            public_key: "public_key".to_owned(),
-        });
+        let signatures = Vec::from([
+            Signature {
+                signature: "signature".to_owned(),
+                public_key: "public_key".to_owned(),
+            },
+            Signature {
+                signature: "signature".to_owned(),
+                public_key: "public_key".to_owned(),
+            },
+        ]);
         let json = serde_json::to_vec(&signatures).unwrap();
         buffer.put_u32(json.len().try_into().unwrap());
         buffer.put_slice(json.as_slice());
