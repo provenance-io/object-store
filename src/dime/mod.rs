@@ -294,10 +294,11 @@ mod tests {
         buffer.put_u16(1);
         buffer.put_u32(16);
         buffer.put_u128(300);
-        let mut metadata = HashMap::new();
-        metadata.insert("one".to_owned(), "1".to_owned());
-        metadata.insert("two".to_owned(), "2".to_owned());
-        metadata.insert("three".to_owned(), "3".to_owned());
+        let metadata = HashMap::from([
+            ("one".into(), "1".into()),
+            ("two".into(), "2".into()),
+            ("three".into(), "3".into()),
+        ]);
         let json = serde_json::to_vec(&metadata).unwrap();
         buffer.put_u32(json.len().try_into().unwrap());
         buffer.put_slice(json.as_slice());
@@ -354,10 +355,11 @@ mod tests {
         buffer.put_u16(1);
         buffer.put_u32(16);
         buffer.put_u128(300);
-        let mut metadata = HashMap::new();
-        metadata.insert("one".to_owned(), "1".to_owned());
-        metadata.insert("two".to_owned(), "2".to_owned());
-        metadata.insert("three".to_owned(), "3".to_owned());
+        let metadata = HashMap::from([
+            ("one".into(), "1".into()),
+            ("two".into(), "2".into()),
+            ("three".into(), "3".into()),
+        ]);
         let json = serde_json::to_vec(&metadata).unwrap();
         buffer.put_u32(json.len().try_into().unwrap());
         buffer.put_slice(json.as_slice());
@@ -423,10 +425,11 @@ mod tests {
         buffer.put_u16(1);
         buffer.put_u32(16);
         buffer.put_u128(300);
-        let mut metadata = HashMap::new();
-        metadata.insert("one".to_owned(), "1".to_owned());
-        metadata.insert("two".to_owned(), "2".to_owned());
-        metadata.insert("three".to_owned(), "3".to_owned());
+        let metadata = HashMap::from([
+            ("one".into(), "1".into()),
+            ("two".into(), "2".into()),
+            ("three".into(), "3".into()),
+        ]);
         let json = serde_json::to_vec(&metadata).unwrap();
         buffer.put_u32(json.len().try_into().unwrap());
         buffer.put_slice(json.as_slice());
