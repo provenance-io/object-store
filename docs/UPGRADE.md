@@ -169,18 +169,21 @@ This is a small crate providing `std::time::Instant` that works on WASM:
 
 #### serde_json (1.0.91 → 1.0.145)
 **Documentation:** https://docs.rs/serde_json
+**Releases:** https://github.com/serde-rs/json/releases
 
 - [ ] **1.0.96**: Added `Map::shift_insert` and `Map::shift_remove`
 - [x] **1.0.108**: Performance improvements for string escaping
 - [ ] **1.0.116+**: Better error messages with context
 - [ ] **1.0.120+**: Improved handling of arbitrary precision numbers
 - [ ] **1.0.132**: `Value::pointer_mut` added for mutable JSON pointer access
+- [ ] **1.0.145**: Raise serde version requirement to >=1.0.220
 - [x] **Throughout**: Significant performance optimizations, especially for serialization
 
 #### tokio-stream (0.1.11 → 0.1.17)
 **Documentation:** https://docs.rs/tokio-stream
+**Changelog:** https://github.com/tokio-rs/tokio/blob/master/tokio-stream/CHANGELOG.md
 
 - [ ] **0.1.12**: Added `StreamExt::take_until`
-- [ ] **0.1.14**: Better integration with `tokio::sync` primitives
+- [ ] **0.1.14**: Better integration with `tokio::sync` primitives, minimum version of Tokio 1.15
 - [ ] **0.1.15**: New `StreamExt::then` combinator improvements
 - [ ] **Throughout**: Bug fixes and API refinements aligned with Tokio's evolution
