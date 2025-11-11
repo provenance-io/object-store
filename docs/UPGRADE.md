@@ -81,18 +81,6 @@ url                2.3.1    2.5.7    2.5.7    Normal
 uuid               1.2.2    1.18.1   1.18.1   Normal
 ```
 ### Sorted
-#### Patch
-```
-Name               Project  Compat   Latest   Kind
-----               -------  ------   ------   ----
-async-trait        0.1.53   0.1.89   0.1.89   Normal
-chrono             0.4.23   0.4.42   0.4.42   Normal
-futures            0.3.19   0.3.31   0.3.31   Normal
-futures-util       0.3.19   0.3.31   0.3.31   Normal
-minstant           0.1.2    0.1.7    0.1.7    Normal
-serde_json         1.0.91   1.0.145  1.0.145  Normal
-tokio-stream       0.1.11   0.1.17   0.1.17   Normal
-```
 #### Minor
 ```
 Name               Project  Compat   Latest   Kind
