@@ -125,14 +125,6 @@ serial_test        0.6.0    3.2.0    3.2.0    Development
 Per LLM:
 Here are the major changes for each upgrade:
 
-#### minstant (0.1.2 → 0.1.7)
-**Documentation:** https://docs.rs/minstant
-
-This is a small crate providing `std::time::Instant` that works on WASM:
-- [ ] **0.1.3-0.1.7**: Primarily WASM target improvements and bug fixes
-- [ ] Better accuracy for web targets
-- [x] Reduced dependencies
-
 #### serde_json (1.0.91 → 1.0.145)
 **Documentation:** https://docs.rs/serde_json
 **Releases:** https://github.com/serde-rs/json/releases
