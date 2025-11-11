@@ -125,15 +125,6 @@ serial_test        0.6.0    3.2.0    3.2.0    Development
 Per LLM:
 Here are the major changes for each upgrade:
 
-#### chrono (0.4.23 → 0.4.42)
-**Documentation:** https://docs.rs/chrono
-
-- [ ] **0.4.31**: Major security and correctness fixes for timezone handling
-- [x] **0.4.35+**: Significant internal refactoring to reduce unsafe code
-- [ ] **0.4.38**: New `DateTime::from_timestamp` API (replacing deprecated methods)
-- [ ] **0.4.42**: Improved error handling and deprecation of some footgun APIs
-- [x] **Overall**: Better WASM support, performance improvements, and preparation for 0.5.0 breaking changes
-
 #### futures (0.3.19 → 0.3.31)
 **Documentation:** https://docs.rs/futures
 
