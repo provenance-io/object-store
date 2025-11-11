@@ -121,18 +121,3 @@ Name               Project  Compat   Latest   Kind
 ----               -------  ------   ------   ----
 serial_test        0.6.0    3.2.0    3.2.0    Development
 ```
-### Patch upgrades
-Per LLM:
-Here are the major changes for each upgrade:
-
-#### serde_json (1.0.91 → 1.0.145)
-**Documentation:** https://docs.rs/serde_json
-**Releases:** https://github.com/serde-rs/json/releases
-
-- [ ] **1.0.96**: Added `Map::shift_insert` and `Map::shift_remove`
-- [x] **1.0.108**: Performance improvements for string escaping
-- [ ] **1.0.116+**: Better error messages with context
-- [ ] **1.0.120+**: Improved handling of arbitrary precision numbers
-- [ ] **1.0.132**: `Value::pointer_mut` added for mutable JSON pointer access
-- [ ] **1.0.145**: Raise serde version requirement to >=1.0.220
-- [x] **Throughout**: Significant performance optimizations, especially for serialization
