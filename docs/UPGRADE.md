@@ -125,22 +125,6 @@ serial_test        0.6.0    3.2.0    3.2.0    Development
 Per LLM:
 Here are the major changes for each upgrade:
 
-#### futures (0.3.19 → 0.3.31)
-**Documentation:** https://docs.rs/futures
-
-- [ ] **0.3.21**: Added `FuturesUnordered::into_iter`
-- [ ] **0.3.28**: Improvements to `select!` macro
-- [ ] **0.3.30**: Better support for `async fn` in traits
-- [x] **Throughout**: Performance optimizations, better error messages, and compatibility fixes for newer Rust versions
-
-#### futures-util (0.3.19 → 0.3.31)
-**Documentation:** https://docs.rs/futures-util
-
-Same changes as `futures` above since this is part of the same workspace. Notable additions:
-- [ ] Enhanced stream combinators
-- [ ] Better `AsyncRead`/`AsyncWrite` utilities
-- [ ] Improvements to buffering and IO helpers
-
 #### minstant (0.1.2 → 0.1.7)
 **Documentation:** https://docs.rs/minstant
 
