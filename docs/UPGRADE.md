@@ -125,15 +125,6 @@ serial_test        0.6.0    3.2.0    3.2.0    Development
 Per LLM:
 Here are the major changes for each upgrade:
 
-#### async-trait (0.1.53 → 0.1.89)
-**Documentation:** https://docs.rs/async-trait
-
-- [ ] **0.1.68+**: Added support for `async fn` in traits (natively supported in Rust 1.75+), though the macro still provides value for older compiler versions and additional features
-- [ ] **0.1.74**: Improved handling of `Self` in return position impl trait
-- [ ] **0.1.77**: Better support for generic associated types (GATs)
-- [x] **Multiple versions**: Continuous improvements to compile times and macro expansion quality
-- [x] **Throughout**: Bug fixes for edge cases with lifetimes, bounds, and where clauses
-
 #### chrono (0.4.23 → 0.4.42)
 **Documentation:** https://docs.rs/chrono
 
