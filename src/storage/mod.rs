@@ -42,7 +42,7 @@ pub trait Storage: Send + Sync + std::fmt::Debug {
     }
 }
 
-pub fn new_storage(config: Arc<Config>) -> core::result::Result<Arc<Box<dyn Storage>>, OsError> {
+pub fn new_storage(config: &Config) -> core::result::Result<Arc<Box<dyn Storage>>, OsError> {
     let storage = match config.storage_type.as_str() {
         "file_system" => Ok(Box::new(FileSystem::new(PathBuf::from(
             config.storage_base_path.as_str(),

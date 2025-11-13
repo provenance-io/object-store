@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use object_store::{
     cache::Cache,
@@ -14,7 +14,7 @@ use testcontainers::{clients, images, RunnableImage};
 
 use crate::common::test_config;
 
-mod common;
+pub mod common;
 
 #[tokio::test]
 async fn test() {
@@ -23,22 +23,26 @@ async fn test() {
     let container = docker.run(image);
     let postgres_port = container.get_host_port_ipv4(5432);
 
-    let config = Arc::new(test_config(postgres_port));
+    println!("Postgres container started on {}", postgres_port);
+
+    let config = test_config(postgres_port);
 
     let storage = FileSystem::new(std::env::temp_dir());
 
-    let pool = connect_and_migrate(config.clone()).await.unwrap();
+    let pool = connect_and_migrate(&config).await.unwrap();
 
-    let cache = Arc::new(Mutex::new(Cache::default()));
+    let cache = Cache::new(pool.clone()).await.unwrap();
+
+    let config = Arc::new(config);
 
     let public_key_service = PublicKeyGrpc::new(cache.clone(), pool.clone());
     let mailbox_service = MailboxGrpc::new(cache.clone(), config.clone(), pool.clone());
-    let object_service = ObjectGrpc {
-        cache,
-        config: config.clone(),
-        db_pool: pool.clone(),
-        storage: Arc::new(Box::new(storage)),
-    };
+    let object_service = ObjectGrpc::new(
+        cache.clone(),
+        config.clone(),
+        pool.clone(),
+        Arc::new(Box::new(storage)),
+    );
 
     let health_service = init_health_service(pool.clone()).await;
 

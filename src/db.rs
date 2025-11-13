@@ -4,7 +4,7 @@ use sqlx::{postgres::PgPoolOptions, Error, Executor, PgPool};
 
 use crate::config::Config;
 
-pub async fn connect_and_migrate(config: Arc<Config>) -> Result<Arc<PgPool>, Error> {
+pub async fn connect_and_migrate(config: &Config) -> Result<Arc<PgPool>, Error> {
     let schema = config.db_schema.clone();
 
     let pool = PgPoolOptions::new()

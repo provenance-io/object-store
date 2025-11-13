@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use object_store::cache::Cache;
 use object_store::config::Config;
 use object_store::mailbox::MailboxGrpc;
@@ -17,13 +19,15 @@ use object_store::db::connect_and_migrate;
 async fn main() -> Result<()> {
     env_logger::init();
 
-    let config = Config::new();
+    let config = Config::from_env();
 
-    let storage = new_storage(config.clone())?;
+    let storage = new_storage(&config)?;
 
-    let pool = connect_and_migrate(config.clone()).await?;
+    let pool = connect_and_migrate(&config).await?;
 
     let cache = Cache::new(pool.clone()).await?;
+
+    let config = Arc::new(config);
 
     if config.replication_enabled {
         let replication_state =
