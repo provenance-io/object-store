@@ -537,6 +537,7 @@ pub async fn replicate_iteration(inner: &mut ReplicationState, client_cache: &mu
     }
 }
 
+/// Every second, run [replicate_iteration]
 pub async fn replicate(mut inner: ReplicationState) {
     log::info!("Starting replication");
 
@@ -580,6 +581,7 @@ pub async fn reap_unknown_keys_iteration(db_pool: &Arc<PgPool>, cache: &Arc<Mute
     }
 }
 
+/// Every hour, run [reap_unknown_keys_iteration]
 pub async fn reap_unknown_keys(db_pool: Arc<PgPool>, cache: Arc<Mutex<Cache>>) {
     log::info!("Starting reap unknown keys");
 
@@ -592,6 +594,9 @@ pub async fn reap_unknown_keys(db_pool: Arc<PgPool>, cache: Arc<Mutex<Cache>>) {
     }
 }
 
+/// If replication is enabled:
+/// 1. Start [replicate] job
+/// 2. Start [reap_unknown_keys] job
 pub fn init_replication(app_context: &AppContext) {
     if app_context.config.replication_enabled {
         let replication_state = ReplicationState::new(
