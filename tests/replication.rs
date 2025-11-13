@@ -159,17 +159,17 @@ async fn start_server_one(config_override: Option<Config>, postgres_port: u16) -
         let db_pool = Arc::new(pool);
         let storage: Arc<Box<dyn Storage>> = Arc::new(Box::new(storage));
         let replication_state = ReplicationState::new(
-            Arc::clone(&cache),
-            Arc::clone(&config),
-            Arc::clone(&db_pool),
-            Arc::clone(&storage),
+            cache.clone(),
+            config.clone(),
+            db_pool.clone(),
+            storage.clone(),
         );
-        let object_service = ObjectGrpc {
-            cache: Arc::clone(&cache),
-            config: Arc::clone(&config),
-            db_pool: Arc::clone(&db_pool),
-            storage: Arc::clone(&storage),
-        };
+        let object_service = ObjectGrpc::new(
+            cache.clone(),
+            config.clone(),
+            db_pool.clone(),
+            storage.clone(),
+        );
 
         tx.send(replication_state).await.unwrap();
 
@@ -201,17 +201,17 @@ async fn start_server_two(postgres_port: u16) -> ReplicationState {
         let db_pool = Arc::new(pool);
         let storage: Arc<Box<dyn Storage>> = Arc::new(Box::new(storage));
         let replication_state = ReplicationState::new(
-            Arc::clone(&cache),
-            Arc::clone(&config),
-            Arc::clone(&db_pool),
-            Arc::clone(&storage),
+            cache.clone(),
+            config.clone(),
+            db_pool.clone(),
+            storage.clone(),
         );
-        let object_service = ObjectGrpc {
-            cache: Arc::clone(&cache),
-            config: Arc::clone(&config),
-            db_pool: Arc::clone(&db_pool),
-            storage: Arc::clone(&storage),
-        };
+        let object_service = ObjectGrpc::new(
+            cache.clone(),
+            config.clone(),
+            db_pool.clone(),
+            storage.clone(),
+        );
 
         tx.send(replication_state).await.unwrap();
 
