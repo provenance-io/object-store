@@ -31,12 +31,12 @@ async fn test() {
     let db = rx.recv().await.unwrap();
 
     let result = get_all_public_keys(&db).await.unwrap();
-    println!("result: {}", result.len());
+    assert_eq!(result.len(), 0);
 
     datastore::add_public_key(&db, test_public_key(party_1().0.public_key))
         .await
         .unwrap();
 
     let result = get_all_public_keys(&db).await.unwrap();
-    assert_eq!(result.len(), 1)
+    assert_eq!(result.len(), 1);
 }

@@ -19,86 +19,45 @@ use tonic::transport::Channel;
 use serial_test::serial;
 use testcontainers::*;
 
-use crate::common::{generate_dime, hash, party_1, party_2, party_3, put_helper, test_public_key};
+use crate::common::{
+    generate_dime, hash, party_1, party_2, party_3, put_helper, test_config, test_public_key,
+};
 
 pub fn test_config_one() -> Config {
     Config {
         url: "0.0.0.0:6789".parse().unwrap(),
-        uri_host: String::default(),
-        db_connection_pool_size: 0,
-        db_host: String::default(),
-        db_port: 0,
-        db_user: String::default(),
-        db_password: String::default(),
-        db_database: String::default(),
-        db_schema: String::default(),
         storage_type: "file_system_one".to_owned(),
         storage_base_url: None,
-        storage_base_path: "/tmp".to_owned(),
-        storage_threshold: 5000,
         replication_enabled: true,
         replication_batch_size: 2,
         dd_config: None,
         backoff_min_wait: 5,
         backoff_max_wait: 5,
-        logging_threshold_seconds: 1f64,
-        trace_header: String::default(),
-        user_auth_enabled: false,
-        health_service_enabled: false,
+        ..test_config(0)
     }
 }
 
 pub fn test_config_one_no_replication() -> Config {
     Config {
         url: "0.0.0.0:6789".parse().unwrap(),
-        uri_host: String::default(),
-        db_connection_pool_size: 0,
-        db_host: String::default(),
-        db_port: 0,
-        db_user: String::default(),
-        db_password: String::default(),
-        db_database: String::default(),
-        db_schema: String::default(),
         storage_type: "file_system_one".to_owned(),
-        storage_base_url: None,
-        storage_base_path: "/tmp".to_owned(),
-        storage_threshold: 5000,
         replication_enabled: false,
-        replication_batch_size: 2,
         dd_config: None,
         backoff_min_wait: 5,
         backoff_max_wait: 5,
-        logging_threshold_seconds: 1f64,
-        trace_header: String::default(),
-        user_auth_enabled: false,
-        health_service_enabled: false,
+        ..test_config(0)
     }
 }
 
 pub fn test_config_two() -> Config {
     Config {
         url: "0.0.0.0:6790".parse().unwrap(),
-        uri_host: String::default(),
-        db_connection_pool_size: 0,
-        db_host: String::default(),
-        db_port: 0,
-        db_user: String::default(),
-        db_password: String::default(),
-        db_database: String::default(),
-        db_schema: String::default(),
         storage_type: "file_system_two".to_owned(),
-        storage_base_url: None,
-        storage_base_path: "/tmp".to_owned(),
-        storage_threshold: 5000,
         replication_enabled: true,
-        replication_batch_size: 2,
         dd_config: None,
         backoff_min_wait: 5,
         backoff_max_wait: 5,
-        logging_threshold_seconds: 1f64,
-        trace_header: String::default(),
-        user_auth_enabled: false,
-        health_service_enabled: false,
+        ..test_config(0)
     }
 }
 
