@@ -92,7 +92,7 @@ pub trait VecUtil {
 
 impl VecUtil for Vec<u8> {
     fn encoded(&self) -> String {
-        BASE64_STANDARD.encode(&self)
+        BASE64_STANDARD.encode(self)
     }
 }
 

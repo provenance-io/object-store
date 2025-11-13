@@ -21,8 +21,8 @@ use tonic::{Request, Response, Status};
 
 #[derive(Debug)]
 pub struct MailboxGrpc {
-    pub cache: Arc<Mutex<Cache>>,
-    pub config: Arc<Config>,
+    cache: Arc<Mutex<Cache>>,
+    config: Arc<Config>,
     db_pool: Arc<PgPool>,
 }
 

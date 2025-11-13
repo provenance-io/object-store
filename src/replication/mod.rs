@@ -320,10 +320,10 @@ impl<T> DerefMut for ID<T> {
 // TODO remove pubs added
 #[derive(Debug)]
 pub struct ReplicationState {
-    pub cache: Arc<Mutex<Cache>>,
+    cache: Arc<Mutex<Cache>>,
     config: Arc<Config>,
     snapshot_cache: (DateTime<Utc>, Cache),
-    pub db_pool: Arc<PgPool>,
+    db_pool: Arc<PgPool>,
     storage: Arc<Box<dyn Storage>>,
 }
 

@@ -143,34 +143,26 @@ fn set_cache(cache: &mut Cache) {
     });
 }
 
-async fn start_server_one(config_override: Option<Config>, postgres_port: u16) -> ReplicationState {
+async fn start_server_one(
+    config_override: Option<Config>,
+    pool: Arc<PgPool>,
+) -> (Arc<Mutex<Cache>>, ReplicationState) {
     let (tx, mut rx) = tokio::sync::mpsc::channel(1);
 
-    tokio::spawn(async move {
-        let mut cache = Cache::default();
-        set_cache(&mut cache);
-        let cache = Mutex::new(cache);
-        let config = config_override.unwrap_or(test_config_one());
-        let url = config.url;
-        let pool = setup_postgres(postgres_port).await;
-        let storage = FileSystem::new(PathBuf::from(config.storage_base_path.as_str()));
-        let cache = Arc::new(cache);
-        let config = Arc::new(config);
-        let db_pool = Arc::new(pool);
-        let storage: Arc<Box<dyn Storage>> = Arc::new(Box::new(storage));
-        let replication_state = ReplicationState::new(
-            cache.clone(),
-            config.clone(),
-            db_pool.clone(),
-            storage.clone(),
-        );
-        let object_service = ObjectGrpc::new(
-            cache.clone(),
-            config.clone(),
-            db_pool.clone(),
-            storage.clone(),
-        );
+    let mut cache = Cache::default();
+    set_cache(&mut cache);
+    let cache = Arc::new(Mutex::new(cache));
+    let config = config_override.unwrap_or(test_config_one());
+    let url = config.url;
+    let storage = FileSystem::new(PathBuf::from(config.storage_base_path.as_str()));
+    let config = Arc::new(config);
+    let storage: Arc<Box<dyn Storage>> = Arc::new(Box::new(storage));
+    let replication_state =
+        ReplicationState::new(cache.clone(), config.clone(), pool.clone(), storage.clone());
+    let object_service =
+        ObjectGrpc::new(cache.clone(), config.clone(), pool.clone(), storage.clone());
 
+    tokio::spawn(async move {
         tx.send(replication_state).await.unwrap();
 
         tonic::transport::Server::builder()
@@ -182,7 +174,7 @@ async fn start_server_one(config_override: Option<Config>, postgres_port: u16) -
             .unwrap()
     });
 
-    rx.recv().await.unwrap()
+    (cache, rx.recv().await.unwrap())
 }
 
 async fn start_server_two(postgres_port: u16) -> ReplicationState {
@@ -261,12 +253,14 @@ async fn client_caching() {
     let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
     let container = docker.run(image);
     let postgres_port = container.get_host_port_ipv4(5432);
+    let pool1 = Arc::new(setup_postgres(postgres_port).await);
 
     let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
     let container_two = docker.run(image);
     let postgres_port_two = container_two.get_host_port_ipv4(5432);
+    let _pool2 = Arc::new(setup_postgres(postgres_port).await);
 
-    let _state_one = start_server_one(None, postgres_port).await;
+    let _state_one = start_server_one(None, pool1.clone()).await;
 
     let config_one = test_config_one();
     let config_two = test_config_two();
@@ -321,8 +315,9 @@ async fn replication_can_be_disabled() {
     let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
     let container = docker.run(image);
     let postgres_port = container.get_host_port_ipv4(5432);
+    let pool = Arc::new(setup_postgres(postgres_port).await);
 
-    let state_one = start_server_one(Some(test_config_one_no_replication()), postgres_port).await;
+    let _state_one = start_server_one(Some(test_config_one_no_replication()), pool.clone()).await;
 
     let (audience1, signature1) = party_1();
     let (audience2, signature2) = party_2();
@@ -386,7 +381,7 @@ async fn replication_can_be_disabled() {
         Ok(_) => {
             assert_eq!(
                 replication_object_uuids(
-                    &state_one.db_pool,
+                    pool.clone().as_ref(),
                     String::from_utf8(audience1.public_key.clone())
                         .unwrap()
                         .as_str(),
@@ -399,7 +394,7 @@ async fn replication_can_be_disabled() {
             );
             assert_eq!(
                 replication_object_uuids(
-                    &state_one.db_pool,
+                    pool.clone().as_ref(),
                     String::from_utf8(audience2.public_key.clone())
                         .unwrap()
                         .as_str(),
@@ -412,7 +407,7 @@ async fn replication_can_be_disabled() {
             );
             assert_eq!(
                 replication_object_uuids(
-                    &state_one.db_pool,
+                    pool.clone().as_ref(),
                     String::from_utf8(audience3.public_key.clone())
                         .unwrap()
                         .as_str(),
@@ -435,14 +430,17 @@ async fn end_to_end_replication() {
     let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
     let container = docker.run(image);
     let postgres_port = container.get_host_port_ipv4(5432);
+    let pool1 = Arc::new(setup_postgres(postgres_port).await);
 
     let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
     let container_two = docker.run(image);
     let postgres_port_two = container_two.get_host_port_ipv4(5432);
+    let pool2 = Arc::new(setup_postgres(postgres_port_two).await);
 
     let config_one = test_config_one();
-    let mut state_one = start_server_one(None, postgres_port).await;
-    let state_two = start_server_two(postgres_port_two).await;
+    let (_, mut state_one) = start_server_one(None, pool1.clone()).await;
+    let _state_two = start_server_two(postgres_port_two).await;
+
     let mut client_cache_one =
         ClientCache::new(config_one.backoff_min_wait, config_one.backoff_max_wait);
 
@@ -467,7 +465,7 @@ async fn end_to_end_replication() {
         Ok(_) => {
             assert_eq!(
                 replication_object_uuids(
-                    &state_one.db_pool,
+                    pool1.clone().as_ref(),
                     String::from_utf8(audience1.public_key.clone())
                         .unwrap()
                         .as_str(),
@@ -539,7 +537,7 @@ async fn end_to_end_replication() {
         Ok(_) => {
             assert_eq!(
                 replication_object_uuids(
-                    &state_one.db_pool,
+                    pool1.clone().as_ref(),
                     String::from_utf8(audience1.public_key.clone())
                         .unwrap()
                         .as_str(),
@@ -552,7 +550,7 @@ async fn end_to_end_replication() {
             );
             assert_eq!(
                 replication_object_uuids(
-                    &state_one.db_pool,
+                    pool1.clone().as_ref(),
                     String::from_utf8(audience2.public_key.clone())
                         .unwrap()
                         .as_str(),
@@ -565,7 +563,7 @@ async fn end_to_end_replication() {
             );
             assert_eq!(
                 replication_object_uuids(
-                    &state_one.db_pool,
+                    pool1.clone().as_ref(),
                     String::from_utf8(audience3.public_key.clone())
                         .unwrap()
                         .as_str(),
@@ -579,7 +577,7 @@ async fn end_to_end_replication() {
 
             assert_eq!(
                 replication_object_uuids(
-                    &state_two.db_pool,
+                    pool2.clone().as_ref(),
                     String::from_utf8(audience1.public_key.clone())
                         .unwrap()
                         .as_str(),
@@ -592,7 +590,7 @@ async fn end_to_end_replication() {
             );
             assert_eq!(
                 replication_object_uuids(
-                    &state_two.db_pool,
+                    pool2.clone().as_ref(),
                     String::from_utf8(audience2.public_key.clone())
                         .unwrap()
                         .as_str(),
@@ -605,7 +603,7 @@ async fn end_to_end_replication() {
             );
             assert_eq!(
                 replication_object_uuids(
-                    &state_two.db_pool,
+                    pool2.clone().as_ref(),
                     String::from_utf8(audience3.public_key.clone())
                         .unwrap()
                         .as_str(),
@@ -625,7 +623,7 @@ async fn end_to_end_replication() {
 
     assert_eq!(
         replication_object_uuids(
-            &state_one.db_pool,
+            pool1.clone().as_ref(),
             String::from_utf8(audience1.public_key.clone())
                 .unwrap()
                 .as_str(),
@@ -638,7 +636,7 @@ async fn end_to_end_replication() {
     );
     assert_eq!(
         replication_object_uuids(
-            &state_one.db_pool,
+            pool1.clone().as_ref(),
             String::from_utf8(audience2.public_key.clone())
                 .unwrap()
                 .as_str(),
@@ -651,7 +649,7 @@ async fn end_to_end_replication() {
     );
     assert_eq!(
         replication_object_uuids(
-            &state_one.db_pool,
+            pool1.clone().as_ref(),
             String::from_utf8(audience3.public_key.clone())
                 .unwrap()
                 .as_str(),
@@ -665,7 +663,7 @@ async fn end_to_end_replication() {
 
     assert_eq!(
         replication_object_uuids(
-            &state_two.db_pool,
+            pool2.clone().as_ref(),
             String::from_utf8(audience1.public_key.clone())
                 .unwrap()
                 .as_str(),
@@ -678,7 +676,7 @@ async fn end_to_end_replication() {
     );
     assert_eq!(
         replication_object_uuids(
-            &state_two.db_pool,
+            pool2.clone().as_ref(),
             String::from_utf8(audience2.public_key.clone())
                 .unwrap()
                 .as_str(),
@@ -691,7 +689,7 @@ async fn end_to_end_replication() {
     );
     assert_eq!(
         replication_object_uuids(
-            &state_two.db_pool,
+            pool2.clone().as_ref(),
             String::from_utf8(audience3.public_key.clone())
                 .unwrap()
                 .as_str(),
@@ -707,7 +705,7 @@ async fn end_to_end_replication() {
 
     assert_eq!(
         replication_object_uuids(
-            &state_one.db_pool,
+            pool1.clone().as_ref(),
             String::from_utf8(audience1.public_key.clone())
                 .unwrap()
                 .as_str(),
@@ -720,7 +718,7 @@ async fn end_to_end_replication() {
     );
     assert_eq!(
         replication_object_uuids(
-            &state_one.db_pool,
+            pool1.clone().as_ref(),
             String::from_utf8(audience2.public_key.clone())
                 .unwrap()
                 .as_str(),
@@ -733,7 +731,7 @@ async fn end_to_end_replication() {
     );
     assert_eq!(
         replication_object_uuids(
-            &state_one.db_pool,
+            pool1.clone().as_ref(),
             String::from_utf8(audience3.public_key.clone())
                 .unwrap()
                 .as_str(),
@@ -747,7 +745,7 @@ async fn end_to_end_replication() {
 
     assert_eq!(
         replication_object_uuids(
-            &state_two.db_pool,
+            pool2.clone().as_ref(),
             String::from_utf8(audience1.public_key.clone())
                 .unwrap()
                 .as_str(),
@@ -760,7 +758,7 @@ async fn end_to_end_replication() {
     );
     assert_eq!(
         replication_object_uuids(
-            &state_two.db_pool,
+            pool2.clone().as_ref(),
             String::from_utf8(audience2.public_key.clone())
                 .unwrap()
                 .as_str(),
@@ -773,7 +771,7 @@ async fn end_to_end_replication() {
     );
     assert_eq!(
         replication_object_uuids(
-            &state_two.db_pool,
+            pool2.clone().as_ref(),
             String::from_utf8(audience3.public_key.clone())
                 .unwrap()
                 .as_str(),
@@ -786,7 +784,7 @@ async fn end_to_end_replication() {
     );
 
     // verify db on remote instance to check for 3 objects for party_2
-    assert_eq!(get_object_count(&state_two.db_pool).await, 3);
+    assert_eq!(get_object_count(pool2.clone().as_ref()).await, 3);
 
     // pull one object from local instance and verify all rows against the same one that was replicated to the remote
     let mut client_one = get_client_one().await;
@@ -829,8 +827,8 @@ async fn late_local_url_can_cleanup() {
     let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
     let container = docker.run(image);
     let postgres_port = container.get_host_port_ipv4(5432);
-
-    let state_one = start_server_one(None, postgres_port).await;
+    let pool = Arc::new(setup_postgres(postgres_port).await);
+    let (cache, _state_one) = start_server_one(None, pool.clone()).await;
 
     let (audience1, signature1) = party_1();
     let (audience3, signature3) = party_3();
@@ -893,7 +891,7 @@ async fn late_local_url_can_cleanup() {
         Ok(_) => {
             assert_eq!(
                 replication_object_uuids(
-                    &state_one.db_pool,
+                    pool.clone().as_ref(),
                     String::from_utf8(audience1.public_key.clone())
                         .unwrap()
                         .as_str(),
@@ -906,7 +904,7 @@ async fn late_local_url_can_cleanup() {
             );
             assert_eq!(
                 replication_object_uuids(
-                    &state_one.db_pool,
+                    pool.clone().as_ref(),
                     String::from_utf8(audience3.public_key.clone())
                         .unwrap()
                         .as_str(),
@@ -922,7 +920,7 @@ async fn late_local_url_can_cleanup() {
     }
 
     // set unknown key to local and reap
-    let cache = state_one.cache.clone();
+    let cache = cache.clone();
 
     {
         let mut cache = cache.lock().unwrap();
@@ -942,11 +940,11 @@ async fn late_local_url_can_cleanup() {
         });
     }
 
-    reap_unknown_keys_iteration(&state_one.db_pool, &cache).await;
+    reap_unknown_keys_iteration(&pool, &cache).await;
 
     assert_eq!(
         replication_object_uuids(
-            &state_one.db_pool,
+            pool.clone().as_ref(),
             String::from_utf8(audience1.public_key.clone())
                 .unwrap()
                 .as_str(),
@@ -959,7 +957,7 @@ async fn late_local_url_can_cleanup() {
     );
     assert_eq!(
         replication_object_uuids(
-            &state_one.db_pool,
+            pool.clone().as_ref(),
             String::from_utf8(audience3.public_key.clone())
                 .unwrap()
                 .as_str(),
