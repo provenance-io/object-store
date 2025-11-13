@@ -1,6 +1,7 @@
 use crate::datastore;
 use crate::pb::mailbox_service_server::MailboxService;
 use crate::pb::{AckRequest, GetRequest, MailPayload, Uuid};
+use crate::proto_helpers::VecUtil;
 use crate::types::{GrpcResult, OsError};
 use crate::{
     cache::{Cache, PublicKeyState},
@@ -43,7 +44,7 @@ impl MailboxService for MailboxGrpc {
     async fn get(&self, request: Request<GetRequest>) -> GrpcResult<Response<Self::GetStream>> {
         let metadata = request.metadata().clone();
         let request = request.into_inner();
-        let public_key = request.encoded_public_key();
+        let public_key = request.public_key.encoded();
 
         if self.config.user_auth_enabled {
             let cache = self.cache.lock().unwrap();
@@ -130,7 +131,7 @@ impl MailboxService for MailboxGrpc {
         let public_key = if request.public_key.is_empty() {
             None
         } else {
-            Some(request.encoded_public_key())
+            Some(request.public_key.encoded())
         };
 
         if self.config.user_auth_enabled {
@@ -182,8 +183,6 @@ mod tests {
     };
     use crate::storage::FileSystem;
 
-    use base64::prelude::BASE64_STANDARD;
-    use base64::Engine;
     use chrono::Utc;
     use sqlx::postgres::PgPool;
     use tonic::transport::Channel;
@@ -908,18 +907,5 @@ mod tests {
             Err(err) => assert_eq!(err.code(), tonic::Code::PermissionDenied),
             _ => assert_eq!(format!("{:?}", response), ""),
         }
-    }
-
-    #[tokio::test]
-    async fn encoded_public_key() {
-        let request = GetRequest {
-            public_key: vec![1u8, 2u8, 3u8],
-            max_results: 0,
-        };
-
-        assert_eq!(
-            BASE64_STANDARD.encode(&request.public_key),
-            request.encoded_public_key(),
-        );
     }
 }

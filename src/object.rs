@@ -6,6 +6,7 @@ use crate::pb::chunk_bidi::Impl::{Chunk as ChunkEnum, MultiStreamHeader as Multi
 use crate::pb::object_service_server::ObjectService;
 use crate::pb::MultiStreamHeader;
 use crate::pb::{Chunk, ChunkBidi, ChunkEnd, HashRequest, ObjectResponse, StreamHeader};
+use crate::proto_helpers::VecUtil;
 use crate::types::{GrpcResult, OsError};
 use crate::{
     cache::{Cache, PublicKeyState},
@@ -300,8 +301,8 @@ impl ObjectService for ObjectGrpc {
     async fn get(&self, request: Request<HashRequest>) -> GrpcResult<Response<Self::GetStream>> {
         let metadata = request.metadata().clone();
         let request = request.into_inner();
-        let hash = request.encoded_hash();
-        let public_key = request.encoded_public_key();
+        let hash = request.hash.encoded();
+        let public_key = request.public_key.encoded();
 
         if self.config.user_auth_enabled {
             let cache = self.cache.lock().unwrap();
