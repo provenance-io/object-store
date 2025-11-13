@@ -13,6 +13,8 @@ use tokio::sync::mpsc::{Receiver, Sender};
 use tonic::{body::BoxBody, codegen::http::HeaderValue, transport::Body};
 use tower::{Layer, Service};
 
+// TODO add logging in Trace middleware
+
 #[derive(Debug, Clone)]
 pub struct MinitraceGrpcMiddlewareLayer {
     config: Arc<Config>,

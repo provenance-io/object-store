@@ -11,6 +11,8 @@ pub use google_cloud::GoogleCloud;
 
 use crate::{config::Config, types::OsError};
 
+// TODO implement checksum in filestore
+
 pub struct StoragePath {
     pub dir: String,
     pub file: String,

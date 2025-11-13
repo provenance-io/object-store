@@ -1,5 +1,6 @@
 use std::env;
 use std::net::{IpAddr, SocketAddr};
+use std::sync::Arc;
 
 use percent_encoding::NON_ALPHANUMERIC;
 
@@ -44,7 +45,7 @@ const BASE_SPAN_TAGS: [(&str, &str); 3] = [
 ];
 
 impl Config {
-    pub fn from_env() -> Self {
+    pub fn from_env() -> Arc<Self> {
         let url = env::var("OS_URL").expect("OS_URL not set");
         let uri_host = env::var("URI_HOST").expect("URI_HOST not set");
         let port: u16 = env::var("OS_PORT")
@@ -140,7 +141,7 @@ impl Config {
             .parse()
             .expect("HEALTH_SERVICE_ENABLED could not be parsed into a bool");
 
-        Self {
+        Arc::new(Self {
             url,
             uri_host,
             db_connection_pool_size,
@@ -163,7 +164,7 @@ impl Config {
             trace_header,
             user_auth_enabled,
             health_service_enabled,
-        }
+        })
     }
 
     pub fn db_connection_string(&self) -> String {

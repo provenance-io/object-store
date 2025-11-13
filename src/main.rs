@@ -1,22 +1,14 @@
-use std::sync::Arc;
-
 use object_store::config::Config;
 use object_store::replication::init_replication;
 use object_store::server::{configure_and_start_server, init_health_service};
 use object_store::types::Result;
 use object_store::AppContext;
 
-// TODO add logging in Trace middleware
-// TODO implement checksum in filestore
-
 #[tokio::main]
 async fn main() -> Result<()> {
     env_logger::init();
 
-    let config = Config::from_env();
-    let config = Arc::new(config);
-
-    let app_context = AppContext::new(config).await?;
+    let app_context = AppContext::new(Config::from_env()).await?;
 
     init_replication(&app_context);
 
