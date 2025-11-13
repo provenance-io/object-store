@@ -2,10 +2,14 @@ mod error;
 mod file_system;
 mod google_cloud;
 
+use std::{path::PathBuf, sync::Arc};
+
 // forwarding declarations
 pub use error::*;
 pub use file_system::FileSystem;
 pub use google_cloud::GoogleCloud;
+
+use crate::{config::Config, types::OsError};
 
 pub struct StoragePath {
     pub dir: String,
@@ -36,4 +40,19 @@ pub trait Storage: Send + Sync + std::fmt::Debug {
             Ok(())
         }
     }
+}
+
+pub fn new_storage(config: Arc<Config>) -> core::result::Result<Arc<Box<dyn Storage>>, OsError> {
+    let storage = match config.storage_type.as_str() {
+        "file_system" => Ok(Box::new(FileSystem::new(PathBuf::from(
+            config.storage_base_path.as_str(),
+        ))) as Box<dyn Storage>),
+        "google_cloud" => Ok(Box::new(GoogleCloud::new(
+            config.storage_base_url.clone(),
+            config.storage_base_path.clone(),
+        )) as Box<dyn Storage>),
+        _ => Err(OsError::InvalidApplicationState("".to_owned())),
+    }?;
+
+    Ok(Arc::new(storage))
 }

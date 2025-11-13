@@ -6,11 +6,10 @@ use object_store::object::ObjectGrpc;
 use object_store::public_key::PublicKeyGrpc;
 use object_store::replication::{reap_unknown_keys, replicate, ReplicationState};
 use object_store::server::{configure_and_start_server, init_health_service};
-use object_store::storage::{FileSystem, GoogleCloud, Storage};
-use object_store::types::{OsError, Result};
+use object_store::storage::new_storage;
+use object_store::types::Result;
 
 use object_store::db::connect_and_migrate;
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 // TODO add logging in Trace middleware
@@ -22,22 +21,9 @@ async fn main() -> Result<()> {
 
     let config = Arc::new(Config::new());
 
-    let storage = {
-        let storage = match config.storage_type.as_str() {
-            "file_system" => Ok(Box::new(FileSystem::new(PathBuf::from(
-                config.storage_base_path.as_str(),
-            ))) as Box<dyn Storage>),
-            "google_cloud" => Ok(Box::new(GoogleCloud::new(
-                config.storage_base_url.clone(),
-                config.storage_base_path.clone(),
-            )) as Box<dyn Storage>),
-            _ => Err(OsError::InvalidApplicationState("".to_owned())),
-        }?;
+    let storage = new_storage(config.clone())?;
 
-        Arc::new(storage)
-    };
-
-    let pool = connect_and_migrate(config.clone()).await.unwrap();
+    let pool = connect_and_migrate(config.clone()).await?;
 
     // populate initial cache
     let cache = {
