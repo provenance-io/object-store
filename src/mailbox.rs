@@ -7,8 +7,6 @@ use crate::{
     config::Config,
 };
 
-use base64::prelude::BASE64_STANDARD;
-use base64::Engine;
 use minitrace_macro::trace;
 use sqlx::postgres::PgPool;
 use std::{
@@ -45,7 +43,7 @@ impl MailboxService for MailboxGrpc {
     async fn get(&self, request: Request<GetRequest>) -> GrpcResult<Response<Self::GetStream>> {
         let metadata = request.metadata().clone();
         let request = request.into_inner();
-        let public_key = BASE64_STANDARD.encode(&request.public_key);
+        let public_key = request.encoded_public_key();
 
         if self.config.user_auth_enabled {
             let cache = self.cache.lock().unwrap();
@@ -120,7 +118,7 @@ impl MailboxService for MailboxGrpc {
         let metadata = request.metadata().clone();
         let request = request.into_inner();
 
-        let uuid = if let Some(uuid) = request.uuid {
+        let uuid = if let Some(uuid) = &request.uuid {
             uuid::Uuid::from_str(uuid.value.as_str()).map_err(Into::<OsError>::into)?
         } else {
             return Err(tonic::Status::new(
@@ -128,10 +126,11 @@ impl MailboxService for MailboxGrpc {
                 "must specify uuid",
             ));
         };
+
         let public_key = if request.public_key.is_empty() {
             None
         } else {
-            Some(BASE64_STANDARD.encode(&request.public_key))
+            Some(request.encoded_public_key())
         };
 
         if self.config.user_auth_enabled {
@@ -183,6 +182,8 @@ mod tests {
     };
     use crate::storage::FileSystem;
 
+    use base64::prelude::BASE64_STANDARD;
+    use base64::Engine;
     use chrono::Utc;
     use sqlx::postgres::PgPool;
     use tonic::transport::Channel;
@@ -222,13 +223,18 @@ mod tests {
                 updated_at: Utc::now(),
             });
             let cache = Mutex::new(cache);
+            let cache = Arc::new(cache);
+
             let config = default_config.unwrap_or(test_config());
-            let url = config.url;
+
             let pool = setup_postgres(postgres_port).await;
             let pool = Arc::new(pool);
-            let cache = Arc::new(cache);
+
             let storage = FileSystem::new(PathBuf::from(config.storage_base_path.as_str()));
+
+            let url = config.url;
             let config = Arc::new(config);
+
             let mailbox_service = MailboxGrpc {
                 cache: cache.clone(),
                 config: config.clone(),
@@ -902,5 +908,18 @@ mod tests {
             Err(err) => assert_eq!(err.code(), tonic::Code::PermissionDenied),
             _ => assert_eq!(format!("{:?}", response), ""),
         }
+    }
+
+    #[tokio::test]
+    async fn encoded_public_key() {
+        let request = GetRequest {
+            public_key: vec![1u8, 2u8, 3u8],
+            max_results: 0,
+        };
+
+        assert_eq!(
+            BASE64_STANDARD.encode(&request.public_key),
+            request.encoded_public_key(),
+        );
     }
 }

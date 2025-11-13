@@ -83,3 +83,24 @@ impl pb::Audience {
         BASE64_STANDARD.decode(&self.public_key).unwrap()
     }
 }
+
+// TODO: move to vec
+impl pb::GetRequest {
+    pub fn encoded_public_key(&self) -> String {
+        BASE64_STANDARD.encode(&self.public_key)
+    }
+}
+
+impl pb::AckRequest {
+    pub fn encoded_public_key(&self) -> String {
+        BASE64_STANDARD.encode(&self.public_key)
+    }
+}
+impl pb::HashRequest {
+    pub fn encoded_public_key(&self) -> String {
+        BASE64_STANDARD.encode(&self.public_key)
+    }
+    pub fn encoded_hash(&self) -> String {
+        BASE64_STANDARD.encode(&self.hash)
+    }
+}

@@ -300,8 +300,8 @@ impl ObjectService for ObjectGrpc {
     async fn get(&self, request: Request<HashRequest>) -> GrpcResult<Response<Self::GetStream>> {
         let metadata = request.metadata().clone();
         let request = request.into_inner();
-        let hash = BASE64_STANDARD.encode(request.hash);
-        let public_key = BASE64_STANDARD.encode(&request.public_key);
+        let hash = request.encoded_hash();
+        let public_key = request.encoded_public_key();
 
         if self.config.user_auth_enabled {
             let cache = self.cache.lock().unwrap();
