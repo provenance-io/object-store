@@ -1,7 +1,8 @@
 use base64::prelude::BASE64_STANDARD;
-use base64::Engine;
+use base64::{DecodeError, Engine};
 
 use crate::{consts, pb};
+use core::result::Result;
 use std::collections::HashMap;
 
 use crate::pb::chunk::Impl::{Data, End, Value};
@@ -84,6 +85,7 @@ impl pb::Audience {
     }
 }
 
+// TODO: move where? (and rename?)
 pub trait VecUtil {
     fn encoded(&self) -> String;
 }
@@ -91,5 +93,50 @@ pub trait VecUtil {
 impl VecUtil for Vec<u8> {
     fn encoded(&self) -> String {
         BASE64_STANDARD.encode(&self)
+    }
+}
+
+pub trait StringUtil {
+    fn decoded(&self) -> Result<Vec<u8>, DecodeError>;
+}
+
+impl StringUtil for String {
+    fn decoded(&self) -> Result<Vec<u8>, DecodeError> {
+        BASE64_STANDARD.decode(self)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use base64::{prelude::BASE64_STANDARD, Engine};
+
+    use crate::{pb::GetRequest, proto_helpers::StringUtil, proto_helpers::VecUtil};
+
+    #[test]
+    fn encoded() {
+        let request = GetRequest {
+            public_key: vec![1u8, 2u8, 3u8],
+            max_results: 0,
+        };
+
+        assert_eq!(
+            BASE64_STANDARD.encode(&request.public_key),
+            request.public_key.encoded(),
+        );
+    }
+
+    #[test]
+    fn decoded() {
+        let x = "AQID".to_string();
+
+        assert!(x.decoded().is_ok());
+        assert_eq!(BASE64_STANDARD.decode(&x), x.decoded());
+    }
+
+    #[test]
+    fn there_and_back_again() {
+        let v = vec![1u8, 2u8, 3u8];
+
+        assert_eq!(v, v.encoded().decoded().unwrap());
     }
 }

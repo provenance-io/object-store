@@ -5,12 +5,11 @@ use crate::dime::Dime;
 use crate::domain::DimeProperties;
 use crate::pb::public_key_request::Impl::HeaderAuth as HeaderAuthEnumRequest;
 use crate::pb::{public_key::Key, PublicKeyRequest};
+use crate::proto_helpers::VecUtil;
 use crate::types::{OsError, Result};
 use prost::Message;
 use std::convert::TryFrom;
 
-use base64::prelude::BASE64_STANDARD;
-use base64::Engine;
 use bytes::{Bytes, BytesMut};
 use chrono::prelude::*;
 use futures_util::TryStreamExt;
@@ -164,7 +163,7 @@ impl TryFrom<PublicKeyRequest> for PublicKey {
 
     fn try_from(request: PublicKeyRequest) -> Result<Self> {
         let (public_key_type, public_key) = match request.public_key.unwrap().key.unwrap() {
-            Key::Secp256k1(data) => (KeyType::Secp256k1, BASE64_STANDARD.encode(data)),
+            Key::Secp256k1(data) => (KeyType::Secp256k1, data.encoded()),
         };
         let metadata = if let Some(metadata) = request.metadata {
             let mut buffer = BytesMut::with_capacity(metadata.encoded_len());

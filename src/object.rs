@@ -15,8 +15,6 @@ use crate::{
     storage::{Storage, StoragePath},
 };
 
-use base64::prelude::BASE64_STANDARD;
-use base64::Engine;
 use bytes::{BufMut, Bytes, BytesMut};
 use futures_util::StreamExt;
 use linked_hash_map::LinkedHashMap;
@@ -185,17 +183,17 @@ impl ObjectService for ObjectGrpc {
 
         let hash = properties
             .get(consts::HASH_FIELD_NAME)
-            .map(|f| BASE64_STANDARD.encode(f))
+            .map(|f| f.encoded())
             .ok_or(Status::invalid_argument("Properties must contain \"HASH\""))?;
         let signature = properties
             .get(consts::SIGNATURE_FIELD_NAME)
-            .map(|f| BASE64_STANDARD.encode(f))
+            .map(|f| f.encoded())
             .ok_or(Status::invalid_argument(
                 "Properties must contain \"SIGNATURE_FIELD_NAME\"",
             ))?;
         let public_key = properties
             .get(consts::SIGNATURE_PUBLIC_KEY_FIELD_NAME)
-            .map(|f| BASE64_STANDARD.encode(f))
+            .map(|f| f.encoded())
             .ok_or(Status::invalid_argument(
                 "Properties must contain \"SIGNATURE_PUBLIC_KEY_FIELD_NAME\"",
             ))?;
@@ -426,8 +424,11 @@ pub mod tests {
     use crate::dime::Signature;
     use crate::object::*;
     use crate::pb::{self, Audience, Dime as DimeProto, ObjectResponse};
+    use crate::proto_helpers::StringUtil;
     use crate::storage::FileSystem;
 
+    use base64::prelude::BASE64_STANDARD;
+    use base64::Engine;
     use chrono::Utc;
     use futures::stream;
     use futures_util::TryStreamExt;
@@ -838,10 +839,7 @@ pub mod tests {
                     .await
                     .unwrap();
                 let mut properties = LinkedHashMap::new();
-                properties.insert(
-                    HASH_FIELD_NAME.to_owned(),
-                    BASE64_STANDARD.decode(object.hash).unwrap(),
-                );
+                properties.insert(HASH_FIELD_NAME.to_owned(), object.hash.decoded().unwrap());
                 properties.insert(
                     SIGNATURE_FIELD_NAME.to_owned(),
                     "signature".as_bytes().to_owned(),
@@ -961,10 +959,7 @@ pub mod tests {
                     .await
                     .unwrap();
                 let mut properties = LinkedHashMap::new();
-                properties.insert(
-                    HASH_FIELD_NAME.to_owned(),
-                    BASE64_STANDARD.decode(object.hash).unwrap(),
-                );
+                properties.insert(HASH_FIELD_NAME.to_owned(), object.hash.decoded().unwrap());
                 properties.insert(
                     SIGNATURE_FIELD_NAME.to_owned(),
                     "signature".as_bytes().to_owned(),
@@ -1843,36 +1838,24 @@ pub mod tests {
                 assert_eq!(response.name, NOT_STORAGE_BACKED);
                 assert_eq!(get_public_keys_by_object(&db, &uuid).await.len(), 3);
                 assert_eq!(
-                    replication_object_uuids(
-                        &db,
-                        BASE64_STANDARD.encode(audience1.public_key).as_str(),
-                        50
-                    )
-                    .await
-                    .unwrap()
-                    .len(),
+                    replication_object_uuids(&db, audience1.public_key.encoded().as_str(), 50)
+                        .await
+                        .unwrap()
+                        .len(),
                     0
                 );
                 assert_eq!(
-                    replication_object_uuids(
-                        &db,
-                        BASE64_STANDARD.encode(audience2.public_key).as_str(),
-                        50
-                    )
-                    .await
-                    .unwrap()
-                    .len(),
+                    replication_object_uuids(&db, audience2.public_key.encoded().as_str(), 50)
+                        .await
+                        .unwrap()
+                        .len(),
                     0
                 );
                 assert_eq!(
-                    replication_object_uuids(
-                        &db,
-                        BASE64_STANDARD.encode(audience3.public_key).as_str(),
-                        50
-                    )
-                    .await
-                    .unwrap()
-                    .len(),
+                    replication_object_uuids(&db, audience3.public_key.encoded().as_str(), 50)
+                        .await
+                        .unwrap()
+                        .len(),
                     0
                 );
             }

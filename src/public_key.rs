@@ -82,13 +82,12 @@ impl PublicKeyService for PublicKeyGrpc {
 
 #[cfg(test)]
 mod tests {
+    use crate::proto_helpers::VecUtil;
     use crate::public_key::*;
 
     use crate::pb::public_key_response::Impl::HeaderAuth as HeaderAuthEnumResponse;
     use crate::pb::{public_key::Key, HeaderAuth, PublicKey};
 
-    use base64::prelude::BASE64_STANDARD;
-    use base64::Engine;
     use sqlx::postgres::PgPoolOptions;
     use testcontainers::images::postgres::Postgres;
     use testcontainers::*;
@@ -455,11 +454,11 @@ mod tests {
         assert_eq!(cache.public_keys.len(), 1);
         assert!(cache
             .public_keys
-            .contains_key(&BASE64_STANDARD.encode(&vec![1u8, 2u8, 3u8])));
+            .contains_key(&vec![1u8, 2u8, 3u8].encoded()));
         assert_eq!(
             cache
                 .public_keys
-                .get(&BASE64_STANDARD.encode(&vec![1u8, 2u8, 3u8]))
+                .get(&vec![1u8, 2u8, 3u8].encoded())
                 .unwrap()
                 .url,
             String::from("")
@@ -498,11 +497,11 @@ mod tests {
         assert_eq!(cache.public_keys.len(), 1);
         assert!(cache
             .public_keys
-            .contains_key(&BASE64_STANDARD.encode(&vec![1u8, 2u8, 3u8])));
+            .contains_key(&vec![1u8, 2u8, 3u8].encoded()));
         assert_ne!(
             cache
                 .public_keys
-                .get(&BASE64_STANDARD.encode(&vec![1u8, 2u8, 3u8]))
+                .get(&vec![1u8, 2u8, 3u8].encoded())
                 .unwrap()
                 .url,
             String::from("")
