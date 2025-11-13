@@ -5,11 +5,10 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
-use chrono::Utc;
 use linked_hash_map::LinkedHashMap;
 use object_store::cache::Cache;
 use object_store::config::Config;
-use object_store::datastore::{self, replication_object_uuids, AuthType, KeyType, PublicKey};
+use object_store::datastore::{self, replication_object_uuids, PublicKey};
 use object_store::object::ObjectGrpc;
 use object_store::pb;
 use object_store::pb::chunk::Impl::{Data, End};
@@ -29,7 +28,7 @@ use tonic::Request;
 
 use crate::common::{
     generate_dime, get_mailbox_keys_by_object, get_public_keys_by_object, hash, party_1, party_2,
-    party_3, put_helper, test_config,
+    party_3, put_helper, test_config, test_public_key,
 };
 
 pub async fn setup_postgres(port: u16) -> PgPool {
@@ -52,30 +51,13 @@ async fn start_server(default_config: Option<Config>, postgres_port: u16) -> Arc
     tokio::spawn(async move {
         let mut cache = Cache::default();
         cache.add_public_key(PublicKey {
-            uuid: uuid::Uuid::default(),
-            public_key: std::str::from_utf8(&party_1().0.public_key)
-                .unwrap()
-                .to_owned(),
-            public_key_type: KeyType::Secp256k1,
-            url: String::from(""),
-            metadata: Vec::default(),
-            auth_type: Some(AuthType::Header),
             auth_data: Some(String::from("x-test-header:test_value_1")),
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
+            ..test_public_key(party_1().0.public_key)
         });
         cache.add_public_key(PublicKey {
-            uuid: uuid::Uuid::default(),
-            public_key: std::str::from_utf8(&party_2().0.public_key)
-                .unwrap()
-                .to_owned(),
-            public_key_type: KeyType::Secp256k1,
             url: String::from("tcp://party2:8080"),
-            metadata: Vec::default(),
-            auth_type: Some(AuthType::Header),
             auth_data: Some(String::from("x-test-header:test_value_2")),
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
+            ..test_public_key(party_2().0.public_key)
         });
         let cache = Arc::new(Mutex::new(cache));
         let config = default_config.unwrap_or(test_config(postgres_port));

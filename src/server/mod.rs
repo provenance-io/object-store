@@ -5,7 +5,6 @@ use std::sync::Arc;
 
 pub use health::*;
 use tonic::transport::{Error, Server};
-use tonic_health::proto::health_server::{Health, HealthServer};
 pub use trace::*;
 
 use crate::{
@@ -15,6 +14,7 @@ use crate::{
         mailbox_service_server::MailboxServiceServer, object_service_server::ObjectServiceServer,
         public_key_service_server::PublicKeyServiceServer,
     },
+    replication::init_replication,
     AppContext,
 };
 
@@ -22,10 +22,13 @@ fn base_server(config: Arc<Config>) -> Server<LoggingMiddlewareLayer> {
     Server::builder().layer(LoggingMiddlewareLayer::new(config))
 }
 
-pub async fn configure_and_start_server(
-    health_service: Option<HealthServer<impl Health>>,
-    context: AppContext,
-) -> Result<(), Error> {
+/// 1. Init health service, if enabled (default: true)
+/// 2. Init replication, if enabled (default: false)
+pub async fn configure_and_start_server(context: AppContext) -> Result<(), Error> {
+    let health_service = init_health_service(&context).await;
+
+    init_replication(&context);
+
     // TODO add server fields that make sense
     // Silly nested ifs until tonic is upgraded with better types
     if let Some(ref dd_config) = context.config.dd_config {

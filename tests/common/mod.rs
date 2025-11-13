@@ -6,13 +6,14 @@ use std::collections::HashMap;
 
 use base64::{prelude::BASE64_STANDARD, Engine};
 use bytes::{BufMut, BytesMut};
+use chrono::Utc;
 use futures::stream;
 use futures_util::TryStreamExt;
 use object_store::consts::{
     CREATED_BY_HEADER, DIME_FIELD_NAME, HASH_FIELD_NAME, SIGNATURE_FIELD_NAME,
     SIGNATURE_PUBLIC_KEY_FIELD_NAME,
 };
-use object_store::datastore::{MailboxPublicKey, ObjectPublicKey};
+use object_store::datastore::{AuthType, KeyType, MailboxPublicKey, ObjectPublicKey, PublicKey};
 use object_store::pb::chunk_bidi::Impl::{
     Chunk as ChunkEnum, MultiStreamHeader as MultiStreamHeaderEnum,
 };
@@ -316,4 +317,20 @@ pub async fn get_mailbox_keys_by_object(
     }
 
     result
+}
+
+pub fn test_public_key(public_key: Vec<u8>) -> PublicKey {
+    let now = Utc::now();
+
+    PublicKey {
+        uuid: uuid::Uuid::new_v4(),
+        public_key: std::str::from_utf8(&public_key).unwrap().to_owned(),
+        public_key_type: KeyType::Secp256k1,
+        url: String::from(""),
+        metadata: Vec::default(),
+        auth_type: Some(AuthType::Header),
+        auth_data: Some(String::from("x-test-header:test_value_1")),
+        created_at: now,
+        updated_at: now,
+    }
 }

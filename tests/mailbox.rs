@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use object_store::cache::Cache;
 use object_store::config::Config;
 use object_store::consts::*;
-use object_store::datastore::{AuthType, KeyType, PublicKey};
+use object_store::datastore::PublicKey;
 use object_store::db::connect_and_migrate;
 use object_store::mailbox::*;
 use object_store::object::*;
@@ -15,7 +15,6 @@ use object_store::pb::{
 };
 use object_store::storage::FileSystem;
 
-use chrono::Utc;
 use sqlx::postgres::PgPool;
 use tonic::transport::Channel;
 use tonic::Request;
@@ -35,33 +34,14 @@ async fn start_server(default_config: Option<Config>, postgres_port: u16) -> Arc
 
         let mut cache = Cache::default();
         cache.add_public_key(PublicKey {
-            uuid: uuid::Uuid::default(),
-            public_key: std::str::from_utf8(&party_1().0.public_key)
-                .unwrap()
-                .to_owned(),
-            public_key_type: KeyType::Secp256k1,
-            url: String::from(""),
-            metadata: Vec::default(),
-            auth_type: Some(AuthType::Header),
             auth_data: Some(String::from("x-test-header:test_value_1")),
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
+            ..test_public_key(party_1().0.public_key)
         });
         cache.add_public_key(PublicKey {
-            uuid: uuid::Uuid::default(),
-            public_key: std::str::from_utf8(&party_2().0.public_key)
-                .unwrap()
-                .to_owned(),
-            public_key_type: KeyType::Secp256k1,
-            url: String::from(""),
-            metadata: Vec::default(),
-            auth_type: Some(AuthType::Header),
             auth_data: Some(String::from("x-test-header:test_value_2")),
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
+            ..test_public_key(party_2().0.public_key)
         });
-        let cache = Mutex::new(cache);
-        let cache = Arc::new(cache);
+        let cache = Arc::new(Mutex::new(cache));
 
         // let pool = setup_postgres(postgres_port).await;
         let pool = connect_and_migrate(&config).await.unwrap();

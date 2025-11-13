@@ -1,9 +1,8 @@
 mod common;
 
-use chrono::Utc;
 use object_store::cache::Cache;
 use object_store::config::Config;
-use object_store::datastore::{replication_object_uuids, AuthType, KeyType, PublicKey};
+use object_store::datastore::{replication_object_uuids, PublicKey};
 use object_store::object::*;
 use object_store::pb::{self};
 use object_store::replication::*;
@@ -20,7 +19,7 @@ use tonic::transport::Channel;
 use serial_test::serial;
 use testcontainers::*;
 
-use crate::common::{generate_dime, hash, party_1, party_2, party_3, put_helper};
+use crate::common::{generate_dime, hash, party_1, party_2, party_3, put_helper, test_public_key};
 
 pub fn test_config_one() -> Config {
     Config {
@@ -119,30 +118,13 @@ pub async fn setup_postgres(port: u16) -> PgPool {
 
 fn set_cache(cache: &mut Cache) {
     cache.add_public_key(PublicKey {
-        uuid: uuid::Uuid::default(),
-        public_key: std::str::from_utf8(&party_1().0.public_key)
-            .unwrap()
-            .to_owned(),
-        public_key_type: KeyType::Secp256k1,
-        url: String::from(""),
-        metadata: Vec::default(),
-        auth_type: Some(AuthType::Header),
         auth_data: Some(String::from("X-Test-Header:test_value")),
-        created_at: Utc::now(),
-        updated_at: Utc::now(),
+        ..test_public_key(party_1().0.public_key)
     });
     cache.add_public_key(PublicKey {
-        uuid: uuid::Uuid::default(),
-        public_key: std::str::from_utf8(&party_2().0.public_key)
-            .unwrap()
-            .to_owned(),
-        public_key_type: KeyType::Secp256k1,
         url: String::from("tcp://0.0.0.0:6790"),
-        metadata: Vec::default(),
-        auth_type: Some(AuthType::Header),
         auth_data: Some(String::from("X-Test-Header:test_value")),
-        created_at: Utc::now(),
-        updated_at: Utc::now(),
+        ..test_public_key(party_2().0.public_key)
     });
 }
 
@@ -929,17 +911,8 @@ async fn late_local_url_can_cleanup() {
         let mut cache = cache.lock().unwrap();
 
         cache.add_public_key(PublicKey {
-            uuid: uuid::Uuid::default(),
-            public_key: std::str::from_utf8(audience3.public_key.as_slice())
-                .unwrap()
-                .to_owned(),
-            public_key_type: KeyType::Secp256k1,
-            url: String::from(""),
-            metadata: Vec::default(),
-            auth_type: Some(AuthType::Header),
             auth_data: Some(String::from("X-Test-Header:test_value")),
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
+            ..test_public_key(audience3.public_key.clone())
         });
     }
 
