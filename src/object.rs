@@ -414,6 +414,7 @@ impl ObjectService for ObjectGrpc {
 #[cfg(test)]
 pub mod tests {
     use std::hash::Hasher;
+    use std::path::PathBuf;
     use std::str::FromStr;
 
     use crate::config::DatadogConfig;
@@ -425,7 +426,6 @@ pub mod tests {
     use crate::object::*;
     use crate::pb::{self, Audience, Dime as DimeProto, ObjectResponse};
     use crate::storage::FileSystem;
-    use crate::MIGRATOR;
 
     use chrono::Utc;
     use futures::stream;
@@ -478,7 +478,7 @@ pub mod tests {
             .await
             .unwrap();
 
-        MIGRATOR.run(&pool).await.unwrap();
+        sqlx::migrate!().run(&pool).await.unwrap();
 
         pool
     }
@@ -518,7 +518,7 @@ pub mod tests {
             let config = default_config.unwrap_or(test_config());
             let url = config.url;
             let pool = setup_postgres(postgres_port).await;
-            let storage = FileSystem::new(config.storage_base_path.as_str());
+            let storage = FileSystem::new(PathBuf::from(config.storage_base_path.as_str()));
             let object_service = ObjectGrpc {
                 cache: Arc::new(cache),
                 config: Arc::new(config),

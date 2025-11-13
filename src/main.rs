@@ -1,43 +1,21 @@
-mod authorization;
-mod cache;
-mod config;
-mod consts;
-mod datastore;
-mod dime;
-mod domain;
-mod mailbox;
-mod middleware;
-mod object;
-mod proto_helpers;
-mod public_key;
-mod replication;
-mod server;
-mod storage;
-mod types;
-
-use crate::cache::Cache;
-use crate::config::Config;
-use crate::mailbox::MailboxGrpc;
-use crate::middleware::MinitraceGrpcMiddlewareLayer;
-use crate::object::ObjectGrpc;
-use crate::public_key::PublicKeyGrpc;
-use crate::replication::{reap_unknown_keys, replicate, ReplicationState};
-use crate::server::{base_server, init_health_service, start_trace_reporter};
-use crate::storage::{FileSystem, GoogleCloud, Storage};
-use crate::types::{OsError, Result};
-
-use sqlx::{migrate::Migrator, postgres::PgPoolOptions, Executor};
-use std::sync::{Arc, Mutex};
-
 mod pb {
     tonic::include_proto!("objectstore");
 }
 
-use pb::mailbox_service_server::MailboxServiceServer;
-use pb::object_service_server::ObjectServiceServer;
-use pb::public_key_service_server::PublicKeyServiceServer;
+use object_store::cache::Cache;
+use object_store::config::Config;
+use object_store::datastore;
+use object_store::mailbox::MailboxGrpc;
+use object_store::object::ObjectGrpc;
+use object_store::public_key::PublicKeyGrpc;
+use object_store::replication::{reap_unknown_keys, replicate, ReplicationState};
+use object_store::server::{configure_and_start_server, init_health_service};
+use object_store::storage::{FileSystem, GoogleCloud, Storage};
+use object_store::types::{OsError, Result};
 
-static MIGRATOR: Migrator = sqlx::migrate!();
+use object_store::db::connect_and_migrate;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 // TODO add logging in Trace middleware
 // TODO implement checksum in filestore
@@ -49,43 +27,21 @@ async fn main() -> Result<()> {
     let config = Arc::new(Config::new());
 
     let storage = {
-        let storage =
-            match config.storage_type.as_str() {
-                "file_system" => Ok(Box::new(FileSystem::new(config.storage_base_path.as_str()))
-                    as Box<dyn Storage>),
-                "google_cloud" => Ok(Box::new(GoogleCloud::new(
-                    config.storage_base_url.clone(),
-                    config.storage_base_path.clone(),
-                )) as Box<dyn Storage>),
-                _ => Err(OsError::InvalidApplicationState("".to_owned())),
-            }?;
+        let storage = match config.storage_type.as_str() {
+            "file_system" => Ok(Box::new(FileSystem::new(PathBuf::from(
+                config.storage_base_path.as_str(),
+            ))) as Box<dyn Storage>),
+            "google_cloud" => Ok(Box::new(GoogleCloud::new(
+                config.storage_base_url.clone(),
+                config.storage_base_path.clone(),
+            )) as Box<dyn Storage>),
+            _ => Err(OsError::InvalidApplicationState("".to_owned())),
+        }?;
 
         Arc::new(storage)
     };
 
-    let pool = {
-        let schema = config.db_schema.clone();
-
-        let pool = PgPoolOptions::new()
-            .after_connect(move |conn, _meta| {
-                let schema = schema.clone();
-                Box::pin(async move {
-                    conn.execute(format!("SET search_path = '{}';", schema).as_ref())
-                        .await?;
-
-                    Ok(())
-                })
-            })
-            .max_connections(config.db_connection_pool_size.into())
-            .connect(config.db_connection_string().as_ref())
-            .await?;
-
-        log::debug!("Running migrations");
-
-        MIGRATOR.run(&pool).await?;
-
-        Arc::new(pool)
-    };
+    let pool = connect_and_migrate(config.clone()).await.unwrap();
 
     // populate initial cache
     let cache = {
@@ -123,31 +79,14 @@ async fn main() -> Result<()> {
 
     log::info!("Starting server on {:?}", &config.url);
 
-    // TODO add server fields that make sense
-    if let Some(ref dd_config) = config.dd_config {
-        let datadog_sender = start_trace_reporter(dd_config);
-
-        base_server(config.clone())
-            .layer(MinitraceGrpcMiddlewareLayer::new(
-                config.clone(),
-                dd_config.span_tags.clone(),
-                datadog_sender,
-            ))
-            .add_service(health_service)
-            .add_service(PublicKeyServiceServer::new(public_key_service))
-            .add_service(MailboxServiceServer::new(mailbox_service))
-            .add_service(ObjectServiceServer::new(object_service))
-            .serve(config.url)
-            .await?;
-    } else {
-        base_server(config.clone())
-            .add_service(health_service)
-            .add_service(PublicKeyServiceServer::new(public_key_service))
-            .add_service(MailboxServiceServer::new(mailbox_service))
-            .add_service(ObjectServiceServer::new(object_service))
-            .serve(config.url)
-            .await?;
-    };
+    configure_and_start_server(
+        config,
+        health_service,
+        public_key_service,
+        mailbox_service,
+        object_service,
+    )
+    .await?;
 
     Ok(())
 }

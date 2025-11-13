@@ -168,6 +168,7 @@ impl MailboxService for MailboxGrpc {
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
+    use std::path::PathBuf;
     use std::str::FromStr;
     use std::sync::{Arc, Mutex};
 
@@ -226,7 +227,7 @@ mod tests {
             let pool = setup_postgres(postgres_port).await;
             let pool = Arc::new(pool);
             let cache = Arc::new(cache);
-            let storage = FileSystem::new(config.storage_base_path.as_str());
+            let storage = FileSystem::new(PathBuf::from(config.storage_base_path.as_str()));
             let config = Arc::new(config);
             let mailbox_service = MailboxGrpc {
                 cache: cache.clone(),

@@ -12,10 +12,8 @@ pub struct FileSystem {
 }
 
 impl FileSystem {
-    pub fn new(base_url: &str) -> Self {
-        FileSystem {
-            base_url: PathBuf::from(base_url),
-        }
+    pub fn new(base_url: PathBuf) -> Self {
+        FileSystem { base_url }
     }
 
     fn get_path(&self, path: &StoragePath) -> PathBuf {

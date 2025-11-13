@@ -83,13 +83,13 @@ impl PublicKeyService for PublicKeyGrpc {
 #[cfg(test)]
 mod tests {
     use crate::public_key::*;
-    use crate::*;
 
     use crate::pb::public_key_response::Impl::HeaderAuth as HeaderAuthEnumResponse;
     use crate::pb::{public_key::Key, HeaderAuth, PublicKey};
 
     use base64::prelude::BASE64_STANDARD;
     use base64::Engine;
+    use sqlx::postgres::PgPoolOptions;
     use testcontainers::images::postgres::Postgres;
     use testcontainers::*;
 
@@ -105,7 +105,7 @@ mod tests {
             .await
             .unwrap();
 
-        MIGRATOR.run(&pool).await.unwrap();
+        sqlx::migrate!().run(&pool).await.unwrap();
 
         pool
     }

@@ -1,5 +1,3 @@
-use std::convert::TryFrom;
-
 use crate::authorization::{Authorization, HeaderAuth, NoAuthorization};
 use crate::cache::PublicKeyState;
 use crate::consts::*;
@@ -8,6 +6,8 @@ use crate::domain::DimeProperties;
 use crate::pb::public_key_request::Impl::HeaderAuth as HeaderAuthEnumRequest;
 use crate::pb::{public_key::Key, PublicKeyRequest};
 use crate::types::{OsError, Result};
+use prost::Message;
+use std::convert::TryFrom;
 
 use base64::prelude::BASE64_STANDARD;
 use base64::Engine;
@@ -16,7 +16,6 @@ use chrono::prelude::*;
 use futures_util::TryStreamExt;
 use linked_hash_map::LinkedHashMap;
 use minitrace_macro::trace;
-use prost::Message;
 use sqlx::postgres::{PgConnection, PgPool, PgQueryResult};
 use sqlx::Acquire;
 use sqlx::{FromRow, Row};
