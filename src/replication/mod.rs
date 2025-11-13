@@ -25,12 +25,6 @@ use futures::stream;
 use sqlx::postgres::PgPool;
 use uuid::Uuid;
 
-// ----------------------------------------------------------------------------
-
-// TODO implement remaining tests
-
-// ----------------------------------------------------------------------------
-
 /// Newtype wrapper around string public keys
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 struct PublicKey(String);
@@ -318,7 +312,6 @@ impl<T> DerefMut for ID<T> {
 
 // ----------------------------------------------------------------------------
 
-// TODO remove pubs added
 #[derive(Debug)]
 pub struct ReplicationState {
     cache: Arc<Mutex<Cache>>,

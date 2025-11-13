@@ -94,11 +94,14 @@ async fn start_server_one(
 ) -> (Arc<Mutex<Cache>>, ReplicationState) {
     let (tx, mut rx) = tokio::sync::mpsc::channel(1);
 
-    let mut cache = Cache::default();
-    set_cache(&mut cache);
-    let cache = Arc::new(Mutex::new(cache));
+    let cache = {
+        let mut cache = Cache::default();
+        set_cache(&mut cache);
+
+        Arc::new(Mutex::new(cache))
+    };
+
     let config = config_override.unwrap_or(test_config_one());
-    let url = config.url;
     let storage = FileSystem::new(PathBuf::from(config.storage_base_path.as_str()));
     let config = Arc::new(config);
     let storage: Arc<Box<dyn Storage>> = Arc::new(Box::new(storage));
@@ -114,7 +117,7 @@ async fn start_server_one(
             .add_service(pb::object_service_server::ObjectServiceServer::new(
                 object_service,
             ))
-            .serve(url)
+            .serve(config.url)
             .await
             .unwrap()
     });
@@ -126,14 +129,17 @@ async fn start_server_two(postgres_port: u16) -> ReplicationState {
     let (tx, mut rx) = tokio::sync::mpsc::channel(1);
 
     tokio::spawn(async move {
-        let mut cache = Cache::default();
-        set_cache(&mut cache);
-        let cache = Mutex::new(cache);
+        let cache = {
+            let mut cache = Cache::default();
+            set_cache(&mut cache);
+
+            Arc::new(Mutex::new(cache))
+        };
+
         let config = test_config_two();
         let url = config.url;
         let pool = setup_postgres(postgres_port).await;
         let storage = FileSystem::new(PathBuf::from(config.storage_base_path.as_str()));
-        let cache = Arc::new(cache);
         let config = Arc::new(config);
         let db_pool = Arc::new(pool);
         let storage: Arc<Box<dyn Storage>> = Arc::new(Box::new(storage));
@@ -754,11 +760,10 @@ async fn end_to_end_replication() {
     }
 }
 
+#[ignore = "unimplemented"]
 #[tokio::test]
 #[serial(grpc_server)]
-async fn late_remote_url_can_replicate() {
-    // TODO implement
-}
+async fn late_remote_url_can_replicate() {}
 
 #[tokio::test]
 #[serial(grpc_server)]
@@ -900,6 +905,7 @@ async fn late_local_url_can_cleanup() {
     );
 }
 
+#[ignore = "unimplemented"]
 #[tokio::test]
 #[serial(grpc_server)]
 async fn handles_offline_remote() {}
