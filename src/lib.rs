@@ -1,3 +1,18 @@
+use std::sync::{Arc, Mutex};
+
+use sqlx::PgPool;
+
+use crate::{
+    cache::Cache,
+    config::Config,
+    db::connect_and_migrate,
+    mailbox::MailboxGrpc,
+    object::ObjectGrpc,
+    public_key::PublicKeyGrpc,
+    storage::{new_storage, Storage},
+    types::OsError,
+};
+
 pub mod authorization;
 pub mod cache;
 pub mod config;
@@ -18,4 +33,44 @@ pub mod types;
 
 pub mod pb {
     tonic::include_proto!("objectstore");
+}
+
+pub struct AppContext {
+    pub config: Arc<Config>,
+    pub cache: Arc<Mutex<Cache>>,
+    pub db_pool: Arc<PgPool>,
+    pub storage: Arc<Box<dyn Storage>>,
+    pub public_key_service: PublicKeyGrpc,
+    pub mailbox_service: MailboxGrpc,
+    pub object_service: ObjectGrpc,
+}
+
+impl AppContext {
+    /// 1. Connect to database and migrate
+    /// 2. Initialize cache
+    /// 3. Build gRPC services
+    pub async fn new(config: Arc<Config>) -> Result<Self, OsError> {
+        let db_pool = connect_and_migrate(&config).await?;
+        let cache = Cache::new(db_pool.clone()).await?;
+        let storage = new_storage(&config)?;
+
+        let public_key_service = PublicKeyGrpc::new(cache.clone(), db_pool.clone());
+        let mailbox_service = MailboxGrpc::new(cache.clone(), config.clone(), db_pool.clone());
+        let object_service = ObjectGrpc::new(
+            cache.clone(),
+            config.clone(),
+            db_pool.clone(),
+            storage.clone(),
+        );
+
+        Ok(Self {
+            config,
+            cache,
+            db_pool,
+            storage,
+            public_key_service,
+            mailbox_service,
+            object_service,
+        })
+    }
 }

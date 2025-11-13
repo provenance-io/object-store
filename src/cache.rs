@@ -3,7 +3,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use sqlx::{Pool, Postgres};
+use sqlx::PgPool;
 
 use crate::{
     datastore::{self, PublicKey},
@@ -25,7 +25,7 @@ pub struct Cache {
 
 impl Cache {
     /// populate initial cache
-    pub async fn new(pool: Arc<Pool<Postgres>>) -> Result<Arc<Mutex<Cache>>, OsError> {
+    pub async fn new(pool: Arc<PgPool>) -> Result<Arc<Mutex<Cache>>, OsError> {
         let mut cache = Cache::default();
         for key in datastore::get_all_public_keys(&pool).await? {
             log::debug!(

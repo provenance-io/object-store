@@ -1,3 +1,7 @@
+#![allow(dead_code)]
+
+pub mod db;
+
 use std::collections::HashMap;
 
 use base64::{prelude::BASE64_STANDARD, Engine};
@@ -48,7 +52,7 @@ pub fn test_config(db_port: u16) -> Config {
         db_schema: "public".to_owned(),
         storage_type: "file_system".to_owned(),
         storage_base_url: None,
-        storage_base_path: "/tmp".to_owned(),
+        storage_base_path: std::env::temp_dir().to_string_lossy().to_string(),
         storage_threshold: 5000,
         replication_enabled: true,
         replication_batch_size: 2,
@@ -58,6 +62,7 @@ pub fn test_config(db_port: u16) -> Config {
         logging_threshold_seconds: 1f64,
         trace_header: String::default(),
         user_auth_enabled: false,
+        health_service_enabled: false,
     }
 }
 
@@ -281,6 +286,7 @@ pub fn hash(payload: bytes::Bytes) -> Vec<u8> {
     hash.to_be_bytes().to_vec()
 }
 
+// TODO move to lib and add test
 pub async fn get_public_keys_by_object(
     db: &PgPool,
     object_uuid: &uuid::Uuid,
@@ -296,6 +302,7 @@ pub async fn get_public_keys_by_object(
     result
 }
 
+// TODO move to lib and add test
 pub async fn get_mailbox_keys_by_object(
     db: &PgPool,
     object_uuid: &uuid::Uuid,

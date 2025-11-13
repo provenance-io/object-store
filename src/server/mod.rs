@@ -10,14 +10,12 @@ pub use trace::*;
 
 use crate::{
     config::Config,
-    mailbox::MailboxGrpc,
     middleware::{LoggingMiddlewareLayer, MinitraceGrpcMiddlewareLayer},
-    object::ObjectGrpc,
     pb::{
         mailbox_service_server::MailboxServiceServer, object_service_server::ObjectServiceServer,
         public_key_service_server::PublicKeyServiceServer,
     },
-    public_key::PublicKeyGrpc,
+    AppContext,
 };
 
 fn base_server(config: Arc<Config>) -> Server<LoggingMiddlewareLayer> {
@@ -25,36 +23,57 @@ fn base_server(config: Arc<Config>) -> Server<LoggingMiddlewareLayer> {
 }
 
 pub async fn configure_and_start_server(
-    config: Arc<Config>,
-    health_service: HealthServer<impl Health>,
-    public_key_service: PublicKeyGrpc,
-    mailbox_service: MailboxGrpc,
-    object_service: ObjectGrpc,
+    health_service: Option<HealthServer<impl Health>>,
+    context: AppContext,
 ) -> Result<(), Error> {
     // TODO add server fields that make sense
-    if let Some(ref dd_config) = config.dd_config {
+    // Silly nested ifs until tonic is upgraded with better types
+    if let Some(ref dd_config) = context.config.dd_config {
         let datadog_sender = start_trace_reporter(dd_config);
 
-        base_server(config.clone())
-            .layer(MinitraceGrpcMiddlewareLayer::new(
-                config.clone(),
-                dd_config.span_tags.clone(),
-                datadog_sender,
-            ))
-            .add_service(health_service)
-            .add_service(PublicKeyServiceServer::new(public_key_service))
-            .add_service(MailboxServiceServer::new(mailbox_service))
-            .add_service(ObjectServiceServer::new(object_service))
-            .serve(config.url)
-            .await?;
+        if let Some(health_service) = health_service {
+            base_server(context.config.clone())
+                .layer(MinitraceGrpcMiddlewareLayer::new(
+                    context.config.clone(),
+                    dd_config.span_tags.clone(),
+                    datadog_sender,
+                ))
+                .add_service(health_service)
+                .add_service(PublicKeyServiceServer::new(context.public_key_service))
+                .add_service(MailboxServiceServer::new(context.mailbox_service))
+                .add_service(ObjectServiceServer::new(context.object_service))
+                .serve(context.config.url)
+                .await?
+        } else {
+            base_server(context.config.clone())
+                .layer(MinitraceGrpcMiddlewareLayer::new(
+                    context.config.clone(),
+                    dd_config.span_tags.clone(),
+                    datadog_sender,
+                ))
+                .add_service(PublicKeyServiceServer::new(context.public_key_service))
+                .add_service(MailboxServiceServer::new(context.mailbox_service))
+                .add_service(ObjectServiceServer::new(context.object_service))
+                .serve(context.config.url)
+                .await?
+        }
     } else {
-        base_server(config.clone())
-            .add_service(health_service)
-            .add_service(PublicKeyServiceServer::new(public_key_service))
-            .add_service(MailboxServiceServer::new(mailbox_service))
-            .add_service(ObjectServiceServer::new(object_service))
-            .serve(config.url)
-            .await?;
+        if let Some(health_service) = health_service {
+            base_server(context.config.clone())
+                .add_service(health_service)
+                .add_service(PublicKeyServiceServer::new(context.public_key_service))
+                .add_service(MailboxServiceServer::new(context.mailbox_service))
+                .add_service(ObjectServiceServer::new(context.object_service))
+                .serve(context.config.url)
+                .await?
+        } else {
+            base_server(context.config.clone())
+                .add_service(PublicKeyServiceServer::new(context.public_key_service))
+                .add_service(MailboxServiceServer::new(context.mailbox_service))
+                .add_service(ObjectServiceServer::new(context.object_service))
+                .serve(context.config.url)
+                .await?
+        }
     };
 
     Ok(())

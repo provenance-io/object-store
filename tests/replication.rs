@@ -45,6 +45,7 @@ pub fn test_config_one() -> Config {
         logging_threshold_seconds: 1f64,
         trace_header: String::default(),
         user_auth_enabled: false,
+        health_service_enabled: false,
     }
 }
 
@@ -71,6 +72,7 @@ pub fn test_config_one_no_replication() -> Config {
         logging_threshold_seconds: 1f64,
         trace_header: String::default(),
         user_auth_enabled: false,
+        health_service_enabled: false,
     }
 }
 
@@ -97,6 +99,7 @@ pub fn test_config_two() -> Config {
         logging_threshold_seconds: 1f64,
         trace_header: String::default(),
         user_auth_enabled: false,
+        health_service_enabled: false,
     }
 }
 

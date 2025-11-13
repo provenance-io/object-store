@@ -8,6 +8,7 @@ use crate::proto_helpers::{
     create_data_chunk, create_multi_stream_header, create_stream_end, create_stream_header_field,
 };
 use crate::storage::{Storage, StoragePath};
+use crate::AppContext;
 use crate::{cache::Cache, config::Config, consts, types::OsError};
 
 use bytes::Bytes;
@@ -595,5 +596,25 @@ pub async fn reap_unknown_keys(db_pool: Arc<PgPool>, cache: Arc<Mutex<Cache>>) {
         log::trace!("Reaping previously unknown keys");
 
         reap_unknown_keys_iteration(&db_pool, &cache).await;
+    }
+}
+
+pub fn init_replication(app_context: &AppContext) {
+    if app_context.config.replication_enabled {
+        let replication_state = ReplicationState::new(
+            app_context.cache.clone(),
+            app_context.config.clone(),
+            app_context.db_pool.clone(),
+            app_context.storage.clone(),
+        );
+
+        // start replication
+        tokio::spawn(replicate(replication_state));
+
+        // start unknown reaper - removes replication objects for public_keys that moved from Unknown -> Local
+        tokio::spawn(reap_unknown_keys(
+            app_context.db_pool.clone(),
+            app_context.cache.clone(),
+        ));
     }
 }

@@ -31,6 +31,8 @@ async fn start_server(default_config: Option<Config>, postgres_port: u16) -> Arc
     let (tx, mut rx) = tokio::sync::mpsc::channel(1);
 
     tokio::spawn(async move {
+        let config = default_config.unwrap_or(test_config(postgres_port));
+
         let mut cache = Cache::default();
         cache.add_public_key(PublicKey {
             uuid: uuid::Uuid::default(),
@@ -60,8 +62,6 @@ async fn start_server(default_config: Option<Config>, postgres_port: u16) -> Arc
         });
         let cache = Mutex::new(cache);
         let cache = Arc::new(cache);
-
-        let config = default_config.unwrap_or(test_config(postgres_port));
 
         // let pool = setup_postgres(postgres_port).await;
         let pool = connect_and_migrate(&config).await.unwrap();
@@ -518,8 +518,11 @@ async fn auth_get_invalid_key() {
     let container = docker.run(image);
     let postgres_port = container.get_host_port_ipv4(5432);
 
-    let mut config = test_config(postgres_port);
-    config.user_auth_enabled = true;
+    let config = test_config(postgres_port);
+    let config = Config {
+        user_auth_enabled: true,
+        ..config
+    };
     start_server(Some(config), postgres_port).await;
     let mut client = get_client().await;
 

@@ -1,3 +1,5 @@
+mod common;
+
 use std::sync::{Arc, Mutex};
 
 use object_store::cache::Cache;
@@ -7,38 +9,26 @@ use object_store::pb::public_key_service_server::PublicKeyService;
 use object_store::pb::PublicKeyRequest;
 use object_store::pb::{public_key::Key, HeaderAuth, PublicKey};
 use object_store::proto_helpers::VecUtil;
-use object_store::public_key::*;
-use sqlx::postgres::PgPoolOptions;
-use sqlx::PgPool;
-use testcontainers::images::postgres::Postgres;
-use testcontainers::*;
+use object_store::public_key::PublicKeyGrpc;
+use testcontainers::clients::{self, Cli};
 use tonic::Request;
 
-async fn setup_postgres(container: &Container<'_, Postgres>) -> PgPool {
-    let connection_string = &format!(
-        "postgres://postgres:postgres@localhost:{}/postgres",
-        container.get_host_port_ipv4(5432),
-    );
+use crate::common::db::{setup_postgres, start_postgres};
 
-    let pool = PgPoolOptions::new()
-        .max_connections(5)
-        .connect(connection_string)
-        .await
-        .unwrap();
+async fn setup(docker: &Cli) -> (Arc<Mutex<Cache>>, PublicKeyGrpc) {
+    let postgres = start_postgres(&docker).await;
+    let pool = setup_postgres(postgres).await;
+    let cache = Cache::new(pool.clone()).await.unwrap(); // TODO remove unwrap
+    let public_key_service = PublicKeyGrpc::new(cache.clone(), pool);
 
-    sqlx::migrate!().run(&pool).await.unwrap();
-
-    pool
+    (cache, public_key_service)
 }
 
 #[tokio::test]
 async fn invalid_url() {
     let docker = clients::Cli::default();
-    let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
-    let container = docker.run(image);
-    let cache = Mutex::new(Cache::default());
-    let pool = setup_postgres(&container).await;
-    let public_key_service = PublicKeyGrpc::new(Arc::new(cache), Arc::new(pool));
+    let (_, public_key_service) = setup(&docker).await;
+
     let request = PublicKeyRequest {
         public_key: Some(PublicKey {
             key: Some(Key::Secp256k1(vec![])),
@@ -47,6 +37,7 @@ async fn invalid_url() {
         url: "invalidurl.com".to_owned(),
         metadata: None,
     };
+
     let response = public_key_service.add(Request::new(request)).await;
 
     match response {
@@ -64,11 +55,8 @@ async fn invalid_url() {
 #[tokio::test]
 async fn empty_url() {
     let docker = clients::Cli::default();
-    let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
-    let container = docker.run(image);
-    let cache = Mutex::new(Cache::default());
-    let pool = setup_postgres(&container).await;
-    let public_key_service = PublicKeyGrpc::new(Arc::new(cache), Arc::new(pool));
+    let (_, public_key_service) = setup(&docker).await;
+
     let request = PublicKeyRequest {
         public_key: Some(PublicKey {
             key: Some(Key::Secp256k1(vec![1u8, 2u8, 3u8])),
@@ -101,11 +89,8 @@ async fn empty_url() {
 #[tokio::test]
 async fn empty_auth_header_header() {
     let docker = clients::Cli::default();
-    let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
-    let container = docker.run(image);
-    let cache = Mutex::new(Cache::default());
-    let pool = setup_postgres(&container).await;
-    let public_key_service = PublicKeyGrpc::new(Arc::new(cache), Arc::new(pool));
+    let (_, public_key_service) = setup(&docker).await;
+
     let request = PublicKeyRequest {
         public_key: Some(PublicKey {
             key: Some(Key::Secp256k1(vec![1u8, 2u8, 3u8])),
@@ -134,11 +119,8 @@ async fn empty_auth_header_header() {
 #[tokio::test]
 async fn empty_auth_header_value() {
     let docker = clients::Cli::default();
-    let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
-    let container = docker.run(image);
-    let cache = Mutex::new(Cache::default());
-    let pool = setup_postgres(&container).await;
-    let public_key_service = PublicKeyGrpc::new(Arc::new(cache), Arc::new(pool));
+    let (_, public_key_service) = setup(&docker).await;
+
     let request = PublicKeyRequest {
         public_key: Some(PublicKey {
             key: Some(Key::Secp256k1(vec![1u8, 2u8, 3u8])),
@@ -167,11 +149,8 @@ async fn empty_auth_header_value() {
 #[tokio::test]
 async fn missing_public_key() {
     let docker = clients::Cli::default();
-    let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
-    let container = docker.run(image);
-    let cache = Mutex::new(Cache::default());
-    let pool = setup_postgres(&container).await;
-    let public_key_service = PublicKeyGrpc::new(Arc::new(cache), Arc::new(pool));
+    let (_, public_key_service) = setup(&docker).await;
+
     let request = PublicKeyRequest {
         public_key: None,
         r#impl: None,
@@ -192,11 +171,8 @@ async fn missing_public_key() {
 #[tokio::test]
 async fn missing_key() {
     let docker = clients::Cli::default();
-    let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
-    let container = docker.run(image);
-    let cache = Mutex::new(Cache::default());
-    let pool = setup_postgres(&container).await;
-    let public_key_service = PublicKeyGrpc::new(Arc::new(cache), Arc::new(pool));
+    let (_, public_key_service) = setup(&docker).await;
+
     let request = PublicKeyRequest {
         public_key: Some(PublicKey { key: None }),
         r#impl: None,
@@ -217,11 +193,8 @@ async fn missing_key() {
 #[tokio::test]
 async fn duplicate_key() {
     let docker = clients::Cli::default();
-    let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
-    let container = docker.run(image);
-    let cache = Mutex::new(Cache::default());
-    let pool = setup_postgres(&container).await;
-    let public_key_service = PublicKeyGrpc::new(Arc::new(cache), Arc::new(pool));
+    let (_, public_key_service) = setup(&docker).await;
+
     let request1 = PublicKeyRequest {
         public_key: Some(PublicKey {
             key: Some(Key::Secp256k1(vec![1u8, 2u8, 3u8])),
@@ -238,6 +211,7 @@ async fn duplicate_key() {
         url: "http://test2.com".to_owned(),
         metadata: None,
     };
+
     let response = public_key_service.add(Request::new(request1)).await;
 
     let (uuid, url) = match response {
@@ -269,11 +243,8 @@ async fn duplicate_key() {
 #[tokio::test]
 async fn returns_full_proto() {
     let docker = clients::Cli::default();
-    let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
-    let container = docker.run(image);
-    let cache = Mutex::new(Cache::default());
-    let pool = setup_postgres(&container).await;
-    let public_key_service = PublicKeyGrpc::new(Arc::new(cache), Arc::new(pool));
+    let (_, public_key_service) = setup(&docker).await;
+
     // TODO add metadata to this request
     let request = PublicKeyRequest {
         public_key: Some(PublicKey {
@@ -315,11 +286,8 @@ async fn returns_full_proto() {
 #[tokio::test]
 async fn adds_empty_urls_to_local_cache() {
     let docker = clients::Cli::default();
-    let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
-    let container = docker.run(image);
-    let cache = Arc::new(Mutex::new(Cache::default()));
-    let pool = setup_postgres(&container).await;
-    let public_key_service = PublicKeyGrpc::new(cache.clone(), Arc::new(pool));
+    let (cache, public_key_service) = setup(&docker).await;
+
     let request = PublicKeyRequest {
         public_key: Some(PublicKey {
             key: Some(Key::Secp256k1(vec![1u8, 2u8, 3u8])),
@@ -334,8 +302,7 @@ async fn adds_empty_urls_to_local_cache() {
         Ok(_) => (),
         _ => assert_eq!(format!("{:?}", response), ""),
     }
-
-    let cache = Arc::clone(&cache);
+    let cache = cache.clone();
     let cache = cache.lock().unwrap();
     assert_eq!(cache.public_keys.len(), 1);
     assert!(cache
@@ -354,11 +321,8 @@ async fn adds_empty_urls_to_local_cache() {
 #[tokio::test]
 async fn adds_nonempty_urls_to_remote_cache() {
     let docker = clients::Cli::default();
-    let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
-    let container = docker.run(image);
-    let cache = Arc::new(Mutex::new(Cache::default()));
-    let pool = setup_postgres(&container).await;
-    let public_key_service = PublicKeyGrpc::new(cache.clone(), Arc::new(pool));
+    let (cache, public_key_service) = setup(&docker).await;
+
     let request = PublicKeyRequest {
         public_key: Some(PublicKey {
             key: Some(Key::Secp256k1(vec![1u8, 2u8, 3u8])),
@@ -374,7 +338,6 @@ async fn adds_nonempty_urls_to_remote_cache() {
         _ => assert_eq!(format!("{:?}", response), ""),
     }
 
-    let cache = Arc::clone(&cache);
     let cache = cache.lock().unwrap();
     assert_eq!(cache.public_keys.len(), 1);
     assert!(cache

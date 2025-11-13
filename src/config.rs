@@ -34,6 +34,7 @@ pub struct Config {
     pub logging_threshold_seconds: f64,
     pub trace_header: String,
     pub user_auth_enabled: bool,
+    pub health_service_enabled: bool,
 }
 
 const BASE_SPAN_TAGS: [(&str, &str); 3] = [
@@ -78,6 +79,7 @@ impl Config {
             .unwrap_or("10".to_owned())
             .parse()
             .expect("REPLICATION_BATCH_SIZE could not be parsed into a u32");
+
         let dd_agent_enabled: bool = env::var("DD_AGENT_ENABLED")
             .unwrap_or("false".to_owned())
             .parse()
@@ -133,6 +135,10 @@ impl Config {
             .unwrap_or("false".to_owned())
             .parse()
             .expect("USER_AUTH_ENABLED could not be parsed into a bool");
+        let health_service_enabled: bool = env::var("HEALTH_SERVICE_ENABLED")
+            .unwrap_or("true".to_owned())
+            .parse()
+            .expect("HEALTH_SERVICE_ENABLED could not be parsed into a bool");
 
         Self {
             url,
@@ -156,6 +162,7 @@ impl Config {
             logging_threshold_seconds,
             trace_header,
             user_auth_enabled,
+            health_service_enabled,
         }
     }
 

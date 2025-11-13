@@ -3,17 +3,23 @@ use std::sync::Arc;
 use sqlx::PgPool;
 use tonic_health::proto::health_server::{Health, HealthServer};
 
-use crate::datastore;
+use crate::{datastore, AppContext};
 
-pub async fn init_health_service(db: Arc<PgPool>) -> HealthServer<impl Health> {
-    let (mut health_reporter, health_service) = tonic_health::server::health_reporter();
+pub async fn init_health_service(context: &AppContext) -> Option<HealthServer<impl Health>> {
+    if context.config.health_service_enabled {
+        log::info!("Starting health service...");
 
-    health_reporter
-        .set_service_status("", tonic_health::ServingStatus::NotServing)
-        .await;
-    tokio::spawn(health_status(health_reporter, db.clone()));
+        let (mut health_reporter, health_service) = tonic_health::server::health_reporter();
 
-    health_service
+        health_reporter
+            .set_service_status("", tonic_health::ServingStatus::NotServing)
+            .await;
+        tokio::spawn(health_status(health_reporter, context.db_pool.clone()));
+
+        Some(health_service)
+    } else {
+        None
+    }
 }
 
 async fn health_status(mut reporter: tonic_health::server::HealthReporter, db: Arc<PgPool>) {
