@@ -1,6 +1,5 @@
 use object_store::cache::Cache;
 use object_store::config::Config;
-use object_store::datastore;
 use object_store::mailbox::MailboxGrpc;
 use object_store::object::ObjectGrpc;
 use object_store::public_key::PublicKeyGrpc;
@@ -10,7 +9,6 @@ use object_store::storage::new_storage;
 use object_store::types::Result;
 
 use object_store::db::connect_and_migrate;
-use std::sync::{Arc, Mutex};
 
 // TODO add logging in Trace middleware
 // TODO implement checksum in filestore
@@ -19,27 +17,13 @@ use std::sync::{Arc, Mutex};
 async fn main() -> Result<()> {
     env_logger::init();
 
-    let config = Arc::new(Config::new());
+    let config = Config::new();
 
     let storage = new_storage(config.clone())?;
 
     let pool = connect_and_migrate(config.clone()).await?;
 
-    // populate initial cache
-    let cache = {
-        let mut cache = Cache::default();
-        for key in datastore::get_all_public_keys(&pool).await? {
-            log::debug!(
-                "Adding public key {} with url {}",
-                &key.public_key,
-                &key.url
-            );
-
-            cache.add_public_key(key);
-        }
-
-        Arc::new(Mutex::new(cache))
-    };
+    let cache = Cache::new(pool.clone()).await?;
 
     if config.replication_enabled {
         let replication_state =

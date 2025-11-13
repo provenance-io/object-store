@@ -1,6 +1,14 @@
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 
-use crate::datastore::PublicKey;
+use sqlx::{Pool, Postgres};
+
+use crate::{
+    datastore::{self, PublicKey},
+    types::OsError,
+};
 
 #[derive(Debug)]
 pub enum PublicKeyState {
@@ -16,6 +24,22 @@ pub struct Cache {
 }
 
 impl Cache {
+    /// populate initial cache
+    pub async fn new(pool: Arc<Pool<Postgres>>) -> Result<Arc<Mutex<Cache>>, OsError> {
+        let mut cache = Cache::default();
+        for key in datastore::get_all_public_keys(&pool).await? {
+            log::debug!(
+                "Adding public key {} with url {}",
+                &key.public_key,
+                &key.url
+            );
+
+            cache.add_public_key(key);
+        }
+
+        Ok(Arc::new(Mutex::new(cache)))
+    }
+
     pub fn add_public_key(&mut self, key: PublicKey) -> Option<PublicKey> {
         self.public_keys.insert(key.public_key.clone(), key)
     }
