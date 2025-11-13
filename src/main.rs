@@ -1,7 +1,3 @@
-mod pb {
-    tonic::include_proto!("objectstore");
-}
-
 use object_store::cache::Cache;
 use object_store::config::Config;
 use object_store::datastore;
