@@ -26,6 +26,7 @@ use sqlx::PgPool;
 use testcontainers::*;
 use tonic::Request;
 
+use crate::common::db::start_postgres;
 use crate::common::{
     generate_dime, get_mailbox_keys_by_object, get_public_keys_by_object, hash, party_1, party_2,
     party_3, put_helper, test_config, test_public_key,
@@ -103,8 +104,7 @@ pub async fn delete_properties(db: &PgPool, object_uuid: &uuid::Uuid) -> u64 {
 #[serial(grpc_server)]
 async fn simple_put() {
     let docker = clients::Cli::default();
-    let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
-    let container = docker.run(image);
+    let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
     let db = start_server(None, postgres_port).await;
@@ -156,8 +156,7 @@ async fn simple_put() {
 #[serial(grpc_server)]
 async fn simple_put_with_auth_failure_no_header() {
     let docker = clients::Cli::default();
-    let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
-    let container = docker.run(image);
+    let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
     let mut config = test_config(postgres_port);
@@ -187,8 +186,7 @@ async fn simple_put_with_auth_failure_no_header() {
 #[serial(grpc_server)]
 async fn simple_put_with_auth_failure_incorrect_value() {
     let docker = clients::Cli::default();
-    let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
-    let container = docker.run(image);
+    let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
     let mut config = test_config(postgres_port);
@@ -218,8 +216,7 @@ async fn simple_put_with_auth_failure_incorrect_value() {
 #[serial(grpc_server)]
 async fn simple_put_with_auth_success() {
     let docker = clients::Cli::default();
-    let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
-    let container = docker.run(image);
+    let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
     let mut config = test_config(postgres_port);
@@ -273,8 +270,7 @@ async fn simple_put_with_auth_success() {
 #[serial(grpc_server)]
 async fn multi_packet_file_store_put() {
     let docker = clients::Cli::default();
-    let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
-    let container = docker.run(image);
+    let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
     start_server(None, postgres_port).await;
@@ -310,8 +306,7 @@ async fn multi_packet_file_store_put() {
 #[serial(grpc_server)]
 async fn multi_party_put() {
     let docker = clients::Cli::default();
-    let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
-    let container = docker.run(image);
+    let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
     let db = start_server(None, postgres_port).await;
@@ -351,8 +346,7 @@ async fn multi_party_put() {
 #[serial(grpc_server)]
 async fn small_mailbox_put() {
     let docker = clients::Cli::default();
-    let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
-    let container = docker.run(image);
+    let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
     let db = start_server(None, postgres_port).await;
@@ -395,8 +389,7 @@ async fn small_mailbox_put() {
 #[serial(grpc_server)]
 async fn large_mailbox_put() {
     let docker = clients::Cli::default();
-    let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
-    let container = docker.run(image);
+    let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
     let db = start_server(None, postgres_port).await;
@@ -439,8 +432,7 @@ async fn large_mailbox_put() {
 #[serial(grpc_server)]
 async fn simple_get() {
     let docker = clients::Cli::default();
-    let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
-    let container = docker.run(image);
+    let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
     start_server(None, postgres_port).await;
@@ -530,8 +522,7 @@ async fn simple_get() {
 #[serial(grpc_server)]
 async fn auth_get_failure_no_key() {
     let docker = clients::Cli::default();
-    let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
-    let container = docker.run(image);
+    let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
     let mut config = test_config(postgres_port);
@@ -580,8 +571,7 @@ async fn auth_get_failure_no_key() {
 #[serial(grpc_server)]
 async fn auth_get_failure_invalid_key() {
     let docker = clients::Cli::default();
-    let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
-    let container = docker.run(image);
+    let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
     let mut config = test_config(postgres_port);
@@ -632,8 +622,7 @@ async fn auth_get_failure_invalid_key() {
 #[serial(grpc_server)]
 async fn auth_get_success() {
     let docker = clients::Cli::default();
-    let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
-    let container = docker.run(image);
+    let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
     let mut config = test_config(postgres_port);
@@ -684,8 +673,7 @@ async fn auth_get_success() {
 #[serial(grpc_server)]
 async fn multi_packet_file_store_get() {
     let docker = clients::Cli::default();
-    let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
-    let container = docker.run(image);
+    let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
     start_server(None, postgres_port).await;
@@ -732,8 +720,7 @@ async fn multi_packet_file_store_get() {
 #[serial(grpc_server)]
 async fn multi_party_non_owner_get() {
     let docker = clients::Cli::default();
-    let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
-    let container = docker.run(image);
+    let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
     start_server(None, postgres_port).await;
@@ -780,8 +767,7 @@ async fn multi_party_non_owner_get() {
 #[serial(grpc_server)]
 async fn dupe_objects_noop() {
     let docker = clients::Cli::default();
-    let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
-    let container = docker.run(image);
+    let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
     start_server(None, postgres_port).await;
@@ -819,8 +805,7 @@ async fn dupe_objects_noop() {
 #[serial(grpc_server)]
 async fn dupe_objects_added_audience() {
     let docker = clients::Cli::default();
-    let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
-    let container = docker.run(image);
+    let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
     start_server(None, postgres_port).await;
@@ -860,8 +845,7 @@ async fn dupe_objects_added_audience() {
 #[serial(grpc_server)]
 async fn get_with_wrong_key() {
     let docker = clients::Cli::default();
-    let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
-    let container = docker.run(image);
+    let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
     start_server(None, postgres_port).await;
@@ -905,8 +889,7 @@ async fn get_with_wrong_key() {
 #[serial(grpc_server)]
 async fn get_nonexistent_hash() {
     let docker = clients::Cli::default();
-    let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
-    let container = docker.run(image);
+    let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
     start_server(None, postgres_port).await;
@@ -935,8 +918,7 @@ async fn get_nonexistent_hash() {
 #[serial(grpc_server)]
 async fn put_with_replication() {
     let docker = clients::Cli::default();
-    let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
-    let container = docker.run(image);
+    let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
     let db = start_server(None, postgres_port).await;
@@ -1004,8 +986,7 @@ async fn put_with_replication() {
 #[serial(grpc_server)]
 async fn put_with_replication_different_owner() {
     let docker = clients::Cli::default();
-    let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
-    let container = docker.run(image);
+    let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
     let db = start_server(None, postgres_port).await;
@@ -1073,8 +1054,7 @@ async fn put_with_replication_different_owner() {
 #[serial(grpc_server)]
 async fn put_with_double_replication() {
     let docker = clients::Cli::default();
-    let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
-    let container = docker.run(image);
+    let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
     let db = start_server(None, postgres_port).await;
@@ -1130,8 +1110,7 @@ async fn put_with_double_replication() {
 #[serial(grpc_server)]
 async fn get_object_no_properties() {
     let docker = clients::Cli::default();
-    let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
-    let container = docker.run(image);
+    let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
     let db = start_server(None, postgres_port).await;

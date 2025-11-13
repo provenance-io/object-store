@@ -19,6 +19,7 @@ use tonic::transport::Channel;
 use serial_test::serial;
 use testcontainers::*;
 
+use crate::common::db::start_postgres;
 use crate::common::{
     generate_dime, hash, party_1, party_2, party_3, put_helper, test_config, test_public_key,
 };
@@ -194,13 +195,11 @@ async fn get_client_two() -> pb::object_service_client::ObjectServiceClient<Chan
 #[serial(grpc_server)]
 async fn client_caching() {
     let docker = clients::Cli::default();
-    let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
-    let container = docker.run(image);
+    let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
     let pool1 = Arc::new(setup_postgres(postgres_port).await);
 
-    let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
-    let container_two = docker.run(image);
+    let container_two = start_postgres(&docker).await;
     let postgres_port_two = container_two.get_host_port_ipv4(5432);
     let _pool2 = Arc::new(setup_postgres(postgres_port).await);
 
@@ -256,8 +255,7 @@ async fn client_caching() {
 #[serial(grpc_server)]
 async fn replication_can_be_disabled() {
     let docker = clients::Cli::default();
-    let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
-    let container = docker.run(image);
+    let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
     let pool = Arc::new(setup_postgres(postgres_port).await);
 
@@ -371,13 +369,11 @@ async fn replication_can_be_disabled() {
 #[serial(grpc_server)]
 async fn end_to_end_replication() {
     let docker = clients::Cli::default();
-    let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
-    let container = docker.run(image);
+    let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
     let pool1 = Arc::new(setup_postgres(postgres_port).await);
 
-    let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
-    let container_two = docker.run(image);
+    let container_two = start_postgres(&docker).await;
     let postgres_port_two = container_two.get_host_port_ipv4(5432);
     let pool2 = Arc::new(setup_postgres(postgres_port_two).await);
 
@@ -768,8 +764,7 @@ async fn late_remote_url_can_replicate() {
 #[serial(grpc_server)]
 async fn late_local_url_can_cleanup() {
     let docker = clients::Cli::default();
-    let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
-    let container = docker.run(image);
+    let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
     let pool = Arc::new(setup_postgres(postgres_port).await);
     let (cache, _state_one) = start_server_one(None, pool.clone()).await;

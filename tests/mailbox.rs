@@ -24,6 +24,7 @@ use testcontainers::*;
 
 mod common;
 
+use crate::common::db::start_postgres;
 use crate::common::*;
 
 async fn start_server(default_config: Option<Config>, postgres_port: u16) -> Arc<PgPool> {
@@ -178,8 +179,7 @@ async fn authed_get_and_ack_helper(
 #[serial(grpc_server)]
 async fn get_and_ack_flow() {
     let docker = clients::Cli::default();
-    let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
-    let container = docker.run(image);
+    let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
     let db = start_server(None, postgres_port).await;
@@ -306,8 +306,7 @@ async fn get_and_ack_flow() {
 #[serial(grpc_server)]
 async fn duplicate_objects_does_not_dup_mail() {
     let docker = clients::Cli::default();
-    let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
-    let container = docker.run(image);
+    let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
     start_server(None, postgres_port).await;
@@ -366,8 +365,7 @@ async fn duplicate_objects_does_not_dup_mail() {
 #[serial(grpc_server)]
 async fn get_and_ack_many() {
     let docker = clients::Cli::default();
-    let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
-    let container = docker.run(image);
+    let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
     start_server(None, postgres_port).await;
@@ -436,8 +434,7 @@ async fn get_and_ack_many() {
 #[serial(grpc_server)]
 async fn auth_get_and_ack_success() {
     let docker = clients::Cli::default();
-    let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
-    let container = docker.run(image);
+    let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
     let mut config = test_config(postgres_port);
@@ -494,8 +491,7 @@ async fn auth_get_and_ack_success() {
 #[serial(grpc_server)]
 async fn auth_get_invalid_key() {
     let docker = clients::Cli::default();
-    let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
-    let container = docker.run(image);
+    let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
     let config = test_config(postgres_port);
@@ -554,8 +550,7 @@ async fn auth_get_invalid_key() {
 #[serial(grpc_server)]
 async fn auth_ack_invalid_key() {
     let docker = clients::Cli::default();
-    let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
-    let container = docker.run(image);
+    let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
     let mut config = test_config(postgres_port);
@@ -611,8 +606,7 @@ async fn auth_ack_invalid_key() {
 #[serial(grpc_server)]
 async fn auth_get_no_key() {
     let docker = clients::Cli::default();
-    let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
-    let container = docker.run(image);
+    let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
     let mut config = test_config(postgres_port);
@@ -666,8 +660,7 @@ async fn auth_get_no_key() {
 #[serial(grpc_server)]
 async fn auth_ack_no_key() {
     let docker = clients::Cli::default();
-    let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
-    let container = docker.run(image);
+    let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
     let mut config = test_config(postgres_port);
