@@ -79,3 +79,65 @@ impl PublicKeyService for PublicKeyGrpc {
         Ok(Response::new(response))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    // use base64::{prelude::BASE64_STANDARD, Engine};
+
+    // use crate::proto_helpers::StringUtil;
+
+    #[test]
+    fn encode_decode() {
+        // let readme_public_key = "BH6YrLjN+I7JzjGCgrIWbfXicg4C4nZaMPwzmTB2Yef/aqxiJmPmpBi1JAonlTzA6c1zU/WX4RKWzAkQBd7lWbU=";
+
+        // from dime impl:
+        // let key = std::str::from_utf8(&owner.public_key)
+        //
+        // from impl PublicKeyApiResponse for PublicKey {
+        // fn to_response(self) -> Result<PublicKeyResponse> {
+        //     let key_bytes: Vec<u8> = self
+        //         .public_key
+        //         .decoded()
+        //         .map_err(|err| sqlx::Error::Decode(Box::new(err)))?;
+        //     let public_key = match self.public_key_type {
+        //         KeyType::Secp256k1 => Key::Secp256k1(key_bytes),
+        //     };
+        //
+        // #[trace("mailbox::get")]
+        // async fn get(&self, request: Request<GetRequest>) -> GrpcResult<Response<Self::GetStream>> {
+        //     let metadata = request.metadata().clone();
+        //     let request = request.into_inner();
+        //     let public_key = request.public_key.encoded();
+        //
+        // object put:
+        // let public_key = properties
+        // .get(consts::SIGNATURE_PUBLIC_KEY_FIELD_NAME)
+        // .map(|f| f.encoded())
+        //
+        // object get, hashrequest:
+        // let public_key = request.public_key.encoded();
+        //
+        // test audience:
+        // public_key: BASE64_STANDARD.encode("1").into_bytes()
+        //
+        // test public key:
+        // public_key: std::str::from_utf8(&public_key).unwrap().to_owned(),
+        //
+        // object test:
+        // properties.insert(
+        //     SIGNATURE_PUBLIC_KEY_FIELD_NAME.to_owned(),
+        //     "signature public key".as_bytes().to_owned(),
+        // );
+        //
+        // replication_object_uuids(
+        // &db,
+        // String::from_utf8(audience1.public_key).unwrap().as_str()
+        //
+        //                 replication_object_uuids(&db, audience1.public_key.encoded().as_str(), 50)
+        //
+        // public key test:
+        // assert!(cache
+        // .public_keys
+        // .contains_key(&vec![1u8, 2u8, 3u8].encoded()));
+    }
+}

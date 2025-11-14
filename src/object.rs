@@ -1,5 +1,7 @@
 use crate::consts;
 use crate::datastore;
+use crate::datastore::get_object_by_uuid;
+use crate::datastore::get_public_key_object_uuid;
 use crate::domain::{DimeProperties, ObjectApiResponse};
 use crate::pb::chunk::Impl::{Data, End, Value};
 use crate::pb::chunk_bidi::Impl::{Chunk as ChunkEnum, MultiStreamHeader as MultiStreamHeaderEnum};
@@ -27,6 +29,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 use tokio::sync::mpsc;
+use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status, Streaming};
 
 // TODO add flag for whether object-replication can be ignored for a PUT
@@ -293,7 +296,7 @@ impl ObjectService for ObjectGrpc {
         Ok(Response::new(response))
     }
 
-    type GetStream = tokio_stream::wrappers::ReceiverStream<GrpcResult<ChunkBidi>>;
+    type GetStream = ReceiverStream<GrpcResult<ChunkBidi>>;
 
     #[trace("object::get")]
     async fn get(&self, request: Request<HashRequest>) -> GrpcResult<Response<Self::GetStream>> {
@@ -324,10 +327,12 @@ impl ObjectService for ObjectGrpc {
             }?;
         }
 
-        let object_uuid =
-            datastore::get_public_key_object_uuid(&self.db_pool, hash.as_str(), &public_key)
-                .await?;
-        let object = datastore::get_object_by_uuid(&self.db_pool, &object_uuid).await?;
+        let object = {
+            let object_uuid =
+                get_public_key_object_uuid(&self.db_pool, hash.as_str(), &public_key).await?;
+            get_object_by_uuid(&self.db_pool, &object_uuid).await?
+        };
+
         let payload = if let Some(payload) = &object.payload {
             Bytes::copy_from_slice(payload.as_slice())
         } else {
@@ -343,8 +348,8 @@ impl ObjectService for ObjectGrpc {
 
             Bytes::copy_from_slice(payload.as_slice())
         };
-        let (tx, rx) = mpsc::channel(4);
 
+        let (tx, rx) = mpsc::channel(4);
         tokio::spawn(async move {
             let _ = &object;
             // send multi stream header
@@ -404,8 +409,6 @@ impl ObjectService for ObjectGrpc {
             }
         });
 
-        Ok(Response::new(tokio_stream::wrappers::ReceiverStream::new(
-            rx,
-        )))
+        Ok(Response::new(ReceiverStream::new(rx)))
     }
 }

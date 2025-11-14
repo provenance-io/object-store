@@ -2,8 +2,7 @@ use crate::config::Config;
 use crate::datastore::{AuthType, KeyType, Object, PublicKey};
 use crate::pb::public_key_response::Impl::HeaderAuth as HeaderAuthEnumResponse;
 use crate::pb::{
-    public_key::Key, HeaderAuth, ObjectMetadata, ObjectResponse, PublicKey as PublicKeyProto,
-    PublicKeyResponse, Uuid,
+    public_key::Key, HeaderAuth, ObjectMetadata, ObjectResponse, PublicKeyResponse, Uuid,
 };
 use crate::proto_helpers::StringUtil;
 use crate::types::{OsError, Result};
@@ -95,9 +94,7 @@ impl PublicKeyApiResponse for PublicKey {
             uuid: Some(Uuid {
                 value: self.uuid.as_hyphenated().to_string(),
             }),
-            public_key: Some(PublicKeyProto {
-                key: Some(public_key),
-            }),
+            public_key: Some(public_key.into()),
             url: self.url,
             r#impl,
             metadata,

@@ -7,8 +7,8 @@ use std::collections::HashMap;
 
 use crate::pb::chunk::Impl::{Data, End, Value};
 use crate::pb::chunk_bidi::Impl::{Chunk as ChunkEnum, MultiStreamHeader as MultiStreamHeaderEnum};
-use crate::pb::MultiStreamHeader;
-use crate::pb::{Chunk, ChunkBidi, ChunkEnd, StreamHeader};
+use crate::pb::{public_key::Key, MultiStreamHeader, PublicKey};
+use crate::pb::{Audience, Chunk, ChunkBidi, ChunkEnd, StreamHeader};
 
 pub fn create_multi_stream_header(
     uuid: uuid::Uuid,
@@ -78,9 +78,15 @@ pub fn create_stream_end() -> ChunkBidi {
     }
 }
 
-impl pb::Audience {
-    #[allow(dead_code)]
-    pub fn public_key_decoded(&self) -> Vec<u8> {
+pub trait AudienceUtil {
+    fn public_key(&self) -> String;
+    fn public_key_decoded(&self) -> Vec<u8>;
+}
+impl AudienceUtil for Audience {
+    fn public_key(&self) -> String {
+        String::from_utf8(self.public_key.clone()).unwrap()
+    }
+    fn public_key_decoded(&self) -> Vec<u8> {
         BASE64_STANDARD.decode(&self.public_key).unwrap()
     }
 }
@@ -106,11 +112,36 @@ impl StringUtil for String {
     }
 }
 
+impl From<Vec<u8>> for Key {
+    fn from(bytes: Vec<u8>) -> Self {
+        Self::Secp256k1(bytes)
+    }
+}
+
+impl From<Key> for PublicKey {
+    fn from(key: Key) -> Self {
+        Self {
+            key: Some(key.into()),
+        }
+    }
+}
+
+impl From<Vec<u8>> for PublicKey {
+    fn from(bytes: Vec<u8>) -> Self {
+        Self {
+            key: Some(bytes.into()),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use base64::{prelude::BASE64_STANDARD, Engine};
 
-    use crate::{pb::GetRequest, proto_helpers::StringUtil, proto_helpers::VecUtil};
+    use crate::{
+        pb::{GetRequest, PublicKey},
+        proto_helpers::{StringUtil, VecUtil},
+    };
 
     #[test]
     fn encoded() {
@@ -138,5 +169,13 @@ mod tests {
         let v = vec![1u8, 2u8, 3u8];
 
         assert_eq!(v, v.encoded().decoded().unwrap());
+    }
+
+    #[test]
+    fn proto_default() {
+        let default_key = PublicKey::default();
+        let none_key = PublicKey { key: None };
+
+        assert_eq!(default_key, none_key);
     }
 }

@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+pub mod client;
 pub mod db;
 
 use std::collections::HashMap;
@@ -19,10 +20,8 @@ use object_store::pb::chunk_bidi::Impl::{
 };
 use object_store::pb::{
     chunk::Impl::{Data, End, Value},
-    object_service_client, Chunk, ChunkBidi, ChunkEnd, Dime as DimeProto, MultiStreamHeader,
-    ObjectResponse, StreamHeader,
+    Chunk, ChunkBidi, ChunkEnd, Dime as DimeProto, MultiStreamHeader, StreamHeader,
 };
-use object_store::types::GrpcResult;
 use object_store::{
     config::{Config, DatadogConfig},
     dime::{Dime, Signature},
@@ -31,7 +30,7 @@ use object_store::{
 use prost::Message;
 use sqlx::{FromRow, PgPool};
 use std::hash::Hasher;
-use tonic::{Request, Response};
+use tonic::Request;
 
 pub fn test_config(db_port: u16) -> Config {
     let dd_config = DatadogConfig {
@@ -42,7 +41,7 @@ pub fn test_config(db_port: u16) -> Config {
     };
 
     Config {
-        url: "0.0.0.0:6789".parse().unwrap(),
+        url: "0.0.0.0:0".parse().unwrap(),
         uri_host: String::default(),
         db_connection_pool_size: 1,
         db_host: "localhost".to_owned(),
@@ -139,13 +138,14 @@ pub fn generate_dime(
         signatures,
     }
 }
-pub async fn put_helper(
+
+pub fn put_helper(
     dime: Dime,
     payload: bytes::Bytes,
     chunk_size: usize,
     extra_properties: HashMap<String, String>,
     grpc_metadata: Vec<(&'static str, &'static str)>,
-) -> GrpcResult<Response<ObjectResponse>> {
+) -> Request<stream::Iter<std::vec::IntoIter<ChunkBidi>>> {
     let mut packets = Vec::new();
 
     let mut metadata = HashMap::new();
@@ -263,20 +263,17 @@ pub async fn put_helper(
     };
     packets.push(msg);
 
-    // allow server to start
-    tokio::time::sleep(tokio::time::Duration::from_millis(1_000)).await;
-
-    let mut client = object_service_client::ObjectServiceClient::connect("tcp://0.0.0.0:6789")
-        .await
-        .unwrap();
     let stream = stream::iter(packets);
-    let mut request = Request::new(stream);
-    let metadata = request.metadata_mut();
-    for (k, v) in grpc_metadata {
-        metadata.insert(k, v.parse().unwrap());
-    }
+    let request = {
+        let mut request = Request::new(stream);
+        let metadata = request.metadata_mut();
+        for (k, v) in grpc_metadata {
+            metadata.insert(k, v.parse().unwrap());
+        }
+        request
+    };
 
-    client.put(request).await
+    request
 }
 
 pub fn hash(payload: bytes::Bytes) -> Vec<u8> {

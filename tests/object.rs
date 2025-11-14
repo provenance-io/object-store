@@ -1,7 +1,7 @@
 mod common;
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
@@ -10,34 +10,34 @@ use object_store::cache::Cache;
 use object_store::config::Config;
 use object_store::datastore::{self, replication_object_uuids, PublicKey};
 use object_store::object::ObjectGrpc;
-use object_store::pb;
 use object_store::pb::chunk::Impl::{Data, End};
 use object_store::pb::chunk_bidi::Impl::{
     Chunk as ChunkEnum, MultiStreamHeader as MultiStreamHeaderEnum,
 };
 
-use object_store::proto_helpers::{StringUtil, VecUtil};
-use object_store::storage::FileSystem;
+use object_store::pb::object_service_server::ObjectServiceServer;
+use object_store::proto_helpers::{AudienceUtil, StringUtil, VecUtil};
+use object_store::storage::new_storage;
 use object_store::{consts::*, pb::HashRequest};
 
-use serial_test::serial;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
 use testcontainers::*;
 use tonic::Request;
 
+use crate::common::client::get_object_client;
 use crate::common::db::start_postgres;
 use crate::common::{
     generate_dime, get_mailbox_keys_by_object, get_public_keys_by_object, hash, party_1, party_2,
     party_3, put_helper, test_config, test_public_key,
 };
 
-pub async fn setup_postgres(port: u16) -> PgPool {
-    let connection_string = &format!("postgres://postgres:postgres@localhost:{}/postgres", port);
+pub async fn setup_postgres(config: &Config) -> PgPool {
+    // let connection_string = &format!("postgres://postgres:postgres@localhost:{}/postgres", port);
 
     let pool = PgPoolOptions::new()
         .max_connections(5)
-        .connect(connection_string)
+        .connect(config.db_connection_string().as_str())
         .await
         .unwrap();
 
@@ -46,10 +46,8 @@ pub async fn setup_postgres(port: u16) -> PgPool {
     pool
 }
 
-async fn start_server(default_config: Option<Config>, postgres_port: u16) -> Arc<PgPool> {
-    let (tx, mut rx) = tokio::sync::mpsc::channel(1);
-
-    tokio::spawn(async move {
+async fn start_server(config: Config) -> (Arc<PgPool>, Arc<Config>, SocketAddr) {
+    let cache = {
         let mut cache = Cache::default();
         cache.add_public_key(PublicKey {
             auth_data: Some(String::from("x-test-header:test_value_1")),
@@ -60,31 +58,35 @@ async fn start_server(default_config: Option<Config>, postgres_port: u16) -> Arc
             auth_data: Some(String::from("x-test-header:test_value_2")),
             ..test_public_key(party_2().0.public_key)
         });
-        let cache = Arc::new(Mutex::new(cache));
-        let config = default_config.unwrap_or(test_config(postgres_port));
-        let url = config.url;
-        let pool = setup_postgres(postgres_port).await;
-        let pool = Arc::new(pool);
-        let storage = FileSystem::new(PathBuf::from(config.storage_base_path.as_str()));
-        let object_service = ObjectGrpc::new(
-            cache,
-            Arc::new(config),
-            pool.clone(),
-            Arc::new(Box::new(storage)),
-        );
+        Arc::new(Mutex::new(cache))
+    };
 
-        tx.send(pool.clone()).await.unwrap();
+    let db_port = config.db_port;
+    let pool = setup_postgres(&config).await;
+    let pool = Arc::new(pool);
+    let storage = new_storage(&config).unwrap();
+    let config = Arc::new(config);
+    let object_service = ObjectGrpc::new(cache, config.clone(), pool.clone(), storage.clone());
 
+    let listener = tokio::net::TcpListener::bind(config.url).await.unwrap();
+    let local_addr = listener.local_addr().unwrap();
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    println!("test server running on {:?}", local_addr);
+
+    tokio::spawn(async move {
         tonic::transport::Server::builder()
-            .add_service(pb::object_service_server::ObjectServiceServer::new(
-                object_service,
-            ))
-            .serve(url)
+            .add_service(ObjectServiceServer::new(object_service))
+            .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener))
             .await
             .unwrap()
     });
 
-    rx.recv().await.unwrap()
+    let updated_config = Arc::new(Config {
+        url: local_addr,
+        ..test_config(db_port)
+    });
+
+    (pool, updated_config, local_addr)
 }
 
 pub async fn delete_properties(db: &PgPool, object_uuid: &uuid::Uuid) -> u64 {
@@ -101,13 +103,12 @@ pub async fn delete_properties(db: &PgPool, object_uuid: &uuid::Uuid) -> u64 {
 // TODO test validation of sent data
 
 #[tokio::test]
-#[serial(grpc_server)]
 async fn simple_put() {
     let docker = clients::Cli::default();
     let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
-    let db = start_server(None, postgres_port).await;
+    let (db, _config, addr) = start_server(test_config(postgres_port)).await;
 
     let (audience, signature) = party_1();
     let dime = generate_dime(vec![audience], vec![signature]);
@@ -115,14 +116,16 @@ async fn simple_put() {
     let payload: bytes::Bytes = "testing small payload".as_bytes().into();
     let payload_len = payload.len() as i64;
     let chunk_size = 500; // full payload in one packet
-    let response = put_helper(
+    let request = put_helper(
         dime,
         payload,
         chunk_size,
         HashMap::default(),
         Vec::default(),
-    )
-    .await;
+    );
+
+    let mut os_client = get_object_client(addr).await;
+    let response = os_client.put(request).await;
 
     match response {
         Ok(response) => {
@@ -153,28 +156,31 @@ async fn simple_put() {
 }
 
 #[tokio::test]
-#[serial(grpc_server)]
 async fn simple_put_with_auth_failure_no_header() {
     let docker = clients::Cli::default();
     let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
-    let mut config = test_config(postgres_port);
-    config.user_auth_enabled = true;
-    start_server(Some(config), postgres_port).await;
+    let config = Config {
+        user_auth_enabled: true,
+        ..test_config(postgres_port)
+    };
+    let (_, config, addr) = start_server(config).await;
 
     let (audience, signature) = party_1();
     let dime = generate_dime(vec![audience], vec![signature]);
     let payload: bytes::Bytes = "testing small payload".as_bytes().into();
     let chunk_size = 500; // full payload in one packet
-    let response = put_helper(
+    let request = put_helper(
         dime,
         payload,
         chunk_size,
         HashMap::default(),
         Vec::default(),
-    )
-    .await;
+    );
+
+    let mut os_client = get_object_client(addr).await;
+    let response = os_client.put(request).await;
 
     match response {
         Err(err) => assert_eq!(err.code(), tonic::Code::PermissionDenied),
@@ -183,28 +189,31 @@ async fn simple_put_with_auth_failure_no_header() {
 }
 
 #[tokio::test]
-#[serial(grpc_server)]
 async fn simple_put_with_auth_failure_incorrect_value() {
     let docker = clients::Cli::default();
     let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
-    let mut config = test_config(postgres_port);
-    config.user_auth_enabled = true;
-    start_server(Some(config), postgres_port).await;
+    let config = Config {
+        user_auth_enabled: true,
+        ..test_config(postgres_port)
+    };
+    let (_, config, addr) = start_server(config).await;
 
     let (audience, signature) = party_1();
     let dime = generate_dime(vec![audience], vec![signature]);
     let payload: bytes::Bytes = "testing small payload".as_bytes().into();
     let chunk_size = 500; // full payload in one packet
-    let response = put_helper(
+    let request = put_helper(
         dime,
         payload,
         chunk_size,
         HashMap::default(),
         vec![("x-test-header", "test_value_2")],
-    )
-    .await;
+    );
+
+    let mut os_client = get_object_client(addr).await;
+    let response = os_client.put(request).await;
 
     match response {
         Err(err) => assert_eq!(err.code(), tonic::Code::PermissionDenied),
@@ -213,15 +222,16 @@ async fn simple_put_with_auth_failure_incorrect_value() {
 }
 
 #[tokio::test]
-#[serial(grpc_server)]
 async fn simple_put_with_auth_success() {
     let docker = clients::Cli::default();
     let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
-    let mut config = test_config(postgres_port);
-    config.user_auth_enabled = true;
-    let db = start_server(Some(config), postgres_port).await;
+    let config = Config {
+        user_auth_enabled: true,
+        ..test_config(postgres_port)
+    };
+    let (db, config, addr) = start_server(config).await;
 
     let (audience, signature) = party_1();
     let dime = generate_dime(vec![audience], vec![signature]);
@@ -229,14 +239,16 @@ async fn simple_put_with_auth_success() {
     let payload: bytes::Bytes = "testing small payload".as_bytes().into();
     let payload_len = payload.len() as i64;
     let chunk_size = 500; // full payload in one packet
-    let response = put_helper(
+    let request = put_helper(
         dime,
         payload,
         chunk_size,
         HashMap::default(),
         vec![("x-test-header", "test_value_1")],
-    )
-    .await;
+    );
+
+    let mut os_client = get_object_client(addr).await;
+    let response = os_client.put(request).await;
 
     match response {
         Ok(response) => {
@@ -267,13 +279,12 @@ async fn simple_put_with_auth_success() {
 }
 
 #[tokio::test]
-#[serial(grpc_server)]
 async fn multi_packet_file_store_put() {
     let docker = clients::Cli::default();
     let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
-    start_server(None, postgres_port).await;
+    let (_, config, addr) = start_server(test_config(postgres_port)).await;
 
     let (audience, signature) = party_1();
     let dime = generate_dime(vec![audience], vec![signature]);
@@ -281,14 +292,16 @@ async fn multi_packet_file_store_put() {
     let payload: bytes::Bytes = "testing larger payload ".repeat(250).into_bytes().into();
     let payload_len = payload.len() as i64;
     let chunk_size = 100; // split payload into packets
-    let response = put_helper(
+    let request = put_helper(
         dime,
         payload,
         chunk_size,
         HashMap::default(),
         Vec::default(),
-    )
-    .await;
+    );
+
+    let mut os_client = get_object_client(addr).await;
+    let response = os_client.put(request).await;
 
     match response {
         Ok(response) => {
@@ -303,13 +316,12 @@ async fn multi_packet_file_store_put() {
 }
 
 #[tokio::test]
-#[serial(grpc_server)]
 async fn multi_party_put() {
     let docker = clients::Cli::default();
     let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
-    let db = start_server(None, postgres_port).await;
+    let (db, config, addr) = start_server(test_config(postgres_port)).await;
 
     let (audience1, signature1) = party_1();
     let (audience2, signature2) = party_2();
@@ -320,14 +332,16 @@ async fn multi_party_put() {
     );
     let payload: bytes::Bytes = "testing small payload".as_bytes().into();
     let chunk_size = 500; // full payload in one packet
-    let response = put_helper(
+    let request = put_helper(
         dime,
         payload,
         chunk_size,
         HashMap::default(),
         Vec::default(),
-    )
-    .await;
+    );
+
+    let mut os_client = get_object_client(addr).await;
+    let response = os_client.put(request).await;
 
     match response {
         Ok(response) => {
@@ -343,13 +357,12 @@ async fn multi_party_put() {
 }
 
 #[tokio::test]
-#[serial(grpc_server)]
 async fn small_mailbox_put() {
     let docker = clients::Cli::default();
     let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
-    let db = start_server(None, postgres_port).await;
+    let (db, config, addr) = start_server(test_config(postgres_port)).await;
 
     let (audience1, signature1) = party_1();
     let (audience2, signature2) = party_2();
@@ -362,14 +375,16 @@ async fn small_mailbox_put() {
         .insert(MAILBOX_KEY.to_owned(), MAILBOX_FRAGMENT_REQUEST.to_owned());
     let payload: bytes::Bytes = "testing small payload".as_bytes().into();
     let chunk_size = 500; // full payload in one packet
-    let response = put_helper(
+    let request = put_helper(
         dime,
         payload,
         chunk_size,
         HashMap::default(),
         Vec::default(),
-    )
-    .await;
+    );
+
+    let mut os_client = get_object_client(addr).await;
+    let response = os_client.put(request).await;
 
     match response {
         Ok(response) => {
@@ -386,13 +401,12 @@ async fn small_mailbox_put() {
 }
 
 #[tokio::test]
-#[serial(grpc_server)]
 async fn large_mailbox_put() {
     let docker = clients::Cli::default();
     let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
-    let db = start_server(None, postgres_port).await;
+    let (db, config, addr) = start_server(test_config(postgres_port)).await;
 
     let (audience1, signature1) = party_1();
     let (audience2, signature2) = party_2();
@@ -405,14 +419,16 @@ async fn large_mailbox_put() {
         .insert(MAILBOX_KEY.to_owned(), MAILBOX_FRAGMENT_REQUEST.to_owned());
     let payload: bytes::Bytes = "testing larger payload ".repeat(250).into_bytes().into();
     let chunk_size = 100; // split payload into packets
-    let response = put_helper(
+    let request = put_helper(
         dime,
         payload,
         chunk_size,
         HashMap::default(),
         Vec::default(),
-    )
-    .await;
+    );
+
+    let mut os_client = get_object_client(addr).await;
+    let response = os_client.put(request).await;
 
     match response {
         Ok(response) => {
@@ -429,26 +445,27 @@ async fn large_mailbox_put() {
 }
 
 #[tokio::test]
-#[serial(grpc_server)]
 async fn simple_get() {
     let docker = clients::Cli::default();
     let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
-    start_server(None, postgres_port).await;
+    let (_, config, addr) = start_server(test_config(postgres_port)).await;
 
     let (audience, signature) = party_1();
     let dime = generate_dime(vec![audience.clone()], vec![signature]);
     let payload: bytes::Bytes = "testing small payload".as_bytes().into();
     let chunk_size = 500; // full payload in one packet
-    let response = put_helper(
+    let request = put_helper(
         dime,
         payload.clone(),
         chunk_size,
         HashMap::default(),
         Vec::default(),
-    )
-    .await;
+    );
+
+    let mut os_client = get_object_client(addr).await;
+    let response = os_client.put(request).await;
 
     match response {
         Ok(response) => {
@@ -459,9 +476,7 @@ async fn simple_get() {
         _ => assert_eq!(format!("{:?}", response), ""),
     }
 
-    let mut client = pb::object_service_client::ObjectServiceClient::connect("tcp://0.0.0.0:6789")
-        .await
-        .unwrap();
+    let mut client = get_object_client(config.url).await;
     let public_key = audience.public_key_decoded();
     let request = HashRequest {
         hash: hash(payload),
@@ -519,7 +534,6 @@ async fn simple_get() {
 }
 
 #[tokio::test]
-#[serial(grpc_server)]
 async fn auth_get_failure_no_key() {
     let docker = clients::Cli::default();
     let container = start_postgres(&docker).await;
@@ -527,20 +541,22 @@ async fn auth_get_failure_no_key() {
 
     let mut config = test_config(postgres_port);
     config.user_auth_enabled = true;
-    start_server(Some(config), postgres_port).await;
+    let (_, config, addr) = start_server(config).await;
 
     let (audience, signature) = party_1();
     let dime = generate_dime(vec![audience.clone()], vec![signature]);
     let payload: bytes::Bytes = "testing larger payload ".repeat(250).into_bytes().into();
     let chunk_size = 100; // split payload into packets
-    let response = put_helper(
+    let request = put_helper(
         dime,
         payload.clone(),
         chunk_size,
         HashMap::default(),
         vec![("x-test-header", "test_value_1")],
-    )
-    .await;
+    );
+
+    let mut os_client = get_object_client(addr).await;
+    let response = os_client.put(request).await;
 
     match response {
         Ok(response) => {
@@ -551,9 +567,7 @@ async fn auth_get_failure_no_key() {
         _ => assert_eq!(format!("{:?}", response), ""),
     }
 
-    let mut client = pb::object_service_client::ObjectServiceClient::connect("tcp://0.0.0.0:6789")
-        .await
-        .unwrap();
+    let mut client = get_object_client(config.url).await;
     let public_key = audience.public_key_decoded();
     let request = HashRequest {
         hash: hash(payload),
@@ -568,7 +582,6 @@ async fn auth_get_failure_no_key() {
 }
 
 #[tokio::test]
-#[serial(grpc_server)]
 async fn auth_get_failure_invalid_key() {
     let docker = clients::Cli::default();
     let container = start_postgres(&docker).await;
@@ -576,20 +589,22 @@ async fn auth_get_failure_invalid_key() {
 
     let mut config = test_config(postgres_port);
     config.user_auth_enabled = true;
-    start_server(Some(config), postgres_port).await;
+    let (_, config, addr) = start_server(config).await;
 
     let (audience, signature) = party_1();
     let dime = generate_dime(vec![audience.clone()], vec![signature]);
     let payload: bytes::Bytes = "testing larger payload ".repeat(250).into_bytes().into();
     let chunk_size = 100; // split payload into packets
-    let response = put_helper(
+    let request = put_helper(
         dime,
         payload.clone(),
         chunk_size,
         HashMap::default(),
         vec![("x-test-header", "test_value_1")],
-    )
-    .await;
+    );
+
+    let mut os_client = get_object_client(addr).await;
+    let response = os_client.put(request).await;
 
     match response {
         Ok(response) => {
@@ -600,9 +615,7 @@ async fn auth_get_failure_invalid_key() {
         _ => assert_eq!(format!("{:?}", response), ""),
     }
 
-    let mut client = pb::object_service_client::ObjectServiceClient::connect("tcp://0.0.0.0:6789")
-        .await
-        .unwrap();
+    let mut client = get_object_client(config.url).await;
     let public_key = audience.public_key_decoded();
     let mut request = Request::new(HashRequest {
         hash: hash(payload),
@@ -619,28 +632,30 @@ async fn auth_get_failure_invalid_key() {
 }
 
 #[tokio::test]
-#[serial(grpc_server)]
 async fn auth_get_success() {
     let docker = clients::Cli::default();
     let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
-    let mut config = test_config(postgres_port);
-    config.user_auth_enabled = true;
-    start_server(Some(config), postgres_port).await;
+    let config = Config {
+        user_auth_enabled: true,
+        ..test_config(postgres_port)
+    };
+    let (_, config, addr) = start_server(config).await;
 
     let (audience, signature) = party_1();
     let dime = generate_dime(vec![audience.clone()], vec![signature]);
     let payload: bytes::Bytes = "testing larger payload ".repeat(250).into_bytes().into();
     let chunk_size = 100; // split payload into packets
-    let response = put_helper(
+    let request = put_helper(
         dime,
         payload.clone(),
         chunk_size,
         HashMap::default(),
         vec![("x-test-header", "test_value_1")],
-    )
-    .await;
+    );
+    let mut os_client = get_object_client(addr).await;
+    let response = os_client.put(request).await;
 
     match response {
         Ok(response) => {
@@ -651,9 +666,7 @@ async fn auth_get_success() {
         _ => assert_eq!(format!("{:?}", response), ""),
     }
 
-    let mut client = pb::object_service_client::ObjectServiceClient::connect("tcp://0.0.0.0:6789")
-        .await
-        .unwrap();
+    let mut client = get_object_client(config.url).await;
     let public_key = audience.public_key_decoded();
     let mut request = Request::new(HashRequest {
         hash: hash(payload),
@@ -670,26 +683,26 @@ async fn auth_get_success() {
 }
 
 #[tokio::test]
-#[serial(grpc_server)]
 async fn multi_packet_file_store_get() {
     let docker = clients::Cli::default();
     let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
-    start_server(None, postgres_port).await;
+    let (_, config, addr) = start_server(test_config(postgres_port)).await;
 
     let (audience, signature) = party_1();
     let dime = generate_dime(vec![audience.clone()], vec![signature]);
     let payload: bytes::Bytes = "testing larger payload ".repeat(250).into_bytes().into();
     let chunk_size = 100; // split payload into packets
-    let response = put_helper(
+    let request = put_helper(
         dime,
         payload.clone(),
         chunk_size,
         HashMap::default(),
         Vec::default(),
-    )
-    .await;
+    );
+    let mut os_client = get_object_client(addr).await;
+    let response = os_client.put(request).await;
 
     match response {
         Ok(response) => {
@@ -700,9 +713,7 @@ async fn multi_packet_file_store_get() {
         _ => assert_eq!(format!("{:?}", response), ""),
     }
 
-    let mut client = pb::object_service_client::ObjectServiceClient::connect("tcp://0.0.0.0:6789")
-        .await
-        .unwrap();
+    let mut client = get_object_client(config.url).await;
     let public_key = audience.public_key_decoded();
     let request = HashRequest {
         hash: hash(payload),
@@ -717,13 +728,12 @@ async fn multi_packet_file_store_get() {
 }
 
 #[tokio::test]
-#[serial(grpc_server)]
 async fn multi_party_non_owner_get() {
     let docker = clients::Cli::default();
     let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
-    start_server(None, postgres_port).await;
+    let (_, config, addr) = start_server(test_config(postgres_port)).await;
 
     let (audience1, signature1) = party_1();
     let (audience2, signature2) = party_2();
@@ -734,22 +744,22 @@ async fn multi_party_non_owner_get() {
     );
     let payload: bytes::Bytes = "testing small payload".as_bytes().into();
     let chunk_size = 500; // full payload in one packet
-    let response = put_helper(
+    let request = put_helper(
         dime,
         payload.clone(),
         chunk_size,
         HashMap::default(),
         Vec::default(),
-    )
-    .await;
+    );
+
+    let mut os_client = get_object_client(addr).await;
+    let response = os_client.put(request).await;
 
     match response {
         Ok(_) => (),
         _ => assert_eq!(format!("{:?}", response), ""),
     }
-    let mut client = pb::object_service_client::ObjectServiceClient::connect("tcp://0.0.0.0:6789")
-        .await
-        .unwrap();
+    let mut client = get_object_client(config.url).await;
     let public_key = audience3.public_key_decoded();
     let request = HashRequest {
         hash: hash(payload),
@@ -764,34 +774,34 @@ async fn multi_party_non_owner_get() {
 }
 
 #[tokio::test]
-#[serial(grpc_server)]
 async fn dupe_objects_noop() {
     let docker = clients::Cli::default();
     let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
-    start_server(None, postgres_port).await;
+    let (_, config, addr) = start_server(test_config(postgres_port)).await;
 
     let (audience, signature) = party_1();
     let dime = generate_dime(vec![audience], vec![signature]);
     let payload: bytes::Bytes = "testing small payload".as_bytes().into();
     let chunk_size = 500; // full payload in one packet
-    let response = put_helper(
+    let request = put_helper(
         dime.clone(),
         payload.clone(),
         chunk_size,
         HashMap::default(),
         Vec::default(),
-    )
-    .await;
-    let response_dupe = put_helper(
+    );
+    let request_dupe = put_helper(
         dime,
         payload,
         chunk_size,
         HashMap::default(),
         Vec::default(),
-    )
-    .await;
+    );
+    let mut os_client = get_object_client(addr).await;
+    let response = os_client.put(request).await;
+    let response_dupe = os_client.put(request_dupe).await;
 
     assert!(response.is_ok() && response_dupe.is_ok());
 
@@ -802,13 +812,12 @@ async fn dupe_objects_noop() {
 }
 
 #[tokio::test]
-#[serial(grpc_server)]
 async fn dupe_objects_added_audience() {
     let docker = clients::Cli::default();
     let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
-    start_server(None, postgres_port).await;
+    let (_, config, addr) = start_server(test_config(postgres_port)).await;
 
     let (audience, signature) = party_1();
     let (audience2, signature2) = party_2();
@@ -816,22 +825,24 @@ async fn dupe_objects_added_audience() {
     let dime2 = generate_dime(vec![audience, audience2], vec![signature, signature2]);
     let payload: bytes::Bytes = "testing small payload".as_bytes().into();
     let chunk_size = 500; // full payload in one packet
-    let response = put_helper(
+    let request = put_helper(
         dime.clone(),
         payload.clone(),
         chunk_size,
         HashMap::default(),
         Vec::default(),
-    )
-    .await;
-    let response_dupe = put_helper(
+    );
+    let request_dupe = put_helper(
         dime2,
         payload,
         chunk_size,
         HashMap::default(),
         Vec::default(),
-    )
-    .await;
+    );
+
+    let mut os_client = get_object_client(addr).await;
+    let response = os_client.put(request).await;
+    let response_dupe = os_client.put(request_dupe).await;
 
     assert!(response.is_ok() && response_dupe.is_ok());
 
@@ -842,13 +853,12 @@ async fn dupe_objects_added_audience() {
 }
 
 #[tokio::test]
-#[serial(grpc_server)]
 async fn get_with_wrong_key() {
     let docker = clients::Cli::default();
     let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
-    start_server(None, postgres_port).await;
+    let (_, config, addr) = start_server(test_config(postgres_port)).await;
 
     let (audience1, signature1) = party_1();
     let (audience2, signature2) = party_2();
@@ -856,22 +866,22 @@ async fn get_with_wrong_key() {
     let dime = generate_dime(vec![audience1, audience2], vec![signature1, signature2]);
     let payload: bytes::Bytes = "testing small payload".as_bytes().into();
     let chunk_size = 500; // full payload in one packet
-    let response = put_helper(
+    let request = put_helper(
         dime,
         payload.clone(),
         chunk_size,
         HashMap::default(),
         Vec::default(),
-    )
-    .await;
+    );
+
+    let mut os_client = get_object_client(addr).await;
+    let response = os_client.put(request).await;
 
     match response {
         Ok(_) => (),
         _ => assert_eq!(format!("{:?}", response), ""),
     }
-    let mut client = pb::object_service_client::ObjectServiceClient::connect("tcp://0.0.0.0:6789")
-        .await
-        .unwrap();
+    let mut client = get_object_client(config.url).await;
     let public_key = audience3.public_key_decoded();
     let request = HashRequest {
         hash: hash(payload),
@@ -886,19 +896,16 @@ async fn get_with_wrong_key() {
 }
 
 #[tokio::test]
-#[serial(grpc_server)]
 async fn get_nonexistent_hash() {
     let docker = clients::Cli::default();
     let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
-    start_server(None, postgres_port).await;
+    let (_, config, _) = start_server(test_config(postgres_port)).await;
 
     let (audience1, _) = party_1();
     let payload: bytes::Bytes = "testing small payload".as_bytes().into();
-    let mut client = pb::object_service_client::ObjectServiceClient::connect("tcp://0.0.0.0:6789")
-        .await
-        .unwrap();
+    let mut client = get_object_client(config.url).await;
     let public_key = audience1.public_key_decoded();
     let request = HashRequest {
         hash: hash(payload),
@@ -915,13 +922,12 @@ async fn get_nonexistent_hash() {
 // TODO add test for local cache with non owner - make owner the unknown one
 
 #[tokio::test]
-#[serial(grpc_server)]
 async fn put_with_replication() {
     let docker = clients::Cli::default();
     let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
-    let db = start_server(None, postgres_port).await;
+    let (db, config, addr) = start_server(test_config(postgres_port)).await;
 
     let (audience1, signature1) = party_1();
     let (audience2, signature2) = party_2();
@@ -934,7 +940,10 @@ async fn put_with_replication() {
     extra_properties.insert(SOURCE_KEY.to_owned(), String::from("standard key"));
     let payload: bytes::Bytes = "testing small payload".as_bytes().into();
     let chunk_size = 500; // full payload in one packet
-    let response = put_helper(dime, payload, chunk_size, extra_properties, Vec::default()).await;
+    let request = put_helper(dime, payload, chunk_size, extra_properties, Vec::default());
+
+    let mut os_client = get_object_client(addr).await;
+    let response = os_client.put(request).await;
 
     match response {
         Ok(response) => {
@@ -983,13 +992,12 @@ async fn put_with_replication() {
 }
 
 #[tokio::test]
-#[serial(grpc_server)]
 async fn put_with_replication_different_owner() {
     let docker = clients::Cli::default();
     let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
-    let db = start_server(None, postgres_port).await;
+    let (db, config, addr) = start_server(test_config(postgres_port)).await;
 
     let (audience1, signature1) = party_1();
     let (audience2, signature2) = party_2();
@@ -1002,8 +1010,9 @@ async fn put_with_replication_different_owner() {
     extra_properties.insert(SOURCE_KEY.to_owned(), String::from("standard key"));
     let payload: bytes::Bytes = "testing small payload".as_bytes().into();
     let chunk_size = 500; // full payload in one packet
-    let response = put_helper(dime, payload, chunk_size, extra_properties, Vec::default()).await;
-
+    let request = put_helper(dime, payload, chunk_size, extra_properties, Vec::default());
+    let mut os_client = get_object_client(addr).await;
+    let response = os_client.put(request).await;
     match response {
         Ok(response) => {
             let response = response.into_inner();
@@ -1051,13 +1060,12 @@ async fn put_with_replication_different_owner() {
 }
 
 #[tokio::test]
-#[serial(grpc_server)]
 async fn put_with_double_replication() {
     let docker = clients::Cli::default();
     let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
-    let db = start_server(None, postgres_port).await;
+    let (db, config, addr) = start_server(test_config(postgres_port)).await;
 
     let (audience1, signature1) = party_1();
     let (audience2, signature2) = party_2();
@@ -1070,7 +1078,10 @@ async fn put_with_double_replication() {
     extra_properties.insert(SOURCE_KEY.to_owned(), SOURCE_REPLICATION.to_owned());
     let payload: bytes::Bytes = "testing small payload".as_bytes().into();
     let chunk_size = 500; // full payload in one packet
-    let response = put_helper(dime, payload, chunk_size, extra_properties, Vec::default()).await;
+    let request = put_helper(dime, payload, chunk_size, extra_properties, Vec::default());
+
+    let mut os_client = get_object_client(addr).await;
+    let response = os_client.put(request).await;
 
     match response {
         Ok(response) => {
@@ -1107,26 +1118,27 @@ async fn put_with_double_replication() {
 }
 
 #[tokio::test]
-#[serial(grpc_server)]
 async fn get_object_no_properties() {
     let docker = clients::Cli::default();
     let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
-    let db = start_server(None, postgres_port).await;
+    let (db, config, addr) = start_server(test_config(postgres_port)).await;
 
     let (audience, signature) = party_1();
     let dime = generate_dime(vec![audience.clone()], vec![signature]);
     let payload: bytes::Bytes = "testing small payload".as_bytes().into();
     let chunk_size = 500; // full payload in one packet
-    let response = put_helper(
+    let request = put_helper(
         dime,
         payload.clone(),
         chunk_size,
         HashMap::default(),
         Vec::default(),
-    )
-    .await;
+    );
+
+    let mut os_client = get_object_client(addr).await;
+    let response = os_client.put(request).await;
 
     match response {
         Ok(response) => {
@@ -1140,9 +1152,7 @@ async fn get_object_no_properties() {
         _ => assert_eq!(format!("{:?}", response), ""),
     }
 
-    let mut client = pb::object_service_client::ObjectServiceClient::connect("tcp://0.0.0.0:6789")
-        .await
-        .unwrap();
+    let mut client = get_object_client(config.url).await;
     let public_key = audience.public_key_decoded();
     let request = HashRequest {
         hash: hash(payload),

@@ -458,12 +458,13 @@ async fn replicate_public_key(
 
 pub async fn replicate_iteration(inner: &mut ReplicationState, client_cache: &mut ClientCache) {
     // Update snapshot cache every 5 minutes
+    let now = Utc::now();
     let last_cache_update = &inner.snapshot_cache.0;
-    if last_cache_update.time() + chrono::Duration::minutes(5) < Utc::now().time() {
+    if last_cache_update.time() + chrono::Duration::minutes(5) < now.time() {
         log::trace!("Updating snapshot cache");
 
         let snapshot_cache = inner.cache.lock().unwrap().clone();
-        inner.snapshot_cache = (Utc::now(), snapshot_cache);
+        inner.snapshot_cache = (now, snapshot_cache);
     }
 
     let mut futures = Vec::new();
@@ -552,7 +553,9 @@ pub async fn replicate(mut inner: ReplicationState) {
 pub async fn reap_unknown_keys_iteration(db_pool: &Arc<PgPool>, cache: &Arc<Mutex<Cache>>) {
     let public_keys = cache.lock().unwrap().public_keys.clone();
 
-    for (public_key, _) in public_keys.iter().filter(|(_, v)| v.url.is_empty()) {
+    let unknown_keys = public_keys.iter().filter(|(_, v)| v.url.is_empty());
+
+    for (public_key, _) in unknown_keys {
         let result = replication_object_uuids(db_pool, public_key, 1).await;
 
         match result {

@@ -1,7 +1,5 @@
 mod common;
 
-use std::sync::{Arc, Mutex};
-
 use object_store::cache::Cache;
 use object_store::pb::public_key_request::Impl::HeaderAuth as HeaderAuthEnumRequest;
 use object_store::pb::public_key_response::Impl::HeaderAuth as HeaderAuthEnumResponse;
@@ -10,28 +8,25 @@ use object_store::pb::PublicKeyRequest;
 use object_store::pb::{public_key::Key, HeaderAuth, PublicKey};
 use object_store::proto_helpers::VecUtil;
 use object_store::public_key::PublicKeyGrpc;
-use testcontainers::clients::{self, Cli};
+use testcontainers::clients;
 use tonic::Request;
 
 use crate::common::db::{setup_postgres, start_postgres};
-
-async fn setup(docker: &Cli) -> (Arc<Mutex<Cache>>, PublicKeyGrpc) {
-    let postgres = start_postgres(&docker).await;
-    let pool = setup_postgres(postgres).await;
-    let cache = Cache::new(pool.clone()).await.unwrap(); // TODO remove unwrap
-    let public_key_service = PublicKeyGrpc::new(cache.clone(), pool);
-
-    (cache, public_key_service)
-}
+use crate::common::test_config;
 
 #[tokio::test]
 async fn invalid_url() {
     let docker = clients::Cli::default();
-    let (_, public_key_service) = setup(&docker).await;
+
+    let container = start_postgres(&docker).await;
+    let config = test_config(container.get_host_port_ipv4(5432));
+    let pool = setup_postgres(&config).await;
+    let cache = Cache::new(pool.clone()).await.unwrap();
+    let public_key_service = PublicKeyGrpc::new(cache.clone(), pool.clone());
 
     let request = PublicKeyRequest {
         public_key: Some(PublicKey {
-            key: Some(Key::Secp256k1(vec![])),
+            key: Some(vec![].into()),
         }),
         r#impl: None,
         url: "invalidurl.com".to_owned(),
@@ -55,16 +50,20 @@ async fn invalid_url() {
 #[tokio::test]
 async fn empty_url() {
     let docker = clients::Cli::default();
-    let (_, public_key_service) = setup(&docker).await;
+
+    let container = start_postgres(&docker).await;
+    let config = test_config(container.get_host_port_ipv4(5432));
+    let pool = setup_postgres(&config).await;
+    let cache = Cache::new(pool.clone()).await.unwrap();
+    let public_key_service = PublicKeyGrpc::new(cache.clone(), pool.clone());
 
     let request = PublicKeyRequest {
-        public_key: Some(PublicKey {
-            key: Some(Key::Secp256k1(vec![1u8, 2u8, 3u8])),
-        }),
+        public_key: Some(vec![1u8, 2u8, 3u8].into()),
         r#impl: None,
         url: String::default(),
         metadata: None,
     };
+
     let response = public_key_service.add(Request::new(request)).await;
 
     match response {
@@ -89,12 +88,15 @@ async fn empty_url() {
 #[tokio::test]
 async fn empty_auth_header_header() {
     let docker = clients::Cli::default();
-    let (_, public_key_service) = setup(&docker).await;
+
+    let container = start_postgres(&docker).await;
+    let config = test_config(container.get_host_port_ipv4(5432));
+    let pool = setup_postgres(&config).await;
+    let cache = Cache::new(pool.clone()).await.unwrap();
+    let public_key_service = PublicKeyGrpc::new(cache.clone(), pool.clone());
 
     let request = PublicKeyRequest {
-        public_key: Some(PublicKey {
-            key: Some(Key::Secp256k1(vec![1u8, 2u8, 3u8])),
-        }),
+        public_key: Some(vec![1u8, 2u8, 3u8].into()),
         r#impl: Some(HeaderAuthEnumRequest(HeaderAuth {
             header: String::from(""),
             value: String::from("custom_value"),
@@ -102,6 +104,7 @@ async fn empty_auth_header_header() {
         url: String::default(),
         metadata: None,
     };
+
     let response = public_key_service.add(Request::new(request)).await;
 
     match response {
@@ -119,12 +122,15 @@ async fn empty_auth_header_header() {
 #[tokio::test]
 async fn empty_auth_header_value() {
     let docker = clients::Cli::default();
-    let (_, public_key_service) = setup(&docker).await;
+
+    let container = start_postgres(&docker).await;
+    let config = test_config(container.get_host_port_ipv4(5432));
+    let pool = setup_postgres(&config).await;
+    let cache = Cache::new(pool.clone()).await.unwrap();
+    let public_key_service = PublicKeyGrpc::new(cache.clone(), pool.clone());
 
     let request = PublicKeyRequest {
-        public_key: Some(PublicKey {
-            key: Some(Key::Secp256k1(vec![1u8, 2u8, 3u8])),
-        }),
+        public_key: Some(vec![1u8, 2u8, 3u8].into()),
         r#impl: Some(HeaderAuthEnumRequest(HeaderAuth {
             header: String::from("X-Custom-Header"),
             value: String::from(""),
@@ -149,7 +155,12 @@ async fn empty_auth_header_value() {
 #[tokio::test]
 async fn missing_public_key() {
     let docker = clients::Cli::default();
-    let (_, public_key_service) = setup(&docker).await;
+
+    let container = start_postgres(&docker).await;
+    let config = test_config(container.get_host_port_ipv4(5432));
+    let pool = setup_postgres(&config).await;
+    let cache = Cache::new(pool.clone()).await.unwrap();
+    let public_key_service = PublicKeyGrpc::new(cache.clone(), pool.clone());
 
     let request = PublicKeyRequest {
         public_key: None,
@@ -171,7 +182,12 @@ async fn missing_public_key() {
 #[tokio::test]
 async fn missing_key() {
     let docker = clients::Cli::default();
-    let (_, public_key_service) = setup(&docker).await;
+
+    let container = start_postgres(&docker).await;
+    let config = test_config(container.get_host_port_ipv4(5432));
+    let pool = setup_postgres(&config).await;
+    let cache = Cache::new(pool.clone()).await.unwrap();
+    let public_key_service = PublicKeyGrpc::new(cache.clone(), pool.clone());
 
     let request = PublicKeyRequest {
         public_key: Some(PublicKey { key: None }),
@@ -193,20 +209,22 @@ async fn missing_key() {
 #[tokio::test]
 async fn duplicate_key() {
     let docker = clients::Cli::default();
-    let (_, public_key_service) = setup(&docker).await;
+
+    let container = start_postgres(&docker).await;
+    let postgres_port = container.get_host_port_ipv4(5432);
+    let config = test_config(postgres_port);
+    let pool = setup_postgres(&config).await;
+    let cache = Cache::new(pool.clone()).await.unwrap();
+    let public_key_service = PublicKeyGrpc::new(cache.clone(), pool.clone());
 
     let request1 = PublicKeyRequest {
-        public_key: Some(PublicKey {
-            key: Some(Key::Secp256k1(vec![1u8, 2u8, 3u8])),
-        }),
+        public_key: Some(vec![1u8, 2u8, 3u8].into()),
         r#impl: None,
         url: "http://test.com".to_owned(),
         metadata: None,
     };
     let request2 = PublicKeyRequest {
-        public_key: Some(PublicKey {
-            key: Some(Key::Secp256k1(vec![1u8, 2u8, 3u8])),
-        }),
+        public_key: Some(vec![1u8, 2u8, 3u8].into()),
         r#impl: None,
         url: "http://test2.com".to_owned(),
         metadata: None,
@@ -243,13 +261,16 @@ async fn duplicate_key() {
 #[tokio::test]
 async fn returns_full_proto() {
     let docker = clients::Cli::default();
-    let (_, public_key_service) = setup(&docker).await;
+
+    let container = start_postgres(&docker).await;
+    let config = test_config(container.get_host_port_ipv4(5432));
+    let pool = setup_postgres(&config).await;
+    let cache = Cache::new(pool.clone()).await.unwrap();
+    let public_key_service = PublicKeyGrpc::new(cache.clone(), pool.clone());
 
     // TODO add metadata to this request
     let request = PublicKeyRequest {
-        public_key: Some(PublicKey {
-            key: Some(Key::Secp256k1(vec![1u8, 2u8, 3u8])),
-        }),
+        public_key: Some(vec![1u8, 2u8, 3u8].into()),
         r#impl: Some(HeaderAuthEnumRequest(HeaderAuth {
             header: String::from("X-Custom-Header"),
             value: String::from("custom_value"),
@@ -286,12 +307,15 @@ async fn returns_full_proto() {
 #[tokio::test]
 async fn adds_empty_urls_to_local_cache() {
     let docker = clients::Cli::default();
-    let (cache, public_key_service) = setup(&docker).await;
+
+    let container = start_postgres(&docker).await;
+    let config = test_config(container.get_host_port_ipv4(5432));
+    let pool = setup_postgres(&config).await;
+    let cache = Cache::new(pool.clone()).await.unwrap();
+    let public_key_service = PublicKeyGrpc::new(cache.clone(), pool.clone());
 
     let request = PublicKeyRequest {
-        public_key: Some(PublicKey {
-            key: Some(Key::Secp256k1(vec![1u8, 2u8, 3u8])),
-        }),
+        public_key: Some(vec![1u8, 2u8, 3u8].into()),
         r#impl: None,
         url: String::default(),
         metadata: None,
@@ -302,7 +326,7 @@ async fn adds_empty_urls_to_local_cache() {
         Ok(_) => (),
         _ => assert_eq!(format!("{:?}", response), ""),
     }
-    let cache = cache.clone();
+
     let cache = cache.lock().unwrap();
     assert_eq!(cache.public_keys.len(), 1);
     assert!(cache
@@ -321,12 +345,15 @@ async fn adds_empty_urls_to_local_cache() {
 #[tokio::test]
 async fn adds_nonempty_urls_to_remote_cache() {
     let docker = clients::Cli::default();
-    let (cache, public_key_service) = setup(&docker).await;
+
+    let container = start_postgres(&docker).await;
+    let config = test_config(container.get_host_port_ipv4(5432));
+    let pool = setup_postgres(&config).await;
+    let cache = Cache::new(pool.clone()).await.unwrap();
+    let public_key_service = PublicKeyGrpc::new(cache.clone(), pool.clone());
 
     let request = PublicKeyRequest {
-        public_key: Some(PublicKey {
-            key: Some(Key::Secp256k1(vec![1u8, 2u8, 3u8])),
-        }),
+        public_key: Some(vec![1u8, 2u8, 3u8].into()),
         r#impl: None,
         url: "http://test.com".to_owned(),
         metadata: None,

@@ -43,5 +43,5 @@ uuid = { version = "1", features = ["serde", "v4"] }
 tonic-build = "0.6"
 
 [dev-dependencies]
-serial_test = "*"
 testcontainers = "0.14"
+tokio-stream = {version = "0.1", features=["net"]}

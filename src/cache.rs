@@ -19,7 +19,7 @@ pub enum PublicKeyState {
 
 #[derive(Clone, Debug, Default)]
 pub struct Cache {
-    // keys are base64 strings
+    /// keys are base64 strings
     pub public_keys: HashMap<String, PublicKey>,
 }
 

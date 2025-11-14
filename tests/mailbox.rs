@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
@@ -10,16 +10,19 @@ use object_store::datastore::PublicKey;
 use object_store::db::connect_and_migrate;
 use object_store::mailbox::*;
 use object_store::object::*;
+use object_store::pb::mailbox_service_server::MailboxServiceServer;
+use object_store::pb::object_service_client::ObjectServiceClient;
+use object_store::pb::object_service_server::ObjectServiceServer;
 use object_store::pb::{
-    self, mailbox_service_client::MailboxServiceClient, AckRequest, Audience, GetRequest,
+    mailbox_service_client::MailboxServiceClient, AckRequest, Audience, GetRequest,
 };
-use object_store::storage::FileSystem;
+use object_store::proto_helpers::AudienceUtil;
+use object_store::storage::new_storage;
 
 use sqlx::postgres::PgPool;
 use tonic::transport::Channel;
 use tonic::Request;
 
-use serial_test::serial;
 use testcontainers::*;
 
 mod common;
@@ -27,12 +30,13 @@ mod common;
 use crate::common::db::start_postgres;
 use crate::common::*;
 
-async fn start_server(default_config: Option<Config>, postgres_port: u16) -> Arc<PgPool> {
-    let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+async fn start_server(
+    default_config: Option<Config>,
+    postgres_port: u16,
+) -> (Arc<PgPool>, SocketAddr) {
+    let config = default_config.unwrap_or(test_config(postgres_port));
 
-    tokio::spawn(async move {
-        let config = default_config.unwrap_or(test_config(postgres_port));
-
+    let cache = {
         let mut cache = Cache::default();
         cache.add_public_key(PublicKey {
             auth_data: Some(String::from("x-test-header:test_value_1")),
@@ -42,46 +46,44 @@ async fn start_server(default_config: Option<Config>, postgres_port: u16) -> Arc
             auth_data: Some(String::from("x-test-header:test_value_2")),
             ..test_public_key(party_2().0.public_key)
         });
-        let cache = Arc::new(Mutex::new(cache));
+        Arc::new(Mutex::new(cache))
+    };
 
-        // let pool = setup_postgres(postgres_port).await;
-        let pool = connect_and_migrate(&config).await.unwrap();
+    let pool = connect_and_migrate(&config).await.unwrap();
 
-        let storage = FileSystem::new(PathBuf::from(config.storage_base_path.as_str()));
+    let storage = new_storage(&config).unwrap();
 
-        let url = config.url;
-        let config = Arc::new(config);
+    let config = Arc::new(config);
 
-        let mailbox_service = MailboxGrpc::new(cache.clone(), config.clone(), pool.clone());
-        let object_service = ObjectGrpc::new(
-            cache.clone(),
-            config.clone(),
-            pool.clone(),
-            Arc::new(Box::new(storage)),
-        );
+    let mailbox_service = MailboxGrpc::new(cache.clone(), config.clone(), pool.clone());
+    let object_service =
+        ObjectGrpc::new(cache.clone(), config.clone(), pool.clone(), storage.clone());
 
-        tx.send(pool.clone()).await.unwrap();
+    let listener = tokio::net::TcpListener::bind(config.url).await.unwrap();
+    let local_addr = listener.local_addr().unwrap();
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    println!("test server running on {:?}", local_addr);
 
+    tokio::spawn(async move {
         tonic::transport::Server::builder()
-            .add_service(pb::mailbox_service_server::MailboxServiceServer::new(
-                mailbox_service,
-            ))
-            .add_service(pb::object_service_server::ObjectServiceServer::new(
-                object_service,
-            ))
-            .serve(url)
+            .add_service(MailboxServiceServer::new(mailbox_service))
+            .add_service(ObjectServiceServer::new(object_service))
+            .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener))
             .await
             .unwrap()
     });
 
-    rx.recv().await.unwrap()
+    (pool, local_addr)
 }
 
-async fn get_client() -> MailboxServiceClient<Channel> {
-    // allow server to start
-    tokio::time::sleep(tokio::time::Duration::from_millis(1_000)).await;
+async fn get_mailbox_client(addr: SocketAddr) -> MailboxServiceClient<Channel> {
+    let dst = format!("tcp://{}", addr);
+    println!("Connect mailbox service {:?}", dst);
+    MailboxServiceClient::connect(dst).await.unwrap()
+}
 
-    pb::mailbox_service_client::MailboxServiceClient::connect("tcp://0.0.0.0:6789")
+async fn get_object_client(addr: SocketAddr) -> ObjectServiceClient<Channel> {
+    ObjectServiceClient::connect(format!("tcp://{:?}", addr))
         .await
         .unwrap()
 }
@@ -176,14 +178,13 @@ async fn authed_get_and_ack_helper(
 }
 
 #[tokio::test]
-#[serial(grpc_server)]
 async fn get_and_ack_flow() {
     let docker = clients::Cli::default();
     let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
-    let db = start_server(None, postgres_port).await;
-    let mut client = get_client().await;
+    let (db, addr) = start_server(None, postgres_port).await;
+    let mut client = get_mailbox_client(addr).await;
 
     // post fragment request
     let (audience1, signature1) = party_1();
@@ -197,14 +198,16 @@ async fn get_and_ack_flow() {
         .insert(MAILBOX_KEY.to_owned(), MAILBOX_FRAGMENT_REQUEST.to_owned());
     let payload: bytes::Bytes = "fragment request envelope".as_bytes().into();
     let chunk_size = 500; // full payload in one packet
-    let response = put_helper(
+    let request = put_helper(
         dime,
         payload,
         chunk_size,
         HashMap::default(),
         Vec::default(),
-    )
-    .await;
+    );
+
+    let mut os_client = get_object_client(addr).await;
+    let response = os_client.put(request).await;
 
     match response {
         Ok(response) => {
@@ -233,14 +236,16 @@ async fn get_and_ack_flow() {
         .insert(MAILBOX_KEY.to_owned(), MAILBOX_FRAGMENT_RESPONSE.to_owned());
     let payload: bytes::Bytes = "fragment response envelope".as_bytes().into();
     let chunk_size = 500; // full payload in one packet
-    let response = put_helper(
+    let request = put_helper(
         dime,
         payload,
         chunk_size,
         HashMap::default(),
         Vec::default(),
-    )
-    .await;
+    );
+
+    let mut os_client = get_object_client(addr).await;
+    let response = os_client.put(request).await;
 
     match response {
         Ok(response) => {
@@ -269,14 +274,16 @@ async fn get_and_ack_flow() {
         .insert(MAILBOX_KEY.to_owned(), MAILBOX_ERROR_RESPONSE.to_owned());
     let payload: bytes::Bytes = "error envelope".as_bytes().into();
     let chunk_size = 500; // full payload in one packet
-    let response = put_helper(
+    let request = put_helper(
         dime,
         payload,
         chunk_size,
         HashMap::default(),
         Vec::default(),
-    )
-    .await;
+    );
+
+    let mut os_client = get_object_client(addr).await;
+    let response = os_client.put(request).await;
 
     match response {
         Ok(response) => {
@@ -303,14 +310,13 @@ async fn get_and_ack_flow() {
 }
 
 #[tokio::test]
-#[serial(grpc_server)]
 async fn duplicate_objects_does_not_dup_mail() {
     let docker = clients::Cli::default();
     let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
-    start_server(None, postgres_port).await;
-    let mut client = get_client().await;
+    let (_, addr) = start_server(None, postgres_port).await;
+    let mut client = get_mailbox_client(addr).await;
 
     let (audience1, signature1) = party_1();
     let (audience2, signature2) = party_2();
@@ -324,14 +330,16 @@ async fn duplicate_objects_does_not_dup_mail() {
     let chunk_size = 500; // full payload in one packet
 
     for _ in 0..10 {
-        let response = put_helper(
+        let request = put_helper(
             dime.clone(),
             payload.clone(),
             chunk_size,
             HashMap::default(),
             Vec::default(),
-        )
-        .await;
+        );
+
+        let mut os_client = get_object_client(addr).await;
+        let response = os_client.put(request).await;
 
         match response {
             Ok(_) => (),
@@ -343,14 +351,16 @@ async fn duplicate_objects_does_not_dup_mail() {
         .insert(MAILBOX_KEY.to_owned(), MAILBOX_ERROR_RESPONSE.to_owned());
 
     for _ in 0..10 {
-        let response = put_helper(
+        let request = put_helper(
             dime.clone(),
             payload.clone(),
             chunk_size,
             HashMap::default(),
             Vec::default(),
-        )
-        .await;
+        );
+
+        let mut os_client = get_object_client(addr).await;
+        let response = os_client.put(request).await;
 
         match response {
             Ok(_) => (),
@@ -362,14 +372,13 @@ async fn duplicate_objects_does_not_dup_mail() {
 }
 
 #[tokio::test]
-#[serial(grpc_server)]
 async fn get_and_ack_many() {
     let docker = clients::Cli::default();
     let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
-    start_server(None, postgres_port).await;
-    let mut client = get_client().await;
+    let (_, addr) = start_server(None, postgres_port).await;
+    let mut client = get_mailbox_client(addr).await;
 
     let (audience1, signature1) = party_1();
     let (audience2, signature2) = party_2();
@@ -387,14 +396,16 @@ async fn get_and_ack_many() {
             .to_string()
             .into_bytes()
             .into();
-        let response = put_helper(
+        let request = put_helper(
             dime.clone(),
             payload,
             chunk_size,
             HashMap::default(),
             Vec::default(),
-        )
-        .await;
+        );
+
+        let mut os_client = get_object_client(addr).await;
+        let response = os_client.put(request).await;
 
         match response {
             Ok(_) => (),
@@ -411,14 +422,16 @@ async fn get_and_ack_many() {
             .to_string()
             .into_bytes()
             .into();
-        let response = put_helper(
+        let request = put_helper(
             dime.clone(),
             payload.clone(),
             chunk_size,
             HashMap::default(),
             Vec::default(),
-        )
-        .await;
+        );
+
+        let mut os_client = get_object_client(addr).await;
+        let response = os_client.put(request).await;
 
         match response {
             Ok(_) => (),
@@ -431,7 +444,6 @@ async fn get_and_ack_many() {
 }
 
 #[tokio::test]
-#[serial(grpc_server)]
 async fn auth_get_and_ack_success() {
     let docker = clients::Cli::default();
     let container = start_postgres(&docker).await;
@@ -439,8 +451,8 @@ async fn auth_get_and_ack_success() {
 
     let mut config = test_config(postgres_port);
     config.user_auth_enabled = true;
-    start_server(Some(config), postgres_port).await;
-    let mut client = get_client().await;
+    let (_, addr) = start_server(Some(config), postgres_port).await;
+    let mut client = get_mailbox_client(addr).await;
 
     let (audience1, signature1) = party_1();
     let (audience2, signature2) = party_2();
@@ -457,14 +469,16 @@ async fn auth_get_and_ack_success() {
         .to_string()
         .into_bytes()
         .into();
-    let response = put_helper(
+    let request = put_helper(
         dime.clone(),
         payload,
         chunk_size,
         HashMap::default(),
         vec![("x-test-header", "test_value_1")],
-    )
-    .await;
+    );
+
+    let mut os_client = get_object_client(addr).await;
+    let response = os_client.put(request).await;
 
     match response {
         Ok(_) => (),
@@ -488,7 +502,6 @@ async fn auth_get_and_ack_success() {
 }
 
 #[tokio::test]
-#[serial(grpc_server)]
 async fn auth_get_invalid_key() {
     let docker = clients::Cli::default();
     let container = start_postgres(&docker).await;
@@ -499,8 +512,9 @@ async fn auth_get_invalid_key() {
         user_auth_enabled: true,
         ..config
     };
-    start_server(Some(config), postgres_port).await;
-    let mut client = get_client().await;
+
+    let (_, addr) = start_server(Some(config), postgres_port).await;
+    let mut client = get_mailbox_client(addr).await;
 
     let (audience1, signature1) = party_1();
     let (audience2, signature2) = party_2();
@@ -517,14 +531,16 @@ async fn auth_get_invalid_key() {
         .to_string()
         .into_bytes()
         .into();
-    let response = put_helper(
+    let request = put_helper(
         dime.clone(),
         payload,
         chunk_size,
         HashMap::default(),
         vec![("x-test-header", "test_value_1")],
-    )
-    .await;
+    );
+
+    let mut os_client = get_object_client(addr).await;
+    let response = os_client.put(request).await;
 
     match response {
         Ok(_) => (),
@@ -547,7 +563,6 @@ async fn auth_get_invalid_key() {
 }
 
 #[tokio::test]
-#[serial(grpc_server)]
 async fn auth_ack_invalid_key() {
     let docker = clients::Cli::default();
     let container = start_postgres(&docker).await;
@@ -555,8 +570,9 @@ async fn auth_ack_invalid_key() {
 
     let mut config = test_config(postgres_port);
     config.user_auth_enabled = true;
-    start_server(Some(config), postgres_port).await;
-    let mut client = get_client().await;
+
+    let (_, addr) = start_server(Some(config), postgres_port).await;
+    let mut client = get_mailbox_client(addr).await;
 
     let (audience1, signature1) = party_1();
     let (audience2, signature2) = party_2();
@@ -573,14 +589,16 @@ async fn auth_ack_invalid_key() {
         .to_string()
         .into_bytes()
         .into();
-    let response = put_helper(
+    let request = put_helper(
         dime.clone(),
         payload,
         chunk_size,
         HashMap::default(),
         vec![("x-test-header", "test_value_1")],
-    )
-    .await;
+    );
+
+    let mut os_client = get_object_client(addr).await;
+    let response = os_client.put(request).await;
 
     match response {
         Ok(_) => (),
@@ -603,7 +621,6 @@ async fn auth_ack_invalid_key() {
 }
 
 #[tokio::test]
-#[serial(grpc_server)]
 async fn auth_get_no_key() {
     let docker = clients::Cli::default();
     let container = start_postgres(&docker).await;
@@ -611,8 +628,9 @@ async fn auth_get_no_key() {
 
     let mut config = test_config(postgres_port);
     config.user_auth_enabled = true;
-    start_server(Some(config), postgres_port).await;
-    let mut client = get_client().await;
+
+    let (_, addr) = start_server(Some(config), postgres_port).await;
+    let mut client = get_mailbox_client(addr).await;
 
     let (audience1, signature1) = party_1();
     let (audience2, signature2) = party_2();
@@ -629,14 +647,16 @@ async fn auth_get_no_key() {
         .to_string()
         .into_bytes()
         .into();
-    let response = put_helper(
+    let request = put_helper(
         dime.clone(),
         payload,
         chunk_size,
         HashMap::default(),
         vec![("x-test-header", "test_value_1")],
-    )
-    .await;
+    );
+
+    let mut os_client = get_object_client(addr).await;
+    let response = os_client.put(request).await;
 
     match response {
         Ok(_) => (),
@@ -657,7 +677,6 @@ async fn auth_get_no_key() {
 }
 
 #[tokio::test]
-#[serial(grpc_server)]
 async fn auth_ack_no_key() {
     let docker = clients::Cli::default();
     let container = start_postgres(&docker).await;
@@ -665,8 +684,8 @@ async fn auth_ack_no_key() {
 
     let mut config = test_config(postgres_port);
     config.user_auth_enabled = true;
-    start_server(Some(config), postgres_port).await;
-    let mut client = get_client().await;
+    let (_, addr) = start_server(Some(config), postgres_port).await;
+    let mut client = get_mailbox_client(addr).await;
 
     let (audience1, signature1) = party_1();
     let (audience2, signature2) = party_2();
@@ -683,14 +702,16 @@ async fn auth_ack_no_key() {
         .to_string()
         .into_bytes()
         .into();
-    let response = put_helper(
+    let request = put_helper(
         dime.clone(),
         payload,
         chunk_size,
         HashMap::default(),
         vec![("x-test-header", "test_value_1")],
-    )
-    .await;
+    );
+
+    let mut os_client = get_object_client(addr).await;
+    let response = os_client.put(request).await;
 
     match response {
         Ok(_) => (),

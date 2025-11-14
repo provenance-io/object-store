@@ -5,6 +5,7 @@ use tonic_health::proto::health_server::{Health, HealthServer};
 
 use crate::{datastore, AppContext};
 
+/// If [crate::Config::health_service_enabled] is true, initializes [tonic_health::server::HealthReporter] and starts periodic health check [health_status]
 pub async fn init_health_service(context: &AppContext) -> Option<HealthServer<impl Health>> {
     if context.config.health_service_enabled {
         log::info!("Starting health service...");
@@ -14,6 +15,7 @@ pub async fn init_health_service(context: &AppContext) -> Option<HealthServer<im
         health_reporter
             .set_service_status("", tonic_health::ServingStatus::NotServing)
             .await;
+
         tokio::spawn(health_status(health_reporter, context.db_pool.clone()));
 
         Some(health_service)
@@ -22,6 +24,7 @@ pub async fn init_health_service(context: &AppContext) -> Option<HealthServer<im
     }
 }
 
+/// Every two seconds, sets the overall service status based on database connection via [datastore::health_check]
 async fn health_status(mut reporter: tonic_health::server::HealthReporter, db: Arc<PgPool>) {
     log::info!("Starting health status check");
 
