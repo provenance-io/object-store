@@ -12,7 +12,6 @@ use object_store::{pb, AppContext};
 use testcontainers::clients;
 
 use std::collections::HashMap;
-use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 
 use futures::StreamExt;
@@ -70,7 +69,7 @@ fn set_cache(cache: &mut Cache, remote_config: &Config) {
 async fn start_server_one(
     context: AppContext,
     remote_config: &Config,
-) -> (Arc<Mutex<Cache>>, ReplicationState, Arc<Config>, SocketAddr) {
+) -> (Arc<Mutex<Cache>>, ReplicationState, Arc<Config>) {
     {
         let mut cache = context.cache.lock().unwrap();
         set_cache(&mut cache, remote_config);
@@ -92,7 +91,7 @@ async fn start_server_one(
     });
     let updated_config = Arc::new(Config {
         url: local_addr,
-        ..test_config_one(context.config.db_port)
+        ..test_config_one(context.config.db_port) // TODO: fix - use actual config
     });
     // TODO replace with context init
     let replication_state = ReplicationState::new(
@@ -102,15 +101,10 @@ async fn start_server_one(
         context.storage.clone(),
     );
 
-    (
-        context.cache.clone(),
-        replication_state,
-        updated_config,
-        local_addr,
-    )
+    (context.cache.clone(), replication_state, updated_config)
 }
 
-async fn start_server_two(context: AppContext) -> (ReplicationState, Arc<Config>, SocketAddr) {
+async fn start_server_two(context: AppContext) -> (ReplicationState, Arc<Config>) {
     // TODO new config with addr
     let db_port = context.config.db_port;
 
@@ -136,7 +130,7 @@ async fn start_server_two(context: AppContext) -> (ReplicationState, Arc<Config>
     });
     let updated_config = Arc::new(Config {
         url: local_addr,
-        ..test_config_two(db_port)
+        ..test_config_two(db_port) // TODO: fix - use actual config
     });
     // TODO: replace with appcontext init
     let replication_state = ReplicationState::new(
@@ -146,7 +140,7 @@ async fn start_server_two(context: AppContext) -> (ReplicationState, Arc<Config>
         context.storage.clone(),
     );
 
-    (replication_state, updated_config, local_addr)
+    (replication_state, updated_config)
 }
 
 pub async fn get_object_count(db: &PgPool) -> i64 {
@@ -170,10 +164,9 @@ async fn client_caching() {
     let config_two = Arc::new(test_config_two(db_port_two));
     let context_two = AppContext::new(config_two.clone()).await.unwrap();
 
-    let (_, _state_one, config_one, addr1) = start_server_one(context_one, &config_two).await;
+    let (_, _state_one, config_one) = start_server_one(context_one, &config_two).await;
 
-    let url_one = format!("tcp://{}", addr1);
-    println!("url_one: {}, config.url: {}", url_one, config_one.url);
+    let url_one = format!("tcp://{}", config_one.url);
 
     let mut client_cache =
         ClientCache::new(config_one.backoff_min_wait, config_one.backoff_max_wait);
@@ -196,8 +189,8 @@ async fn client_caching() {
 
     // Client 2:
     // TODO remove address return
-    let (_state_two, _config_two, addr2) = start_server_two(context_two).await;
-    let url_two = format!("tcp://{}", addr2);
+    let (_state_two, config_two) = start_server_two(context_two).await;
+    let url_two = format!("tcp://{}", config_two.url);
 
     let client_two = client_cache.request(&url_two).await.unwrap().unwrap();
 
@@ -214,7 +207,7 @@ async fn replication_can_be_disabled() {
     let context = AppContext::new(Arc::new(config)).await.unwrap();
     let db_pool = context.db_pool.clone();
 
-    let (_, _state_one, _config_one, addr) = start_server_one(context, &test_config_two(0)).await;
+    let (_, _state_one, config_one) = start_server_one(context, &test_config_two(0)).await;
 
     let (audience1, signature1) = party_1();
     let (audience2, signature2) = party_2();
@@ -235,7 +228,7 @@ async fn replication_can_be_disabled() {
         Vec::default(),
     );
 
-    let mut os_client = get_object_client(addr).await;
+    let mut os_client = get_object_client(config_one.url).await;
     let response = os_client.put(request).await;
 
     match response {
@@ -325,10 +318,10 @@ async fn end_to_end_replication() {
     let context_two = AppContext::new(config_two.clone()).await.unwrap();
     let db_pool_two = context_two.db_pool.clone();
 
-    let (_, mut state_one, config_one, addr1) = start_server_one(context_one, &config_two).await;
-    let (_state_two, _config_two, addr2) = start_server_two(context_two).await;
+    let (_, mut state_one, config_one) = start_server_one(context_one, &config_two).await;
+    let (_state_two, config_two) = start_server_two(context_two).await;
 
-    let mut client_one = get_object_client(addr1).await;
+    let mut client_one = get_object_client(config_one.url).await;
 
     let (audience1, signature1) = party_1();
     let (audience2, signature2) = party_2();
@@ -581,7 +574,7 @@ async fn end_to_end_replication() {
 
     // pull one object from local instance and verify all rows against the same one that was replicated to the remote
     {
-        let mut client_two = get_object_client(addr2).await;
+        let mut client_two = get_object_client(config_two.url).await;
 
         let public_key = audience3.public_key_decoded();
         let payload4: bytes::Bytes = "testing small payload 4".as_bytes().into();
@@ -622,7 +615,7 @@ async fn late_local_url_can_cleanup() {
     let context = AppContext::new(Arc::new(config)).await.unwrap();
     let db_pool = context.db_pool.clone();
 
-    let (cache, _state_one, _config, addr) = start_server_one(context, &test_config_two(0)).await;
+    let (cache, _state_one, config) = start_server_one(context, &test_config_two(0)).await;
 
     let (audience1, signature1) = party_1();
     let (audience3, signature3) = party_3();
@@ -642,7 +635,7 @@ async fn late_local_url_can_cleanup() {
         Vec::default(),
     );
 
-    let mut os_client = get_object_client(addr).await;
+    let mut os_client = get_object_client(config.url).await;
     let response = os_client.put(request).await;
 
     match response {
