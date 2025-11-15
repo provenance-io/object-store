@@ -1,23 +1,17 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::str::FromStr;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-use object_store::cache::Cache;
 use object_store::config::Config;
-use object_store::consts::*;
 use object_store::datastore::PublicKey;
-use object_store::db::connect_and_migrate;
-use object_store::mailbox::MailboxGrpc;
-use object_store::object::ObjectGrpc;
 use object_store::pb::mailbox_service_server::MailboxServiceServer;
-use object_store::pb::object_service_client::ObjectServiceClient;
 use object_store::pb::object_service_server::ObjectServiceServer;
 use object_store::pb::{
     mailbox_service_client::MailboxServiceClient, AckRequest, Audience, GetRequest,
 };
 use object_store::proto_helpers::AudienceUtil;
-use object_store::storage::new_storage;
+use object_store::{consts::*, AppContext};
 
 use sqlx::postgres::PgPool;
 use testcontainers::clients;
@@ -26,6 +20,7 @@ use tonic::Request;
 
 mod common;
 
+use crate::common::client::{get_mailbox_client, get_object_client};
 use crate::common::config::test_config;
 use crate::common::containers::start_containers;
 use crate::common::data::{generate_dime, party_1, party_2, party_3};
@@ -33,14 +28,9 @@ use crate::common::{
     get_mailbox_keys_by_object, get_public_keys_by_object, put_helper, test_public_key,
 };
 
-async fn start_server(
-    default_config: Option<Config>,
-    postgres_port: u16,
-) -> (Arc<PgPool>, SocketAddr) {
-    let config = default_config.unwrap_or(test_config(postgres_port));
-
-    let cache = {
-        let mut cache = Cache::default();
+async fn start_server(context: AppContext) -> (Arc<PgPool>, SocketAddr) {
+    {
+        let mut cache = context.cache.lock().unwrap();
         cache.add_public_key(PublicKey {
             auth_data: Some(String::from("x-test-header:test_value_1")),
             ..test_public_key(party_1().0.public_key)
@@ -49,46 +39,25 @@ async fn start_server(
             auth_data: Some(String::from("x-test-header:test_value_2")),
             ..test_public_key(party_2().0.public_key)
         });
-        Arc::new(Mutex::new(cache))
-    };
+    }
 
-    let pool = connect_and_migrate(&config).await.unwrap();
-
-    let storage = new_storage(&config).unwrap();
-
-    let config = Arc::new(config);
-
-    let mailbox_service = MailboxGrpc::new(cache.clone(), config.clone(), pool.clone());
-    let object_service =
-        ObjectGrpc::new(cache.clone(), config.clone(), pool.clone(), storage.clone());
-
-    let listener = tokio::net::TcpListener::bind(config.url).await.unwrap();
+    let listener = tokio::net::TcpListener::bind(context.config.url)
+        .await
+        .unwrap();
     let local_addr = listener.local_addr().unwrap();
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     println!("test server running on {:?}", local_addr);
 
     tokio::spawn(async move {
         tonic::transport::Server::builder()
-            .add_service(MailboxServiceServer::new(mailbox_service))
-            .add_service(ObjectServiceServer::new(object_service))
+            .add_service(MailboxServiceServer::new(context.mailbox_service))
+            .add_service(ObjectServiceServer::new(context.object_service))
             .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener))
             .await
             .unwrap()
     });
 
-    (pool, local_addr)
-}
-
-async fn get_mailbox_client(addr: SocketAddr) -> MailboxServiceClient<Channel> {
-    MailboxServiceClient::connect(format!("tcp://{}", addr))
-        .await
-        .unwrap()
-}
-
-async fn get_object_client(addr: SocketAddr) -> ObjectServiceClient<Channel> {
-    ObjectServiceClient::connect(format!("tcp://{:?}", addr))
-        .await
-        .unwrap()
+    (context.db_pool, local_addr)
 }
 
 async fn get_and_ack_helper(
@@ -185,7 +154,11 @@ async fn get_and_ack_flow() {
     let docker = clients::Cli::default();
     let (db_port, _postgres) = start_containers(&docker).await;
 
-    let (db, addr) = start_server(None, db_port).await;
+    let context = AppContext::new(Arc::new(test_config(db_port)))
+        .await
+        .unwrap();
+
+    let (db, addr) = start_server(context).await;
     let mut client = get_mailbox_client(addr).await;
 
     // post fragment request
@@ -316,7 +289,11 @@ async fn duplicate_objects_does_not_dup_mail() {
     let docker = clients::Cli::default();
     let (db_port, _postgres) = start_containers(&docker).await;
 
-    let (_, addr) = start_server(None, db_port).await;
+    let context = AppContext::new(Arc::new(test_config(db_port)))
+        .await
+        .unwrap();
+
+    let (_, addr) = start_server(context).await;
     let mut client = get_mailbox_client(addr).await;
 
     let (audience1, signature1) = party_1();
@@ -377,7 +354,11 @@ async fn get_and_ack_many() {
     let docker = clients::Cli::default();
     let (db_port, _postgres) = start_containers(&docker).await;
 
-    let (_, addr) = start_server(None, db_port).await;
+    let context = AppContext::new(Arc::new(test_config(db_port)))
+        .await
+        .unwrap();
+
+    let (_, addr) = start_server(context).await;
     let mut client = get_mailbox_client(addr).await;
 
     let (audience1, signature1) = party_1();
@@ -453,7 +434,9 @@ async fn auth_get_and_ack_success() {
         ..test_config(db_port)
     };
 
-    let (_, addr) = start_server(Some(config), db_port).await;
+    let context = AppContext::new(Arc::new(config)).await.unwrap();
+
+    let (_, addr) = start_server(context).await;
     let mut client = get_mailbox_client(addr).await;
 
     let (audience1, signature1) = party_1();
@@ -513,7 +496,9 @@ async fn auth_get_invalid_key() {
         ..test_config(db_port)
     };
 
-    let (_, addr) = start_server(Some(config), db_port).await;
+    let context = AppContext::new(Arc::new(config)).await.unwrap();
+
+    let (_, addr) = start_server(context).await;
     let mut client = get_mailbox_client(addr).await;
 
     let (audience1, signature1) = party_1();
@@ -572,7 +557,9 @@ async fn auth_ack_invalid_key() {
         ..test_config(db_port)
     };
 
-    let (_, addr) = start_server(Some(config), db_port).await;
+    let context = AppContext::new(Arc::new(config)).await.unwrap();
+
+    let (_, addr) = start_server(context).await;
     let mut client = get_mailbox_client(addr).await;
 
     let (audience1, signature1) = party_1();
@@ -631,7 +618,9 @@ async fn auth_get_no_key() {
         ..test_config(db_port)
     };
 
-    let (_, addr) = start_server(Some(config), db_port).await;
+    let context = AppContext::new(Arc::new(config)).await.unwrap();
+
+    let (_, addr) = start_server(context).await;
     let mut client = get_mailbox_client(addr).await;
 
     let (audience1, signature1) = party_1();
@@ -688,7 +677,9 @@ async fn auth_ack_no_key() {
         ..test_config(db_port)
     };
 
-    let (_, addr) = start_server(Some(config), db_port).await;
+    let context = AppContext::new(Arc::new(config)).await.unwrap();
+
+    let (_, addr) = start_server(context).await;
     let mut client = get_mailbox_client(addr).await;
 
     let (audience1, signature1) = party_1();
