@@ -3,11 +3,14 @@ mod common;
 use object_store::cache::Cache;
 use object_store::config::Config;
 use object_store::datastore::{replication_object_uuids, PublicKey};
+use object_store::object::ObjectGrpc;
+use object_store::pb;
 use object_store::pb::object_service_server::ObjectServiceServer;
 use object_store::proto_helpers::AudienceUtil;
-use object_store::replication::*;
+use object_store::replication::{
+    reap_unknown_keys_iteration, replicate_iteration, ClientCache, ReplicationState,
+};
 use object_store::storage::new_storage;
-use object_store::{object::*, pb};
 use testcontainers::clients;
 
 use std::collections::HashMap;

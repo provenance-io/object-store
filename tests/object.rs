@@ -21,7 +21,7 @@ use object_store::{consts::*, pb::HashRequest};
 
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
-use testcontainers::*;
+use testcontainers::clients;
 use tonic::Request;
 
 use crate::common::client::get_object_client;

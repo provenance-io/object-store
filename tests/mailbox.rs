@@ -8,8 +8,8 @@ use object_store::config::Config;
 use object_store::consts::*;
 use object_store::datastore::PublicKey;
 use object_store::db::connect_and_migrate;
-use object_store::mailbox::*;
-use object_store::object::*;
+use object_store::mailbox::MailboxGrpc;
+use object_store::object::ObjectGrpc;
 use object_store::pb::mailbox_service_server::MailboxServiceServer;
 use object_store::pb::object_service_client::ObjectServiceClient;
 use object_store::pb::object_service_server::ObjectServiceServer;
@@ -20,15 +20,17 @@ use object_store::proto_helpers::AudienceUtil;
 use object_store::storage::new_storage;
 
 use sqlx::postgres::PgPool;
+use testcontainers::clients;
 use tonic::transport::Channel;
 use tonic::Request;
-
-use testcontainers::*;
 
 mod common;
 
 use crate::common::db::start_postgres;
-use crate::common::*;
+use crate::common::{
+    generate_dime, get_mailbox_keys_by_object, get_public_keys_by_object, party_1, party_2,
+    party_3, put_helper, test_config, test_public_key,
+};
 
 async fn start_server(
     default_config: Option<Config>,
@@ -77,9 +79,9 @@ async fn start_server(
 }
 
 async fn get_mailbox_client(addr: SocketAddr) -> MailboxServiceClient<Channel> {
-    let dst = format!("tcp://{}", addr);
-    println!("Connect mailbox service {:?}", dst);
-    MailboxServiceClient::connect(dst).await.unwrap()
+    MailboxServiceClient::connect(format!("tcp://{}", addr))
+        .await
+        .unwrap()
 }
 
 async fn get_object_client(addr: SocketAddr) -> ObjectServiceClient<Channel> {
@@ -449,8 +451,11 @@ async fn auth_get_and_ack_success() {
     let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
-    let mut config = test_config(postgres_port);
-    config.user_auth_enabled = true;
+    let config = Config {
+        user_auth_enabled: true,
+        ..test_config(postgres_port)
+    };
+
     let (_, addr) = start_server(Some(config), postgres_port).await;
     let mut client = get_mailbox_client(addr).await;
 
@@ -507,10 +512,9 @@ async fn auth_get_invalid_key() {
     let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
-    let config = test_config(postgres_port);
     let config = Config {
         user_auth_enabled: true,
-        ..config
+        ..test_config(postgres_port)
     };
 
     let (_, addr) = start_server(Some(config), postgres_port).await;
@@ -568,8 +572,10 @@ async fn auth_ack_invalid_key() {
     let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
-    let mut config = test_config(postgres_port);
-    config.user_auth_enabled = true;
+    let config = Config {
+        user_auth_enabled: true,
+        ..test_config(postgres_port)
+    };
 
     let (_, addr) = start_server(Some(config), postgres_port).await;
     let mut client = get_mailbox_client(addr).await;
@@ -626,8 +632,10 @@ async fn auth_get_no_key() {
     let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
-    let mut config = test_config(postgres_port);
-    config.user_auth_enabled = true;
+    let config = Config {
+        user_auth_enabled: true,
+        ..test_config(postgres_port)
+    };
 
     let (_, addr) = start_server(Some(config), postgres_port).await;
     let mut client = get_mailbox_client(addr).await;
@@ -682,8 +690,11 @@ async fn auth_ack_no_key() {
     let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
-    let mut config = test_config(postgres_port);
-    config.user_auth_enabled = true;
+    let config = Config {
+        user_auth_enabled: true,
+        ..test_config(postgres_port)
+    };
+
     let (_, addr) = start_server(Some(config), postgres_port).await;
     let mut client = get_mailbox_client(addr).await;
 
