@@ -3,9 +3,7 @@ mod trace;
 
 use std::sync::Arc;
 
-pub use health::*;
 use tonic::transport::{Error, Server};
-pub use trace::*;
 
 use crate::{
     config::Config,
@@ -15,6 +13,7 @@ use crate::{
         public_key_service_server::PublicKeyServiceServer,
     },
     replication::init_replication,
+    server::{health::init_health_service, trace::start_trace_reporter},
     AppContext,
 };
 
@@ -30,53 +29,29 @@ pub async fn configure_and_start_server(context: AppContext) -> Result<(), Error
     init_replication(&context);
 
     // TODO add server fields that make sense
-    // Silly nested ifs until tonic is upgraded with better types
     if let Some(ref dd_config) = context.config.dd_config {
         let datadog_sender = start_trace_reporter(dd_config);
 
-        if let Some(health_service) = health_service {
-            base_server(context.config.clone())
-                .layer(MinitraceGrpcMiddlewareLayer::new(
-                    context.config.clone(),
-                    dd_config.span_tags.clone(),
-                    datadog_sender,
-                ))
-                .add_service(health_service)
-                .add_service(PublicKeyServiceServer::new(context.public_key_service))
-                .add_service(MailboxServiceServer::new(context.mailbox_service))
-                .add_service(ObjectServiceServer::new(context.object_service))
-                .serve(context.config.url)
-                .await?
-        } else {
-            base_server(context.config.clone())
-                .layer(MinitraceGrpcMiddlewareLayer::new(
-                    context.config.clone(),
-                    dd_config.span_tags.clone(),
-                    datadog_sender,
-                ))
-                .add_service(PublicKeyServiceServer::new(context.public_key_service))
-                .add_service(MailboxServiceServer::new(context.mailbox_service))
-                .add_service(ObjectServiceServer::new(context.object_service))
-                .serve(context.config.url)
-                .await?
-        }
+        base_server(context.config.clone())
+            .layer(MinitraceGrpcMiddlewareLayer::new(
+                context.config.clone(),
+                dd_config.span_tags.clone(),
+                datadog_sender,
+            ))
+            .add_optional_service(health_service)
+            .add_service(PublicKeyServiceServer::new(context.public_key_service))
+            .add_service(MailboxServiceServer::new(context.mailbox_service))
+            .add_service(ObjectServiceServer::new(context.object_service))
+            .serve(context.config.url)
+            .await?
     } else {
-        if let Some(health_service) = health_service {
-            base_server(context.config.clone())
-                .add_service(health_service)
-                .add_service(PublicKeyServiceServer::new(context.public_key_service))
-                .add_service(MailboxServiceServer::new(context.mailbox_service))
-                .add_service(ObjectServiceServer::new(context.object_service))
-                .serve(context.config.url)
-                .await?
-        } else {
-            base_server(context.config.clone())
-                .add_service(PublicKeyServiceServer::new(context.public_key_service))
-                .add_service(MailboxServiceServer::new(context.mailbox_service))
-                .add_service(ObjectServiceServer::new(context.object_service))
-                .serve(context.config.url)
-                .await?
-        }
+        base_server(context.config.clone())
+            .add_optional_service(health_service)
+            .add_service(PublicKeyServiceServer::new(context.public_key_service))
+            .add_service(MailboxServiceServer::new(context.mailbox_service))
+            .add_service(ObjectServiceServer::new(context.object_service))
+            .serve(context.config.url)
+            .await?
     };
 
     Ok(())

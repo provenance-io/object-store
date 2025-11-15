@@ -33,8 +33,6 @@ use crate::common::{
 };
 
 pub async fn setup_postgres(config: &Config) -> PgPool {
-    // let connection_string = &format!("postgres://postgres:postgres@localhost:{}/postgres", port);
-
     let pool = PgPoolOptions::new()
         .max_connections(5)
         .connect(config.db_connection_string().as_str())
