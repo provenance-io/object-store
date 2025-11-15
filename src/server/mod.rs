@@ -1,4 +1,4 @@
-mod health;
+pub mod health;
 mod trace;
 
 use std::sync::Arc;
@@ -12,8 +12,7 @@ use crate::{
         mailbox_service_server::MailboxServiceServer, object_service_server::ObjectServiceServer,
         public_key_service_server::PublicKeyServiceServer,
     },
-    replication::init_replication,
-    server::{health::init_health_service, trace::start_trace_reporter},
+    server::trace::start_trace_reporter,
     AppContext,
 };
 
@@ -21,14 +20,12 @@ fn base_server(config: Arc<Config>) -> Server<LoggingMiddlewareLayer> {
     Server::builder().layer(LoggingMiddlewareLayer::new(config))
 }
 
-/// 1. Init health service, if enabled (default: true)
-/// 2. Init replication, if enabled (default: false)
+/// 1. Run [AppContext::init]
+/// 2. Build and start server
 pub async fn configure_and_start_server(context: AppContext) -> Result<(), Error> {
     log::info!("Starting server on {:?}", context.config.url);
 
-    let health_service = init_health_service(&context).await;
-
-    init_replication(&context);
+    let health_service = context.init().await;
 
     // TODO add server fields that make sense
     if let Some(ref dd_config) = context.config.dd_config {

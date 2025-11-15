@@ -1,6 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use sqlx::PgPool;
+use tonic_health::proto::health_server::{Health, HealthServer};
 
 use crate::{
     cache::Cache,
@@ -9,6 +10,8 @@ use crate::{
     mailbox::MailboxGrpc,
     object::ObjectGrpc,
     public_key::PublicKeyGrpc,
+    replication::init_replication,
+    server::health::init_health_service,
     storage::{new_storage, Storage},
     types::OsError,
 };
@@ -72,5 +75,15 @@ impl AppContext {
             mailbox_service,
             object_service,
         })
+    }
+
+    /// 1. Init health service, if enabled (default: true)
+    /// 2. Init replication, if enabled (default: false)
+    pub async fn init(&self) -> Option<HealthServer<impl Health>> {
+        let health_service = init_health_service(self).await;
+
+        init_replication(self);
+
+        health_service
     }
 }
