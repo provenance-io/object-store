@@ -24,6 +24,8 @@ fn base_server(config: Arc<Config>) -> Server<LoggingMiddlewareLayer> {
 /// 1. Init health service, if enabled (default: true)
 /// 2. Init replication, if enabled (default: false)
 pub async fn configure_and_start_server(context: AppContext) -> Result<(), Error> {
+    log::info!("Starting server on {:?}", context.config.url);
+
     let health_service = init_health_service(&context).await;
 
     init_replication(&context);

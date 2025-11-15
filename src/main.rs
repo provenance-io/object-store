@@ -9,8 +9,6 @@ async fn main() -> Result<()> {
 
     let app_context = AppContext::new(Config::from_env()).await?;
 
-    log::info!("Starting server on {:?}", app_context.config.url);
-
     configure_and_start_server(app_context).await?;
 
     Ok(())
