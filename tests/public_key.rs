@@ -1,29 +1,28 @@
 mod common;
 
-use object_store::cache::Cache;
+use std::sync::Arc;
+
 use object_store::pb::public_key_request::Impl::HeaderAuth as HeaderAuthEnumRequest;
 use object_store::pb::public_key_response::Impl::HeaderAuth as HeaderAuthEnumResponse;
 use object_store::pb::public_key_service_server::PublicKeyService;
 use object_store::pb::PublicKeyRequest;
 use object_store::pb::{public_key::Key, HeaderAuth, PublicKey};
 use object_store::proto_helpers::VecUtil;
-use object_store::public_key::PublicKeyGrpc;
+use object_store::AppContext;
 use testcontainers::clients;
 use tonic::Request;
 
 use crate::common::config::test_config;
 use crate::common::containers::start_containers;
-use crate::common::db::setup_postgres;
 
 #[tokio::test]
 async fn invalid_url() {
     let docker = clients::Cli::default();
 
     let (db_port, _postgres) = start_containers(&docker).await;
-    let config = test_config(db_port);
-    let pool = setup_postgres(&config).await;
-    let cache = Cache::new(pool.clone()).await.unwrap();
-    let public_key_service = PublicKeyGrpc::new(cache.clone(), pool.clone());
+    let context = AppContext::new(Arc::new(test_config(db_port)))
+        .await
+        .unwrap();
 
     let request = PublicKeyRequest {
         public_key: Some(PublicKey {
@@ -34,7 +33,7 @@ async fn invalid_url() {
         metadata: None,
     };
 
-    let response = public_key_service.add(Request::new(request)).await;
+    let response = context.public_key_service.add(Request::new(request)).await;
 
     match response {
         Err(err) => {
@@ -53,10 +52,9 @@ async fn empty_url() {
     let docker = clients::Cli::default();
 
     let (db_port, _postgres) = start_containers(&docker).await;
-    let config = test_config(db_port);
-    let pool = setup_postgres(&config).await;
-    let cache = Cache::new(pool.clone()).await.unwrap();
-    let public_key_service = PublicKeyGrpc::new(cache.clone(), pool.clone());
+    let context = AppContext::new(Arc::new(test_config(db_port)))
+        .await
+        .unwrap();
 
     let request = PublicKeyRequest {
         public_key: Some(vec![1u8, 2u8, 3u8].into()),
@@ -65,7 +63,7 @@ async fn empty_url() {
         metadata: None,
     };
 
-    let response = public_key_service.add(Request::new(request)).await;
+    let response = context.public_key_service.add(Request::new(request)).await;
 
     match response {
         Ok(result) => {
@@ -91,10 +89,9 @@ async fn empty_auth_header_header() {
     let docker = clients::Cli::default();
 
     let (db_port, _postgres) = start_containers(&docker).await;
-    let config = test_config(db_port);
-    let pool = setup_postgres(&config).await;
-    let cache = Cache::new(pool.clone()).await.unwrap();
-    let public_key_service = PublicKeyGrpc::new(cache.clone(), pool.clone());
+    let context = AppContext::new(Arc::new(test_config(db_port)))
+        .await
+        .unwrap();
 
     let request = PublicKeyRequest {
         public_key: Some(vec![1u8, 2u8, 3u8].into()),
@@ -106,7 +103,7 @@ async fn empty_auth_header_header() {
         metadata: None,
     };
 
-    let response = public_key_service.add(Request::new(request)).await;
+    let response = context.public_key_service.add(Request::new(request)).await;
 
     match response {
         Err(err) => {
@@ -125,10 +122,9 @@ async fn empty_auth_header_value() {
     let docker = clients::Cli::default();
 
     let (db_port, _postgres) = start_containers(&docker).await;
-    let config = test_config(db_port);
-    let pool = setup_postgres(&config).await;
-    let cache = Cache::new(pool.clone()).await.unwrap();
-    let public_key_service = PublicKeyGrpc::new(cache.clone(), pool.clone());
+    let context = AppContext::new(Arc::new(test_config(db_port)))
+        .await
+        .unwrap();
 
     let request = PublicKeyRequest {
         public_key: Some(vec![1u8, 2u8, 3u8].into()),
@@ -139,7 +135,7 @@ async fn empty_auth_header_value() {
         url: String::default(),
         metadata: None,
     };
-    let response = public_key_service.add(Request::new(request)).await;
+    let response = context.public_key_service.add(Request::new(request)).await;
 
     match response {
         Err(err) => {
@@ -158,10 +154,9 @@ async fn missing_public_key() {
     let docker = clients::Cli::default();
 
     let (db_port, _postgres) = start_containers(&docker).await;
-    let config = test_config(db_port);
-    let pool = setup_postgres(&config).await;
-    let cache = Cache::new(pool.clone()).await.unwrap();
-    let public_key_service = PublicKeyGrpc::new(cache.clone(), pool.clone());
+    let context = AppContext::new(Arc::new(test_config(db_port)))
+        .await
+        .unwrap();
 
     let request = PublicKeyRequest {
         public_key: None,
@@ -169,7 +164,7 @@ async fn missing_public_key() {
         url: "http://test.com".to_owned(),
         metadata: None,
     };
-    let response = public_key_service.add(Request::new(request)).await;
+    let response = context.public_key_service.add(Request::new(request)).await;
 
     match response {
         Err(err) => {
@@ -185,10 +180,9 @@ async fn missing_key() {
     let docker = clients::Cli::default();
 
     let (db_port, _postgres) = start_containers(&docker).await;
-    let config = test_config(db_port);
-    let pool = setup_postgres(&config).await;
-    let cache = Cache::new(pool.clone()).await.unwrap();
-    let public_key_service = PublicKeyGrpc::new(cache.clone(), pool.clone());
+    let context = AppContext::new(Arc::new(test_config(db_port)))
+        .await
+        .unwrap();
 
     let request = PublicKeyRequest {
         public_key: Some(PublicKey { key: None }),
@@ -196,7 +190,7 @@ async fn missing_key() {
         url: "http://test.com".to_owned(),
         metadata: None,
     };
-    let response = public_key_service.add(Request::new(request)).await;
+    let response = context.public_key_service.add(Request::new(request)).await;
 
     match response {
         Err(err) => {
@@ -212,10 +206,9 @@ async fn duplicate_key() {
     let docker = clients::Cli::default();
 
     let (db_port, _postgres) = start_containers(&docker).await;
-    let config = test_config(db_port);
-    let pool = setup_postgres(&config).await;
-    let cache = Cache::new(pool.clone()).await.unwrap();
-    let public_key_service = PublicKeyGrpc::new(cache.clone(), pool.clone());
+    let context = AppContext::new(Arc::new(test_config(db_port)))
+        .await
+        .unwrap();
 
     let request1 = PublicKeyRequest {
         public_key: Some(vec![1u8, 2u8, 3u8].into()),
@@ -230,7 +223,7 @@ async fn duplicate_key() {
         metadata: None,
     };
 
-    let response = public_key_service.add(Request::new(request1)).await;
+    let response = context.public_key_service.add(Request::new(request1)).await;
 
     let (uuid, url) = match response {
         Ok(result) => {
@@ -244,7 +237,7 @@ async fn duplicate_key() {
         }
     };
 
-    let response = public_key_service.add(Request::new(request2)).await;
+    let response = context.public_key_service.add(Request::new(request2)).await;
 
     match response {
         Ok(result) => {
@@ -263,10 +256,9 @@ async fn returns_full_proto() {
     let docker = clients::Cli::default();
 
     let (db_port, _postgres) = start_containers(&docker).await;
-    let config = test_config(db_port);
-    let pool = setup_postgres(&config).await;
-    let cache = Cache::new(pool.clone()).await.unwrap();
-    let public_key_service = PublicKeyGrpc::new(cache.clone(), pool.clone());
+    let context = AppContext::new(Arc::new(test_config(db_port)))
+        .await
+        .unwrap();
 
     // TODO add metadata to this request
     let request = PublicKeyRequest {
@@ -278,7 +270,7 @@ async fn returns_full_proto() {
         url: "http://test.com".to_owned(),
         metadata: None,
     };
-    let response = public_key_service.add(Request::new(request)).await;
+    let response = context.public_key_service.add(Request::new(request)).await;
 
     match response {
         Ok(result) => {
@@ -309,10 +301,9 @@ async fn adds_empty_urls_to_local_cache() {
     let docker = clients::Cli::default();
 
     let (db_port, _postgres) = start_containers(&docker).await;
-    let config = test_config(db_port);
-    let pool = setup_postgres(&config).await;
-    let cache = Cache::new(pool.clone()).await.unwrap();
-    let public_key_service = PublicKeyGrpc::new(cache.clone(), pool.clone());
+    let context = AppContext::new(Arc::new(test_config(db_port)))
+        .await
+        .unwrap();
 
     let request = PublicKeyRequest {
         public_key: Some(vec![1u8, 2u8, 3u8].into()),
@@ -320,14 +311,14 @@ async fn adds_empty_urls_to_local_cache() {
         url: String::default(),
         metadata: None,
     };
-    let response = public_key_service.add(Request::new(request)).await;
+    let response = context.public_key_service.add(Request::new(request)).await;
 
     match response {
         Ok(_) => (),
         _ => assert_eq!(format!("{:?}", response), ""),
     }
 
-    let cache = cache.lock().unwrap();
+    let cache = context.cache.lock().unwrap();
     assert_eq!(cache.public_keys.len(), 1);
     assert!(cache
         .public_keys
@@ -347,10 +338,9 @@ async fn adds_nonempty_urls_to_remote_cache() {
     let docker = clients::Cli::default();
 
     let (db_port, _postgres) = start_containers(&docker).await;
-    let config = test_config(db_port);
-    let pool = setup_postgres(&config).await;
-    let cache = Cache::new(pool.clone()).await.unwrap();
-    let public_key_service = PublicKeyGrpc::new(cache.clone(), pool.clone());
+    let context = AppContext::new(Arc::new(test_config(db_port)))
+        .await
+        .unwrap();
 
     let request = PublicKeyRequest {
         public_key: Some(vec![1u8, 2u8, 3u8].into()),
@@ -358,14 +348,14 @@ async fn adds_nonempty_urls_to_remote_cache() {
         url: "http://test.com".to_owned(),
         metadata: None,
     };
-    let response = public_key_service.add(Request::new(request)).await;
+    let response = context.public_key_service.add(Request::new(request)).await;
 
     match response {
         Ok(_) => (),
         _ => assert_eq!(format!("{:?}", response), ""),
     }
 
-    let cache = cache.lock().unwrap();
+    let cache = context.cache.lock().unwrap();
     assert_eq!(cache.public_keys.len(), 1);
     assert!(cache
         .public_keys

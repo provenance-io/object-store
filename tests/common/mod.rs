@@ -4,7 +4,6 @@ pub mod client;
 pub mod config;
 pub mod containers;
 pub mod data;
-pub mod db;
 
 use std::collections::HashMap;
 

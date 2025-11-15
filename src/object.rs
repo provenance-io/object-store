@@ -35,7 +35,7 @@ use tonic::{Request, Response, Status, Streaming};
 // TODO add flag for whether object-replication can be ignored for a PUT
 // TODO move test packet generation to helper functions
 // TODO implement mailbox only for local and unknown keys - reaper for unknown to remote like replication?
-
+#[derive(Debug)]
 pub struct ObjectGrpc {
     cache: Arc<Mutex<Cache>>,
     config: Arc<Config>,

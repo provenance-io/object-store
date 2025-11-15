@@ -3,14 +3,12 @@ mod common;
 use object_store::cache::Cache;
 use object_store::config::Config;
 use object_store::datastore::{replication_object_uuids, PublicKey};
-use object_store::object::ObjectGrpc;
-use object_store::pb;
 use object_store::pb::object_service_server::ObjectServiceServer;
 use object_store::proto_helpers::AudienceUtil;
 use object_store::replication::{
     reap_unknown_keys_iteration, replicate_iteration, ClientCache, ReplicationState,
 };
-use object_store::storage::new_storage;
+use object_store::{pb, AppContext};
 use testcontainers::clients;
 
 use std::collections::HashMap;
@@ -23,7 +21,6 @@ use sqlx::postgres::PgPool;
 use crate::common::client::get_object_client;
 use crate::common::containers::start_containers;
 use crate::common::data::{generate_dime, party_1, party_2, party_3};
-use crate::common::db::setup_postgres;
 use crate::common::{config::test_config, hash, put_helper, test_public_key};
 
 pub fn test_config_one(db_port: u16) -> Config {
@@ -71,81 +68,68 @@ fn set_cache(cache: &mut Cache, remote_config: &Config) {
 }
 
 async fn start_server_one(
-    config: Config,
-    pool: Arc<PgPool>,
+    context: AppContext,
     remote_config: &Config,
 ) -> (Arc<Mutex<Cache>>, ReplicationState, Arc<Config>, SocketAddr) {
-    let cache = {
-        let mut cache = Cache::default();
+    {
+        let mut cache = context.cache.lock().unwrap();
         set_cache(&mut cache, remote_config);
-
-        Arc::new(Mutex::new(cache))
     };
 
-    // TODO new config with addr
-    let db_port = config.db_port;
-    let arc_config = Arc::new(config);
-    let storage = new_storage(&arc_config).unwrap();
-    let object_service = ObjectGrpc::new(
-        cache.clone(),
-        arc_config.clone(),
-        pool.clone(),
-        storage.clone(),
-    );
-
-    let listener = tokio::net::TcpListener::bind(arc_config.url).await.unwrap();
+    let listener = tokio::net::TcpListener::bind(context.config.url)
+        .await
+        .unwrap();
     let local_addr = listener.local_addr().unwrap();
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     println!("test server running on {:?}", local_addr);
 
     tokio::spawn(async move {
         tonic::transport::Server::builder()
-            .add_service(ObjectServiceServer::new(object_service))
+            .add_service(ObjectServiceServer::new(context.object_service))
             .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener))
             .await
             .unwrap()
     });
     let updated_config = Arc::new(Config {
         url: local_addr,
-        ..test_config_one(db_port)
+        ..test_config_one(context.config.db_port)
     });
+    // TODO replace with context init
     let replication_state = ReplicationState::new(
-        cache.clone(),
+        context.cache.clone(),
         updated_config.clone(),
-        pool.clone(),
-        storage.clone(),
+        context.db_pool.clone(),
+        context.storage.clone(),
     );
 
-    (cache, replication_state, updated_config, local_addr)
+    (
+        context.cache.clone(),
+        replication_state,
+        updated_config,
+        local_addr,
+    )
 }
 
-async fn start_server_two(
-    config: Config,
-    pool: Arc<PgPool>,
-) -> (ReplicationState, Arc<Config>, SocketAddr) {
+async fn start_server_two(context: AppContext) -> (ReplicationState, Arc<Config>, SocketAddr) {
     // TODO new config with addr
-    let db_port = config.db_port;
+    let db_port = context.config.db_port;
 
-    let cache = {
-        let mut cache = Cache::default();
+    {
+        let mut cache = context.cache.lock().unwrap();
+
         set_cache(&mut cache, &test_config_one(db_port));
-
-        Arc::new(Mutex::new(cache))
     };
 
-    let config = Arc::new(config);
-    let storage = new_storage(&config).unwrap();
-    let object_service =
-        ObjectGrpc::new(cache.clone(), config.clone(), pool.clone(), storage.clone());
-
-    let listener = tokio::net::TcpListener::bind(config.url).await.unwrap();
+    let listener = tokio::net::TcpListener::bind(context.config.url)
+        .await
+        .unwrap();
     let local_addr = listener.local_addr().unwrap();
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     println!("test server running on {:?}", local_addr);
 
     tokio::spawn(async move {
         tonic::transport::Server::builder()
-            .add_service(ObjectServiceServer::new(object_service))
+            .add_service(ObjectServiceServer::new(context.object_service))
             .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener))
             .await
             .unwrap()
@@ -154,11 +138,12 @@ async fn start_server_two(
         url: local_addr,
         ..test_config_two(db_port)
     });
+    // TODO: replace with appcontext init
     let replication_state = ReplicationState::new(
-        cache.clone(),
+        context.cache.clone(),
         updated_config.clone(),
-        pool.clone(),
-        storage.clone(),
+        context.db_pool.clone(),
+        context.storage.clone(),
     );
 
     (replication_state, updated_config, local_addr)
@@ -179,14 +164,13 @@ async fn client_caching() {
 
     let (db_port_one, _postgres_one) = start_containers(&docker).await;
     let config_one = test_config_one(db_port_one);
-    let pool1 = setup_postgres(&config_one).await;
+    let context_one = AppContext::new(Arc::new(config_one)).await.unwrap();
 
     let (db_port_two, _postgres_two) = start_containers(&docker).await;
-    let config_two = test_config_two(db_port_two);
-    let pool2 = setup_postgres(&config_two).await;
+    let config_two = Arc::new(test_config_two(db_port_two));
+    let context_two = AppContext::new(config_two.clone()).await.unwrap();
 
-    let (_, _state_one, config_one, addr1) =
-        start_server_one(config_one, pool1.clone(), &config_two).await;
+    let (_, _state_one, config_one, addr1) = start_server_one(context_one, &config_two).await;
 
     let url_one = format!("tcp://{}", addr1);
     println!("url_one: {}, config.url: {}", url_one, config_one.url);
@@ -211,9 +195,9 @@ async fn client_caching() {
     assert_eq!(client_one_id_first, client_one_id_second);
 
     // Client 2:
-    let (_state_two, config_two, addr2) = start_server_two(config_two, pool2.clone()).await;
+    // TODO remove address return
+    let (_state_two, _config_two, addr2) = start_server_two(context_two).await;
     let url_two = format!("tcp://{}", addr2);
-    println!("url_two: {}, config.url: {}", url_two, config_two.url);
 
     let client_two = client_cache.request(&url_two).await.unwrap().unwrap();
 
@@ -227,10 +211,10 @@ async fn replication_can_be_disabled() {
 
     let (db_port, _postgres) = start_containers(&docker).await;
     let config = test_config_one_no_replication(db_port);
-    let pool = setup_postgres(&config).await;
+    let context = AppContext::new(Arc::new(config)).await.unwrap();
+    let db_pool = context.db_pool.clone();
 
-    let (_, _state_one, _config_one, addr) =
-        start_server_one(config, pool.clone(), &test_config_two(0)).await;
+    let (_, _state_one, _config_one, addr) = start_server_one(context, &test_config_two(0)).await;
 
     let (audience1, signature1) = party_1();
     let (audience2, signature2) = party_2();
@@ -297,21 +281,21 @@ async fn replication_can_be_disabled() {
     match response {
         Ok(_) => {
             assert_eq!(
-                replication_object_uuids(&pool, audience1.public_key().as_str(), 50)
+                replication_object_uuids(&db_pool, audience1.public_key().as_str(), 50)
                     .await
                     .unwrap()
                     .len(),
                 0
             );
             assert_eq!(
-                replication_object_uuids(&pool, audience2.public_key().as_str(), 50)
+                replication_object_uuids(&db_pool, audience2.public_key().as_str(), 50)
                     .await
                     .unwrap()
                     .len(),
                 0
             );
             assert_eq!(
-                replication_object_uuids(&pool, audience3.public_key().as_str(), 50)
+                replication_object_uuids(&db_pool, audience3.public_key().as_str(), 50)
                     .await
                     .unwrap()
                     .len(),
@@ -330,18 +314,19 @@ async fn end_to_end_replication() {
 
     let (db_port_one, _postgres_one) = start_containers(&docker).await;
     let config_one = test_config_one(db_port_one);
-    let pool1 = setup_postgres(&config_one).await;
+    let context_one = AppContext::new(Arc::new(config_one)).await.unwrap();
+    let db_pool_one = context_one.db_pool.clone();
 
     let (db_port_two, _postgres_two) = start_containers(&docker).await;
-    let config_two = Config {
+    let config_two = Arc::new(Config {
         url: "0.0.0.0:6790".parse().unwrap(), //hardcoded - make sure it's different in other tests with replication
         ..test_config_two(db_port_two)
-    };
-    let pool2 = setup_postgres(&config_two).await;
+    });
+    let context_two = AppContext::new(config_two.clone()).await.unwrap();
+    let db_pool_two = context_two.db_pool.clone();
 
-    let (_, mut state_one, config_one, addr1) =
-        start_server_one(config_one, pool1.clone(), &config_two).await;
-    let (_state_two, _config_two, addr2) = start_server_two(config_two, pool2.clone()).await;
+    let (_, mut state_one, config_one, addr1) = start_server_one(context_one, &config_two).await;
+    let (_state_two, _config_two, addr2) = start_server_two(context_two).await;
 
     let mut client_one = get_object_client(addr1).await;
 
@@ -367,7 +352,7 @@ async fn end_to_end_replication() {
         match response {
             Ok(_) => {
                 assert_eq!(
-                    replication_object_uuids(&pool1, audience1.public_key().as_str(), 50)
+                    replication_object_uuids(&db_pool_one, audience1.public_key().as_str(), 50)
                         .await
                         .unwrap()
                         .len(),
@@ -438,21 +423,21 @@ async fn end_to_end_replication() {
         match response {
             Ok(_) => {
                 assert_eq!(
-                    replication_object_uuids(&pool1, audience1.public_key().as_str(), 50)
+                    replication_object_uuids(&db_pool_one, audience1.public_key().as_str(), 50)
                         .await
                         .unwrap()
                         .len(),
                     0
                 );
                 assert_eq!(
-                    replication_object_uuids(&pool1, audience2.public_key().as_str(), 50)
+                    replication_object_uuids(&db_pool_one, audience2.public_key().as_str(), 50)
                         .await
                         .unwrap()
                         .len(),
                     3
                 );
                 assert_eq!(
-                    replication_object_uuids(&pool1, audience3.public_key().as_str(), 50)
+                    replication_object_uuids(&db_pool_one, audience3.public_key().as_str(), 50)
                         .await
                         .unwrap()
                         .len(),
@@ -460,21 +445,21 @@ async fn end_to_end_replication() {
                 );
 
                 assert_eq!(
-                    replication_object_uuids(&pool2, audience1.public_key().as_str(), 50)
+                    replication_object_uuids(&db_pool_two, audience1.public_key().as_str(), 50)
                         .await
                         .unwrap()
                         .len(),
                     0
                 );
                 assert_eq!(
-                    replication_object_uuids(&pool2, audience2.public_key().as_str(), 50)
+                    replication_object_uuids(&db_pool_two, audience2.public_key().as_str(), 50)
                         .await
                         .unwrap()
                         .len(),
                     0
                 );
                 assert_eq!(
-                    replication_object_uuids(&pool2, audience3.public_key().as_str(), 50)
+                    replication_object_uuids(&db_pool_two, audience3.public_key().as_str(), 50)
                         .await
                         .unwrap()
                         .len(),
@@ -495,21 +480,21 @@ async fn end_to_end_replication() {
         replicate_iteration(&mut state_one, &mut client_cache_one).await;
 
         assert_eq!(
-            replication_object_uuids(&pool1, audience1.public_key().as_str(), 50)
+            replication_object_uuids(&db_pool_one, audience1.public_key().as_str(), 50)
                 .await
                 .unwrap()
                 .len(),
             0
         );
         assert_eq!(
-            replication_object_uuids(&pool1, audience2.public_key().as_str(), 50)
+            replication_object_uuids(&db_pool_one, audience2.public_key().as_str(), 50)
                 .await
                 .unwrap()
                 .len(),
             1
         );
         assert_eq!(
-            replication_object_uuids(&pool1, audience3.public_key().as_str(), 50)
+            replication_object_uuids(&db_pool_one, audience3.public_key().as_str(), 50)
                 .await
                 .unwrap()
                 .len(),
@@ -519,21 +504,21 @@ async fn end_to_end_replication() {
         // Count should be 0 for all audience on remote
         {
             assert_eq!(
-                replication_object_uuids(&pool2, audience1.public_key().as_str(), 50)
+                replication_object_uuids(&db_pool_two, audience1.public_key().as_str(), 50)
                     .await
                     .unwrap()
                     .len(),
                 0
             );
             assert_eq!(
-                replication_object_uuids(&pool2, audience2.public_key().as_str(), 50)
+                replication_object_uuids(&db_pool_two, audience2.public_key().as_str(), 50)
                     .await
                     .unwrap()
                     .len(),
                 0
             );
             assert_eq!(
-                replication_object_uuids(&pool2, audience3.public_key().as_str(), 50)
+                replication_object_uuids(&db_pool_two, audience3.public_key().as_str(), 50)
                     .await
                     .unwrap()
                     .len(),
@@ -547,21 +532,21 @@ async fn end_to_end_replication() {
         replicate_iteration(&mut state_one, &mut client_cache_one).await;
 
         assert_eq!(
-            replication_object_uuids(&pool1, audience1.public_key().as_str(), 50)
+            replication_object_uuids(&db_pool_one, audience1.public_key().as_str(), 50)
                 .await
                 .unwrap()
                 .len(),
             0
         );
         assert_eq!(
-            replication_object_uuids(&pool1, audience2.public_key().as_str(), 50)
+            replication_object_uuids(&db_pool_one, audience2.public_key().as_str(), 50)
                 .await
                 .unwrap()
                 .len(),
             0
         );
         assert_eq!(
-            replication_object_uuids(&pool1, audience3.public_key().as_str(), 50)
+            replication_object_uuids(&db_pool_one, audience3.public_key().as_str(), 50)
                 .await
                 .unwrap()
                 .len(),
@@ -569,21 +554,21 @@ async fn end_to_end_replication() {
         );
 
         assert_eq!(
-            replication_object_uuids(&pool2, audience1.public_key().as_str(), 50)
+            replication_object_uuids(&db_pool_two, audience1.public_key().as_str(), 50)
                 .await
                 .unwrap()
                 .len(),
             0
         );
         assert_eq!(
-            replication_object_uuids(&pool2, audience2.public_key().as_str(), 50)
+            replication_object_uuids(&db_pool_two, audience2.public_key().as_str(), 50)
                 .await
                 .unwrap()
                 .len(),
             0
         );
         assert_eq!(
-            replication_object_uuids(&pool2, audience3.public_key().as_str(), 50)
+            replication_object_uuids(&db_pool_two, audience3.public_key().as_str(), 50)
                 .await
                 .unwrap()
                 .len(),
@@ -592,7 +577,7 @@ async fn end_to_end_replication() {
     }
 
     // verify db on remote instance to check for 3 objects for party_2
-    assert_eq!(get_object_count(&pool2).await, 3);
+    assert_eq!(get_object_count(&db_pool_two).await, 3);
 
     // pull one object from local instance and verify all rows against the same one that was replicated to the remote
     {
@@ -634,9 +619,10 @@ async fn late_local_url_can_cleanup() {
 
     let (db_port, _postgres) = start_containers(&docker).await;
     let config = test_config_one(db_port);
-    let pool = setup_postgres(&config).await;
-    let (cache, _state_one, _config, addr) =
-        start_server_one(config, pool.clone(), &test_config_two(0)).await;
+    let context = AppContext::new(Arc::new(config)).await.unwrap();
+    let db_pool = context.db_pool.clone();
+
+    let (cache, _state_one, _config, addr) = start_server_one(context, &test_config_two(0)).await;
 
     let (audience1, signature1) = party_1();
     let (audience3, signature3) = party_3();
@@ -702,14 +688,14 @@ async fn late_local_url_can_cleanup() {
     match response {
         Ok(_) => {
             assert_eq!(
-                replication_object_uuids(&pool, audience1.public_key().as_str(), 50)
+                replication_object_uuids(&db_pool, audience1.public_key().as_str(), 50)
                     .await
                     .unwrap()
                     .len(),
                 0
             );
             assert_eq!(
-                replication_object_uuids(&pool, audience3.public_key().as_str(), 50)
+                replication_object_uuids(&db_pool, audience3.public_key().as_str(), 50)
                     .await
                     .unwrap()
                     .len(),
@@ -731,17 +717,17 @@ async fn late_local_url_can_cleanup() {
         });
     }
 
-    reap_unknown_keys_iteration(&pool, &cache).await;
+    reap_unknown_keys_iteration(&db_pool, &cache).await;
 
     assert_eq!(
-        replication_object_uuids(&pool, audience1.public_key().as_str(), 50)
+        replication_object_uuids(&db_pool, audience1.public_key().as_str(), 50)
             .await
             .unwrap()
             .len(),
         0
     );
     assert_eq!(
-        replication_object_uuids(&pool, audience3.public_key().as_str(), 50)
+        replication_object_uuids(&db_pool, audience3.public_key().as_str(), 50)
             .await
             .unwrap()
             .len(),

@@ -38,6 +38,7 @@ pub mod pb {
     tonic::include_proto!("objectstore");
 }
 
+#[derive(Debug)]
 pub struct AppContext {
     pub config: Arc<Config>,
     pub cache: Arc<Mutex<Cache>>,

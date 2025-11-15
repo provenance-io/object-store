@@ -18,27 +18,21 @@ async fn test() {
     let config = Arc::new(test_config(db_port));
     let context = AppContext::new(config).await.unwrap();
     context.init().await;
+    let db_pool = context.db_pool.clone();
 
     // TODO:
     // 1. use same steps: env logger, (+infra setup), config, context, sever
     // 2. use same start method as main
     // 3. use for other int tests
-    let (tx, mut rx) = tokio::sync::mpsc::channel(1);
-    tokio::spawn(async move {
-        tx.send(context.db_pool.clone()).await.unwrap();
+    tokio::spawn(async move { configure_and_start_server(context).await });
 
-        configure_and_start_server(context).await
-    });
-
-    let db = rx.recv().await.unwrap();
-
-    let result = datastore::get_all_public_keys(&db).await.unwrap();
+    let result = datastore::get_all_public_keys(&db_pool).await.unwrap();
     assert_eq!(result.len(), 0);
 
-    datastore::add_public_key(&db, test_public_key(party_1().0.public_key))
+    datastore::add_public_key(&db_pool, test_public_key(party_1().0.public_key))
         .await
         .unwrap();
 
-    let result = datastore::get_all_public_keys(&db).await.unwrap();
+    let result = datastore::get_all_public_keys(&db_pool).await.unwrap();
     assert_eq!(result.len(), 1);
 }
