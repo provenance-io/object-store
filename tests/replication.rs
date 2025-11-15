@@ -21,10 +21,9 @@ use futures::StreamExt;
 use sqlx::postgres::PgPool;
 
 use crate::common::client::get_object_client;
+use crate::common::data::{generate_dime, party_1, party_2, party_3};
 use crate::common::db::{setup_postgres, start_containers};
-use crate::common::{
-    generate_dime, hash, party_1, party_2, party_3, put_helper, test_config, test_public_key,
-};
+use crate::common::{config::test_config, hash, put_helper, test_public_key};
 
 pub fn test_config_one(db_port: u16) -> Config {
     Config {

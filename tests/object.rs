@@ -22,10 +22,11 @@ use testcontainers::clients;
 use tonic::Request;
 
 use crate::common::client::get_object_client;
+use crate::common::config::test_config;
+use crate::common::data::{generate_dime, party_1, party_2, party_3};
 use crate::common::db::start_containers;
 use crate::common::{
-    generate_dime, get_mailbox_keys_by_object, get_public_keys_by_object, hash, party_1, party_2,
-    party_3, put_helper, test_config, test_public_key,
+    get_mailbox_keys_by_object, get_public_keys_by_object, hash, put_helper, test_public_key,
 };
 
 async fn start_test_server(config: Config) -> (Arc<PgPool>, Arc<Config>) {

@@ -11,8 +11,8 @@ use object_store::public_key::PublicKeyGrpc;
 use testcontainers::clients;
 use tonic::Request;
 
+use crate::common::config::test_config;
 use crate::common::db::{setup_postgres, start_containers};
-use crate::common::test_config;
 
 #[tokio::test]
 async fn invalid_url() {

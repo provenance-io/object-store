@@ -1,11 +1,12 @@
 #![allow(dead_code)]
 
 pub mod client;
+pub mod config;
+pub mod data;
 pub mod db;
 
 use std::collections::HashMap;
 
-use base64::{prelude::BASE64_STANDARD, Engine};
 use bytes::{BufMut, BytesMut};
 use chrono::Utc;
 use futures::stream;
@@ -15,129 +16,18 @@ use object_store::consts::{
     SIGNATURE_PUBLIC_KEY_FIELD_NAME,
 };
 use object_store::datastore::{AuthType, KeyType, MailboxPublicKey, ObjectPublicKey, PublicKey};
+use object_store::dime::Dime;
 use object_store::pb::chunk_bidi::Impl::{
     Chunk as ChunkEnum, MultiStreamHeader as MultiStreamHeaderEnum,
 };
 use object_store::pb::{
     chunk::Impl::{Data, End, Value},
-    Chunk, ChunkBidi, ChunkEnd, Dime as DimeProto, MultiStreamHeader, StreamHeader,
-};
-use object_store::{
-    config::{Config, DatadogConfig},
-    dime::{Dime, Signature},
-    pb::Audience,
+    Chunk, ChunkBidi, ChunkEnd, MultiStreamHeader, StreamHeader,
 };
 use prost::Message;
 use sqlx::{FromRow, PgPool};
 use std::hash::Hasher;
 use tonic::Request;
-
-pub fn test_config(db_port: u16) -> Config {
-    let dd_config = DatadogConfig {
-        agent_host: "127.0.0.1".parse().unwrap(),
-        agent_port: 8126,
-        service: "object-store".to_owned(),
-        span_tags: Vec::default(),
-    };
-
-    Config {
-        url: "0.0.0.0:0".parse().unwrap(),
-        uri_host: String::default(),
-        db_connection_pool_size: 1,
-        db_host: "localhost".to_owned(),
-        db_port,
-        db_user: "postgres".to_owned(),
-        db_password: "postgres".to_owned(),
-        db_database: "postgres".to_owned(),
-        db_schema: "public".to_owned(),
-        storage_type: "file_system".to_owned(),
-        storage_base_url: None,
-        storage_base_path: std::env::temp_dir().to_string_lossy().to_string(),
-        storage_threshold: 5000,
-        replication_enabled: true,
-        replication_batch_size: 2,
-        dd_config: Some(dd_config),
-        backoff_min_wait: 1,
-        backoff_max_wait: 1,
-        logging_threshold_seconds: 1f64,
-        trace_header: String::default(),
-        user_auth_enabled: false,
-        health_service_enabled: false,
-    }
-}
-
-pub fn party_1() -> (Audience, Signature) {
-    (
-        Audience {
-            payload_id: 0,
-            public_key: BASE64_STANDARD.encode("1").into_bytes(),
-            context: 0,
-            tag: Vec::default(),
-            ephemeral_pubkey: Vec::default(),
-            encrypted_dek: Vec::default(),
-        },
-        Signature {
-            public_key: "1".to_owned(),
-            signature: "a".to_owned(),
-        },
-    )
-}
-
-pub fn party_2() -> (Audience, Signature) {
-    (
-        Audience {
-            payload_id: 0,
-            public_key: BASE64_STANDARD.encode("2").into_bytes(),
-            context: 0,
-            tag: Vec::default(),
-            ephemeral_pubkey: Vec::default(),
-            encrypted_dek: Vec::default(),
-        },
-        Signature {
-            public_key: "2".to_owned(),
-            signature: "b".to_owned(),
-        },
-    )
-}
-
-pub fn party_3() -> (Audience, Signature) {
-    (
-        Audience {
-            payload_id: 0,
-            public_key: BASE64_STANDARD.encode("3").into_bytes(),
-            context: 0,
-            tag: Vec::default(),
-            ephemeral_pubkey: Vec::default(),
-            encrypted_dek: Vec::default(),
-        },
-        Signature {
-            public_key: "3".to_owned(),
-            signature: "c".to_owned(),
-        },
-    )
-}
-
-pub fn generate_dime(
-    audience: Vec<Audience>,
-    signatures: Vec<Signature>,
-) -> object_store::dime::Dime {
-    let proto = DimeProto {
-        uuid: None,
-        owner: Some(audience.first().unwrap().clone()),
-        metadata: HashMap::default(),
-        audience,
-        payload: Vec::default(),
-        audit_fields: None,
-    };
-
-    Dime {
-        uuid: uuid::Uuid::from_u128(300),
-        uri: String::default(),
-        proto,
-        metadata: std::collections::HashMap::default(),
-        signatures,
-    }
-}
 
 pub fn put_helper(
     dime: Dime,

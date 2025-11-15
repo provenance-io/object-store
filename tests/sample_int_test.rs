@@ -1,13 +1,11 @@
 use std::sync::Arc;
 
-use object_store::{
-    datastore::{self, get_all_public_keys},
-    server::configure_and_start_server,
-    AppContext,
-};
+use object_store::{datastore, server::configure_and_start_server, AppContext};
 use testcontainers::clients;
 
-use crate::common::{db::start_containers, party_1, test_config, test_public_key};
+use crate::common::config::test_config;
+use crate::common::data::party_1;
+use crate::common::{db::start_containers, test_public_key};
 
 pub mod common;
 
@@ -36,13 +34,13 @@ async fn test() {
 
     let db = rx.recv().await.unwrap();
 
-    let result = get_all_public_keys(&db).await.unwrap();
+    let result = datastore::get_all_public_keys(&db).await.unwrap();
     assert_eq!(result.len(), 0);
 
     datastore::add_public_key(&db, test_public_key(party_1().0.public_key))
         .await
         .unwrap();
 
-    let result = get_all_public_keys(&db).await.unwrap();
+    let result = datastore::get_all_public_keys(&db).await.unwrap();
     assert_eq!(result.len(), 1);
 }
