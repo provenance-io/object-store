@@ -2,14 +2,6 @@ use std::sync::Arc;
 
 use object_store::config::Config;
 use sqlx::{postgres::PgPoolOptions, PgPool};
-use testcontainers::{clients::Cli, images, Container, RunnableImage};
-
-pub async fn start_containers(docker: &Cli) -> Container<'_, images::postgres::Postgres> {
-    let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
-    let postgres = docker.run(image);
-
-    postgres
-}
 
 // TODO: wire up whole config
 pub async fn setup_postgres(config: &Config) -> Arc<PgPool> {

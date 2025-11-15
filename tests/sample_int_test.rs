@@ -5,18 +5,16 @@ use testcontainers::clients;
 
 use crate::common::config::test_config;
 use crate::common::data::party_1;
-use crate::common::{db::start_containers, test_public_key};
+use crate::common::{containers::start_containers, test_public_key};
 
-pub mod common;
+mod common;
 
 #[tokio::test]
 async fn test() {
     env_logger::init();
 
     let docker = clients::Cli::default();
-    let postgres = start_containers(&docker).await;
-    let db_port = postgres.get_host_port_ipv4(5432);
-    println!("Postgres postgres started on {}", db_port);
+    let (db_port, _postgres) = start_containers(&docker).await;
     let config = Arc::new(test_config(db_port));
     let context = AppContext::new(config).await.unwrap();
     context.init().await;

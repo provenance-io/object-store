@@ -21,8 +21,9 @@ use futures::StreamExt;
 use sqlx::postgres::PgPool;
 
 use crate::common::client::get_object_client;
+use crate::common::containers::start_containers;
 use crate::common::data::{generate_dime, party_1, party_2, party_3};
-use crate::common::db::{setup_postgres, start_containers};
+use crate::common::db::setup_postgres;
 use crate::common::{config::test_config, hash, put_helper, test_public_key};
 
 pub fn test_config_one(db_port: u16) -> Config {
@@ -176,14 +177,12 @@ pub async fn get_object_count(db: &PgPool) -> i64 {
 async fn client_caching() {
     let docker = clients::Cli::default();
 
-    let postgres = start_containers(&docker).await;
-    let postgres_port = postgres.get_host_port_ipv4(5432);
-    let config_one = test_config_one(postgres_port);
+    let (db_port_one, _postgres_one) = start_containers(&docker).await;
+    let config_one = test_config_one(db_port_one);
     let pool1 = setup_postgres(&config_one).await;
 
-    let postgres_two = start_containers(&docker).await;
-    let postgres_port_two = postgres_two.get_host_port_ipv4(5432);
-    let config_two = test_config_two(postgres_port_two);
+    let (db_port_two, _postgres_two) = start_containers(&docker).await;
+    let config_two = test_config_two(db_port_two);
     let pool2 = setup_postgres(&config_two).await;
 
     let (_, _state_one, config_one, addr1) =
@@ -226,13 +225,12 @@ async fn client_caching() {
 async fn replication_can_be_disabled() {
     let docker = clients::Cli::default();
 
-    let postgres = start_containers(&docker).await;
-    let postgres_port = postgres.get_host_port_ipv4(5432);
-    let config = test_config_one_no_replication(postgres_port);
+    let (db_port, _postgres) = start_containers(&docker).await;
+    let config = test_config_one_no_replication(db_port);
     let pool = setup_postgres(&config).await;
 
     let (_, _state_one, _config_one, addr) =
-        start_server_one(config, pool.clone(), &test_config_two(postgres_port)).await;
+        start_server_one(config, pool.clone(), &test_config_two(0)).await;
 
     let (audience1, signature1) = party_1();
     let (audience2, signature2) = party_2();
@@ -330,16 +328,14 @@ async fn end_to_end_replication() {
 
     let docker = clients::Cli::default();
 
-    let postgres = start_containers(&docker).await;
-    let postgres_port = postgres.get_host_port_ipv4(5432);
-    let config_one = test_config_one(postgres_port);
+    let (db_port_one, _postgres_one) = start_containers(&docker).await;
+    let config_one = test_config_one(db_port_one);
     let pool1 = setup_postgres(&config_one).await;
 
-    let postgres_two = start_containers(&docker).await;
-    let postgres_port_two = postgres_two.get_host_port_ipv4(5432);
+    let (db_port_two, _postgres_two) = start_containers(&docker).await;
     let config_two = Config {
         url: "0.0.0.0:6790".parse().unwrap(), //hardcoded - make sure it's different in other tests with replication
-        ..test_config_two(postgres_port_two)
+        ..test_config_two(db_port_two)
     };
     let pool2 = setup_postgres(&config_two).await;
 
@@ -636,12 +632,11 @@ async fn late_remote_url_can_replicate() {}
 async fn late_local_url_can_cleanup() {
     let docker = clients::Cli::default();
 
-    let postgres = start_containers(&docker).await;
-    let postgres_port = postgres.get_host_port_ipv4(5432);
-    let config = test_config_one(postgres_port);
+    let (db_port, _postgres) = start_containers(&docker).await;
+    let config = test_config_one(db_port);
     let pool = setup_postgres(&config).await;
     let (cache, _state_one, _config, addr) =
-        start_server_one(config, pool.clone(), &test_config_two(postgres_port)).await;
+        start_server_one(config, pool.clone(), &test_config_two(0)).await;
 
     let (audience1, signature1) = party_1();
     let (audience3, signature3) = party_3();

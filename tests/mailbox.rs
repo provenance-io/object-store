@@ -27,8 +27,8 @@ use tonic::Request;
 mod common;
 
 use crate::common::config::test_config;
+use crate::common::containers::start_containers;
 use crate::common::data::{generate_dime, party_1, party_2, party_3};
-use crate::common::db::start_containers;
 use crate::common::{
     get_mailbox_keys_by_object, get_public_keys_by_object, put_helper, test_public_key,
 };
@@ -183,10 +183,9 @@ async fn authed_get_and_ack_helper(
 #[tokio::test]
 async fn get_and_ack_flow() {
     let docker = clients::Cli::default();
-    let postgres = start_containers(&docker).await;
-    let postgres_port = postgres.get_host_port_ipv4(5432);
+    let (db_port, _postgres) = start_containers(&docker).await;
 
-    let (db, addr) = start_server(None, postgres_port).await;
+    let (db, addr) = start_server(None, db_port).await;
     let mut client = get_mailbox_client(addr).await;
 
     // post fragment request
@@ -315,10 +314,9 @@ async fn get_and_ack_flow() {
 #[tokio::test]
 async fn duplicate_objects_does_not_dup_mail() {
     let docker = clients::Cli::default();
-    let postgres = start_containers(&docker).await;
-    let postgres_port = postgres.get_host_port_ipv4(5432);
+    let (db_port, _postgres) = start_containers(&docker).await;
 
-    let (_, addr) = start_server(None, postgres_port).await;
+    let (_, addr) = start_server(None, db_port).await;
     let mut client = get_mailbox_client(addr).await;
 
     let (audience1, signature1) = party_1();
@@ -377,10 +375,9 @@ async fn duplicate_objects_does_not_dup_mail() {
 #[tokio::test]
 async fn get_and_ack_many() {
     let docker = clients::Cli::default();
-    let postgres = start_containers(&docker).await;
-    let postgres_port = postgres.get_host_port_ipv4(5432);
+    let (db_port, _postgres) = start_containers(&docker).await;
 
-    let (_, addr) = start_server(None, postgres_port).await;
+    let (_, addr) = start_server(None, db_port).await;
     let mut client = get_mailbox_client(addr).await;
 
     let (audience1, signature1) = party_1();
@@ -449,15 +446,14 @@ async fn get_and_ack_many() {
 #[tokio::test]
 async fn auth_get_and_ack_success() {
     let docker = clients::Cli::default();
-    let postgres = start_containers(&docker).await;
-    let postgres_port = postgres.get_host_port_ipv4(5432);
+    let (db_port, _postgres) = start_containers(&docker).await;
 
     let config = Config {
         user_auth_enabled: true,
-        ..test_config(postgres_port)
+        ..test_config(db_port)
     };
 
-    let (_, addr) = start_server(Some(config), postgres_port).await;
+    let (_, addr) = start_server(Some(config), db_port).await;
     let mut client = get_mailbox_client(addr).await;
 
     let (audience1, signature1) = party_1();
@@ -510,15 +506,14 @@ async fn auth_get_and_ack_success() {
 #[tokio::test]
 async fn auth_get_invalid_key() {
     let docker = clients::Cli::default();
-    let postgres = start_containers(&docker).await;
-    let postgres_port = postgres.get_host_port_ipv4(5432);
+    let (db_port, _postgres) = start_containers(&docker).await;
 
     let config = Config {
         user_auth_enabled: true,
-        ..test_config(postgres_port)
+        ..test_config(db_port)
     };
 
-    let (_, addr) = start_server(Some(config), postgres_port).await;
+    let (_, addr) = start_server(Some(config), db_port).await;
     let mut client = get_mailbox_client(addr).await;
 
     let (audience1, signature1) = party_1();
@@ -570,15 +565,14 @@ async fn auth_get_invalid_key() {
 #[tokio::test]
 async fn auth_ack_invalid_key() {
     let docker = clients::Cli::default();
-    let postgres = start_containers(&docker).await;
-    let postgres_port = postgres.get_host_port_ipv4(5432);
+    let (db_port, _postgres) = start_containers(&docker).await;
 
     let config = Config {
         user_auth_enabled: true,
-        ..test_config(postgres_port)
+        ..test_config(db_port)
     };
 
-    let (_, addr) = start_server(Some(config), postgres_port).await;
+    let (_, addr) = start_server(Some(config), db_port).await;
     let mut client = get_mailbox_client(addr).await;
 
     let (audience1, signature1) = party_1();
@@ -630,15 +624,14 @@ async fn auth_ack_invalid_key() {
 #[tokio::test]
 async fn auth_get_no_key() {
     let docker = clients::Cli::default();
-    let postgres = start_containers(&docker).await;
-    let postgres_port = postgres.get_host_port_ipv4(5432);
+    let (db_port, _postgres) = start_containers(&docker).await;
 
     let config = Config {
         user_auth_enabled: true,
-        ..test_config(postgres_port)
+        ..test_config(db_port)
     };
 
-    let (_, addr) = start_server(Some(config), postgres_port).await;
+    let (_, addr) = start_server(Some(config), db_port).await;
     let mut client = get_mailbox_client(addr).await;
 
     let (audience1, signature1) = party_1();
@@ -688,15 +681,14 @@ async fn auth_get_no_key() {
 #[tokio::test]
 async fn auth_ack_no_key() {
     let docker = clients::Cli::default();
-    let postgres = start_containers(&docker).await;
-    let postgres_port = postgres.get_host_port_ipv4(5432);
+    let (db_port, _postgres) = start_containers(&docker).await;
 
     let config = Config {
         user_auth_enabled: true,
-        ..test_config(postgres_port)
+        ..test_config(db_port)
     };
 
-    let (_, addr) = start_server(Some(config), postgres_port).await;
+    let (_, addr) = start_server(Some(config), db_port).await;
     let mut client = get_mailbox_client(addr).await;
 
     let (audience1, signature1) = party_1();
