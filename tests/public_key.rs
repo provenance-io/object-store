@@ -11,15 +11,15 @@ use object_store::public_key::PublicKeyGrpc;
 use testcontainers::clients;
 use tonic::Request;
 
-use crate::common::db::{setup_postgres, start_postgres};
+use crate::common::db::{setup_postgres, start_containers};
 use crate::common::test_config;
 
 #[tokio::test]
 async fn invalid_url() {
     let docker = clients::Cli::default();
 
-    let container = start_postgres(&docker).await;
-    let config = test_config(container.get_host_port_ipv4(5432));
+    let postgres = start_containers(&docker).await;
+    let config = test_config(postgres.get_host_port_ipv4(5432));
     let pool = setup_postgres(&config).await;
     let cache = Cache::new(pool.clone()).await.unwrap();
     let public_key_service = PublicKeyGrpc::new(cache.clone(), pool.clone());
@@ -51,8 +51,8 @@ async fn invalid_url() {
 async fn empty_url() {
     let docker = clients::Cli::default();
 
-    let container = start_postgres(&docker).await;
-    let config = test_config(container.get_host_port_ipv4(5432));
+    let postgres = start_containers(&docker).await;
+    let config = test_config(postgres.get_host_port_ipv4(5432));
     let pool = setup_postgres(&config).await;
     let cache = Cache::new(pool.clone()).await.unwrap();
     let public_key_service = PublicKeyGrpc::new(cache.clone(), pool.clone());
@@ -89,8 +89,8 @@ async fn empty_url() {
 async fn empty_auth_header_header() {
     let docker = clients::Cli::default();
 
-    let container = start_postgres(&docker).await;
-    let config = test_config(container.get_host_port_ipv4(5432));
+    let postgres = start_containers(&docker).await;
+    let config = test_config(postgres.get_host_port_ipv4(5432));
     let pool = setup_postgres(&config).await;
     let cache = Cache::new(pool.clone()).await.unwrap();
     let public_key_service = PublicKeyGrpc::new(cache.clone(), pool.clone());
@@ -123,8 +123,8 @@ async fn empty_auth_header_header() {
 async fn empty_auth_header_value() {
     let docker = clients::Cli::default();
 
-    let container = start_postgres(&docker).await;
-    let config = test_config(container.get_host_port_ipv4(5432));
+    let postgres = start_containers(&docker).await;
+    let config = test_config(postgres.get_host_port_ipv4(5432));
     let pool = setup_postgres(&config).await;
     let cache = Cache::new(pool.clone()).await.unwrap();
     let public_key_service = PublicKeyGrpc::new(cache.clone(), pool.clone());
@@ -156,8 +156,8 @@ async fn empty_auth_header_value() {
 async fn missing_public_key() {
     let docker = clients::Cli::default();
 
-    let container = start_postgres(&docker).await;
-    let config = test_config(container.get_host_port_ipv4(5432));
+    let postgres = start_containers(&docker).await;
+    let config = test_config(postgres.get_host_port_ipv4(5432));
     let pool = setup_postgres(&config).await;
     let cache = Cache::new(pool.clone()).await.unwrap();
     let public_key_service = PublicKeyGrpc::new(cache.clone(), pool.clone());
@@ -183,8 +183,8 @@ async fn missing_public_key() {
 async fn missing_key() {
     let docker = clients::Cli::default();
 
-    let container = start_postgres(&docker).await;
-    let config = test_config(container.get_host_port_ipv4(5432));
+    let postgres = start_containers(&docker).await;
+    let config = test_config(postgres.get_host_port_ipv4(5432));
     let pool = setup_postgres(&config).await;
     let cache = Cache::new(pool.clone()).await.unwrap();
     let public_key_service = PublicKeyGrpc::new(cache.clone(), pool.clone());
@@ -210,8 +210,8 @@ async fn missing_key() {
 async fn duplicate_key() {
     let docker = clients::Cli::default();
 
-    let container = start_postgres(&docker).await;
-    let postgres_port = container.get_host_port_ipv4(5432);
+    let postgres = start_containers(&docker).await;
+    let postgres_port = postgres.get_host_port_ipv4(5432);
     let config = test_config(postgres_port);
     let pool = setup_postgres(&config).await;
     let cache = Cache::new(pool.clone()).await.unwrap();
@@ -262,8 +262,8 @@ async fn duplicate_key() {
 async fn returns_full_proto() {
     let docker = clients::Cli::default();
 
-    let container = start_postgres(&docker).await;
-    let config = test_config(container.get_host_port_ipv4(5432));
+    let postgres = start_containers(&docker).await;
+    let config = test_config(postgres.get_host_port_ipv4(5432));
     let pool = setup_postgres(&config).await;
     let cache = Cache::new(pool.clone()).await.unwrap();
     let public_key_service = PublicKeyGrpc::new(cache.clone(), pool.clone());
@@ -308,8 +308,8 @@ async fn returns_full_proto() {
 async fn adds_empty_urls_to_local_cache() {
     let docker = clients::Cli::default();
 
-    let container = start_postgres(&docker).await;
-    let config = test_config(container.get_host_port_ipv4(5432));
+    let postgres = start_containers(&docker).await;
+    let config = test_config(postgres.get_host_port_ipv4(5432));
     let pool = setup_postgres(&config).await;
     let cache = Cache::new(pool.clone()).await.unwrap();
     let public_key_service = PublicKeyGrpc::new(cache.clone(), pool.clone());
@@ -346,8 +346,8 @@ async fn adds_empty_urls_to_local_cache() {
 async fn adds_nonempty_urls_to_remote_cache() {
     let docker = clients::Cli::default();
 
-    let container = start_postgres(&docker).await;
-    let config = test_config(container.get_host_port_ipv4(5432));
+    let postgres = start_containers(&docker).await;
+    let config = test_config(postgres.get_host_port_ipv4(5432));
     let pool = setup_postgres(&config).await;
     let cache = Cache::new(pool.clone()).await.unwrap();
     let public_key_service = PublicKeyGrpc::new(cache.clone(), pool.clone());

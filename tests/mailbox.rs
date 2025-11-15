@@ -26,7 +26,7 @@ use tonic::Request;
 
 mod common;
 
-use crate::common::db::start_postgres;
+use crate::common::db::start_containers;
 use crate::common::{
     generate_dime, get_mailbox_keys_by_object, get_public_keys_by_object, party_1, party_2,
     party_3, put_helper, test_config, test_public_key,
@@ -182,8 +182,8 @@ async fn authed_get_and_ack_helper(
 #[tokio::test]
 async fn get_and_ack_flow() {
     let docker = clients::Cli::default();
-    let container = start_postgres(&docker).await;
-    let postgres_port = container.get_host_port_ipv4(5432);
+    let postgres = start_containers(&docker).await;
+    let postgres_port = postgres.get_host_port_ipv4(5432);
 
     let (db, addr) = start_server(None, postgres_port).await;
     let mut client = get_mailbox_client(addr).await;
@@ -314,8 +314,8 @@ async fn get_and_ack_flow() {
 #[tokio::test]
 async fn duplicate_objects_does_not_dup_mail() {
     let docker = clients::Cli::default();
-    let container = start_postgres(&docker).await;
-    let postgres_port = container.get_host_port_ipv4(5432);
+    let postgres = start_containers(&docker).await;
+    let postgres_port = postgres.get_host_port_ipv4(5432);
 
     let (_, addr) = start_server(None, postgres_port).await;
     let mut client = get_mailbox_client(addr).await;
@@ -376,8 +376,8 @@ async fn duplicate_objects_does_not_dup_mail() {
 #[tokio::test]
 async fn get_and_ack_many() {
     let docker = clients::Cli::default();
-    let container = start_postgres(&docker).await;
-    let postgres_port = container.get_host_port_ipv4(5432);
+    let postgres = start_containers(&docker).await;
+    let postgres_port = postgres.get_host_port_ipv4(5432);
 
     let (_, addr) = start_server(None, postgres_port).await;
     let mut client = get_mailbox_client(addr).await;
@@ -448,8 +448,8 @@ async fn get_and_ack_many() {
 #[tokio::test]
 async fn auth_get_and_ack_success() {
     let docker = clients::Cli::default();
-    let container = start_postgres(&docker).await;
-    let postgres_port = container.get_host_port_ipv4(5432);
+    let postgres = start_containers(&docker).await;
+    let postgres_port = postgres.get_host_port_ipv4(5432);
 
     let config = Config {
         user_auth_enabled: true,
@@ -509,8 +509,8 @@ async fn auth_get_and_ack_success() {
 #[tokio::test]
 async fn auth_get_invalid_key() {
     let docker = clients::Cli::default();
-    let container = start_postgres(&docker).await;
-    let postgres_port = container.get_host_port_ipv4(5432);
+    let postgres = start_containers(&docker).await;
+    let postgres_port = postgres.get_host_port_ipv4(5432);
 
     let config = Config {
         user_auth_enabled: true,
@@ -569,8 +569,8 @@ async fn auth_get_invalid_key() {
 #[tokio::test]
 async fn auth_ack_invalid_key() {
     let docker = clients::Cli::default();
-    let container = start_postgres(&docker).await;
-    let postgres_port = container.get_host_port_ipv4(5432);
+    let postgres = start_containers(&docker).await;
+    let postgres_port = postgres.get_host_port_ipv4(5432);
 
     let config = Config {
         user_auth_enabled: true,
@@ -629,8 +629,8 @@ async fn auth_ack_invalid_key() {
 #[tokio::test]
 async fn auth_get_no_key() {
     let docker = clients::Cli::default();
-    let container = start_postgres(&docker).await;
-    let postgres_port = container.get_host_port_ipv4(5432);
+    let postgres = start_containers(&docker).await;
+    let postgres_port = postgres.get_host_port_ipv4(5432);
 
     let config = Config {
         user_auth_enabled: true,
@@ -687,8 +687,8 @@ async fn auth_get_no_key() {
 #[tokio::test]
 async fn auth_ack_no_key() {
     let docker = clients::Cli::default();
-    let container = start_postgres(&docker).await;
-    let postgres_port = container.get_host_port_ipv4(5432);
+    let postgres = start_containers(&docker).await;
+    let postgres_port = postgres.get_host_port_ipv4(5432);
 
     let config = Config {
         user_auth_enabled: true,

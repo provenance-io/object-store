@@ -21,7 +21,7 @@ use futures::StreamExt;
 use sqlx::postgres::PgPool;
 
 use crate::common::client::get_object_client;
-use crate::common::db::{setup_postgres, start_postgres};
+use crate::common::db::{setup_postgres, start_containers};
 use crate::common::{
     generate_dime, hash, party_1, party_2, party_3, put_helper, test_config, test_public_key,
 };
@@ -177,13 +177,13 @@ pub async fn get_object_count(db: &PgPool) -> i64 {
 async fn client_caching() {
     let docker = clients::Cli::default();
 
-    let container = start_postgres(&docker).await;
-    let postgres_port = container.get_host_port_ipv4(5432);
+    let postgres = start_containers(&docker).await;
+    let postgres_port = postgres.get_host_port_ipv4(5432);
     let config_one = test_config_one(postgres_port);
     let pool1 = setup_postgres(&config_one).await;
 
-    let container_two = start_postgres(&docker).await;
-    let postgres_port_two = container_two.get_host_port_ipv4(5432);
+    let postgres_two = start_containers(&docker).await;
+    let postgres_port_two = postgres_two.get_host_port_ipv4(5432);
     let config_two = test_config_two(postgres_port_two);
     let pool2 = setup_postgres(&config_two).await;
 
@@ -227,8 +227,8 @@ async fn client_caching() {
 async fn replication_can_be_disabled() {
     let docker = clients::Cli::default();
 
-    let container = start_postgres(&docker).await;
-    let postgres_port = container.get_host_port_ipv4(5432);
+    let postgres = start_containers(&docker).await;
+    let postgres_port = postgres.get_host_port_ipv4(5432);
     let config = test_config_one_no_replication(postgres_port);
     let pool = setup_postgres(&config).await;
 
@@ -331,13 +331,13 @@ async fn end_to_end_replication() {
 
     let docker = clients::Cli::default();
 
-    let container = start_postgres(&docker).await;
-    let postgres_port = container.get_host_port_ipv4(5432);
+    let postgres = start_containers(&docker).await;
+    let postgres_port = postgres.get_host_port_ipv4(5432);
     let config_one = test_config_one(postgres_port);
     let pool1 = setup_postgres(&config_one).await;
 
-    let container_two = start_postgres(&docker).await;
-    let postgres_port_two = container_two.get_host_port_ipv4(5432);
+    let postgres_two = start_containers(&docker).await;
+    let postgres_port_two = postgres_two.get_host_port_ipv4(5432);
     let config_two = Config {
         url: "0.0.0.0:6790".parse().unwrap(), //hardcoded - make sure it's different in other tests with replication
         ..test_config_two(postgres_port_two)
@@ -637,8 +637,8 @@ async fn late_remote_url_can_replicate() {}
 async fn late_local_url_can_cleanup() {
     let docker = clients::Cli::default();
 
-    let container = start_postgres(&docker).await;
-    let postgres_port = container.get_host_port_ipv4(5432);
+    let postgres = start_containers(&docker).await;
+    let postgres_port = postgres.get_host_port_ipv4(5432);
     let config = test_config_one(postgres_port);
     let pool = setup_postgres(&config).await;
     let (cache, _state_one, _config, addr) =

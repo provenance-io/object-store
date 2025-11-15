@@ -7,25 +7,31 @@ use object_store::{
 };
 use testcontainers::clients;
 
-use crate::common::{db::start_postgres, party_1, test_config, test_public_key};
+use crate::common::{db::start_containers, party_1, test_config, test_public_key};
 
 pub mod common;
 
 #[tokio::test]
 async fn test() {
+    env_logger::init();
+
     let docker = clients::Cli::default();
-    let container = start_postgres(&docker).await;
-    let config = Arc::new(test_config(container.get_host_port_ipv4(5432)));
-    println!("Postgres container started on {}", config.db_port);
+    let postgres = start_containers(&docker).await;
+    let db_port = postgres.get_host_port_ipv4(5432);
+    println!("Postgres postgres started on {}", db_port);
+    let config = Arc::new(test_config(db_port));
+    let context = AppContext::new(config).await.unwrap();
+    context.init().await;
 
-    let app_context = AppContext::new(config).await.unwrap();
-
+    // TODO:
+    // 1. use same steps: env logger, (+infra setup), config, context, sever
+    // 2. use same start method as main
+    // 3. use for other int tests
     let (tx, mut rx) = tokio::sync::mpsc::channel(1);
-
     tokio::spawn(async move {
-        tx.send(app_context.db_pool.clone()).await.unwrap();
+        tx.send(context.db_pool.clone()).await.unwrap();
 
-        configure_and_start_server(app_context).await
+        configure_and_start_server(context).await
     });
 
     let db = rx.recv().await.unwrap();

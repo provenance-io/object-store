@@ -2,68 +2,51 @@ mod common;
 
 use std::collections::HashMap;
 use std::str::FromStr;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use linked_hash_map::LinkedHashMap;
-use object_store::cache::Cache;
 use object_store::config::Config;
 use object_store::datastore::{self, replication_object_uuids, PublicKey};
-use object_store::object::ObjectGrpc;
 use object_store::pb::chunk::Impl::{Data, End};
 use object_store::pb::chunk_bidi::Impl::{
     Chunk as ChunkEnum, MultiStreamHeader as MultiStreamHeaderEnum,
 };
+use object_store::AppContext;
 
 use object_store::pb::object_service_server::ObjectServiceServer;
 use object_store::proto_helpers::{AudienceUtil, StringUtil, VecUtil};
-use object_store::storage::new_storage;
 use object_store::{consts::*, pb::HashRequest};
 
-use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
 use testcontainers::clients;
 use tonic::Request;
 
 use crate::common::client::get_object_client;
-use crate::common::db::start_postgres;
+use crate::common::db::start_containers;
 use crate::common::{
     generate_dime, get_mailbox_keys_by_object, get_public_keys_by_object, hash, party_1, party_2,
     party_3, put_helper, test_config, test_public_key,
 };
 
-pub async fn setup_postgres(config: &Config) -> PgPool {
-    let pool = PgPoolOptions::new()
-        .max_connections(5)
-        .connect(config.db_connection_string().as_str())
-        .await
-        .unwrap();
+async fn start_test_server(config: Config) -> (Arc<PgPool>, Arc<Config>) {
+    let config = Arc::new(config);
+    let context = AppContext::new(config.clone()).await.unwrap();
 
-    sqlx::migrate!().run(&pool).await.unwrap();
+    {
+        let mut guard = context.cache.lock().unwrap();
 
-    pool
-}
-
-async fn start_server(config: Config) -> (Arc<PgPool>, Arc<Config>) {
-    let cache = {
-        let mut cache = Cache::default();
-        cache.add_public_key(PublicKey {
+        guard.add_public_key(PublicKey {
             auth_data: Some(String::from("x-test-header:test_value_1")),
             ..test_public_key(party_1().0.public_key)
         });
-        cache.add_public_key(PublicKey {
+        guard.add_public_key(PublicKey {
             url: String::from("tcp://party2:8080"),
             auth_data: Some(String::from("x-test-header:test_value_2")),
             ..test_public_key(party_2().0.public_key)
         });
-        Arc::new(Mutex::new(cache))
-    };
+    }
 
-    let db_port = config.db_port;
-    let pool = setup_postgres(&config).await;
-    let pool = Arc::new(pool);
-    let storage = new_storage(&config).unwrap();
-    let config = Arc::new(config);
-    let object_service = ObjectGrpc::new(cache, config.clone(), pool.clone(), storage.clone());
+    context.init().await;
 
     let listener = tokio::net::TcpListener::bind(config.url).await.unwrap();
     let local_addr = listener.local_addr().unwrap();
@@ -72,7 +55,7 @@ async fn start_server(config: Config) -> (Arc<PgPool>, Arc<Config>) {
 
     tokio::spawn(async move {
         tonic::transport::Server::builder()
-            .add_service(ObjectServiceServer::new(object_service))
+            .add_service(ObjectServiceServer::new(context.object_service))
             .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener))
             .await
             .unwrap()
@@ -80,10 +63,10 @@ async fn start_server(config: Config) -> (Arc<PgPool>, Arc<Config>) {
 
     let updated_config = Arc::new(Config {
         url: local_addr,
-        ..test_config(db_port)
+        ..test_config(context.config.db_port)
     });
 
-    (pool, updated_config)
+    (context.db_pool, updated_config)
 }
 
 pub async fn delete_properties(db: &PgPool, object_uuid: &uuid::Uuid) -> u64 {
@@ -102,10 +85,10 @@ pub async fn delete_properties(db: &PgPool, object_uuid: &uuid::Uuid) -> u64 {
 #[tokio::test]
 async fn simple_put() {
     let docker = clients::Cli::default();
-    let container = start_postgres(&docker).await;
-    let postgres_port = container.get_host_port_ipv4(5432);
+    let postgres = start_containers(&docker).await;
+    let postgres_port = postgres.get_host_port_ipv4(5432);
 
-    let (db, config) = start_server(test_config(postgres_port)).await;
+    let (db, config) = start_test_server(test_config(postgres_port)).await;
 
     let (audience, signature) = party_1();
     let dime = generate_dime(vec![audience], vec![signature]);
@@ -155,14 +138,14 @@ async fn simple_put() {
 #[tokio::test]
 async fn simple_put_with_auth_failure_no_header() {
     let docker = clients::Cli::default();
-    let container = start_postgres(&docker).await;
-    let postgres_port = container.get_host_port_ipv4(5432);
+    let postgres = start_containers(&docker).await;
+    let postgres_port = postgres.get_host_port_ipv4(5432);
 
     let config = Config {
         user_auth_enabled: true,
         ..test_config(postgres_port)
     };
-    let (_, config) = start_server(config).await;
+    let (_, config) = start_test_server(config).await;
 
     let (audience, signature) = party_1();
     let dime = generate_dime(vec![audience], vec![signature]);
@@ -188,14 +171,14 @@ async fn simple_put_with_auth_failure_no_header() {
 #[tokio::test]
 async fn simple_put_with_auth_failure_incorrect_value() {
     let docker = clients::Cli::default();
-    let container = start_postgres(&docker).await;
-    let postgres_port = container.get_host_port_ipv4(5432);
+    let postgres = start_containers(&docker).await;
+    let postgres_port = postgres.get_host_port_ipv4(5432);
 
     let config = Config {
         user_auth_enabled: true,
         ..test_config(postgres_port)
     };
-    let (_, config) = start_server(config).await;
+    let (_, config) = start_test_server(config).await;
 
     let (audience, signature) = party_1();
     let dime = generate_dime(vec![audience], vec![signature]);
@@ -221,14 +204,14 @@ async fn simple_put_with_auth_failure_incorrect_value() {
 #[tokio::test]
 async fn simple_put_with_auth_success() {
     let docker = clients::Cli::default();
-    let container = start_postgres(&docker).await;
-    let postgres_port = container.get_host_port_ipv4(5432);
+    let postgres = start_containers(&docker).await;
+    let postgres_port = postgres.get_host_port_ipv4(5432);
 
     let config = Config {
         user_auth_enabled: true,
         ..test_config(postgres_port)
     };
-    let (db, config) = start_server(config).await;
+    let (db, config) = start_test_server(config).await;
 
     let (audience, signature) = party_1();
     let dime = generate_dime(vec![audience], vec![signature]);
@@ -278,10 +261,10 @@ async fn simple_put_with_auth_success() {
 #[tokio::test]
 async fn multi_packet_file_store_put() {
     let docker = clients::Cli::default();
-    let container = start_postgres(&docker).await;
-    let postgres_port = container.get_host_port_ipv4(5432);
+    let postgres = start_containers(&docker).await;
+    let postgres_port = postgres.get_host_port_ipv4(5432);
 
-    let (_, config) = start_server(test_config(postgres_port)).await;
+    let (_, config) = start_test_server(test_config(postgres_port)).await;
 
     let (audience, signature) = party_1();
     let dime = generate_dime(vec![audience], vec![signature]);
@@ -315,10 +298,10 @@ async fn multi_packet_file_store_put() {
 #[tokio::test]
 async fn multi_party_put() {
     let docker = clients::Cli::default();
-    let container = start_postgres(&docker).await;
-    let postgres_port = container.get_host_port_ipv4(5432);
+    let postgres = start_containers(&docker).await;
+    let postgres_port = postgres.get_host_port_ipv4(5432);
 
-    let (db, config) = start_server(test_config(postgres_port)).await;
+    let (db, config) = start_test_server(test_config(postgres_port)).await;
 
     let (audience1, signature1) = party_1();
     let (audience2, signature2) = party_2();
@@ -356,10 +339,10 @@ async fn multi_party_put() {
 #[tokio::test]
 async fn small_mailbox_put() {
     let docker = clients::Cli::default();
-    let container = start_postgres(&docker).await;
-    let postgres_port = container.get_host_port_ipv4(5432);
+    let postgres = start_containers(&docker).await;
+    let postgres_port = postgres.get_host_port_ipv4(5432);
 
-    let (db, config) = start_server(test_config(postgres_port)).await;
+    let (db, config) = start_test_server(test_config(postgres_port)).await;
 
     let (audience1, signature1) = party_1();
     let (audience2, signature2) = party_2();
@@ -400,10 +383,10 @@ async fn small_mailbox_put() {
 #[tokio::test]
 async fn large_mailbox_put() {
     let docker = clients::Cli::default();
-    let container = start_postgres(&docker).await;
-    let postgres_port = container.get_host_port_ipv4(5432);
+    let postgres = start_containers(&docker).await;
+    let postgres_port = postgres.get_host_port_ipv4(5432);
 
-    let (db, config) = start_server(test_config(postgres_port)).await;
+    let (db, config) = start_test_server(test_config(postgres_port)).await;
 
     let (audience1, signature1) = party_1();
     let (audience2, signature2) = party_2();
@@ -444,10 +427,10 @@ async fn large_mailbox_put() {
 #[tokio::test]
 async fn simple_get() {
     let docker = clients::Cli::default();
-    let container = start_postgres(&docker).await;
-    let postgres_port = container.get_host_port_ipv4(5432);
+    let postgres = start_containers(&docker).await;
+    let postgres_port = postgres.get_host_port_ipv4(5432);
 
-    let (_, config) = start_server(test_config(postgres_port)).await;
+    let (_, config) = start_test_server(test_config(postgres_port)).await;
 
     let (audience, signature) = party_1();
     let dime = generate_dime(vec![audience.clone()], vec![signature]);
@@ -533,12 +516,12 @@ async fn simple_get() {
 #[tokio::test]
 async fn auth_get_failure_no_key() {
     let docker = clients::Cli::default();
-    let container = start_postgres(&docker).await;
-    let postgres_port = container.get_host_port_ipv4(5432);
+    let postgres = start_containers(&docker).await;
+    let postgres_port = postgres.get_host_port_ipv4(5432);
 
     let mut config = test_config(postgres_port);
     config.user_auth_enabled = true;
-    let (_, config) = start_server(config).await;
+    let (_, config) = start_test_server(config).await;
 
     let (audience, signature) = party_1();
     let dime = generate_dime(vec![audience.clone()], vec![signature]);
@@ -581,12 +564,12 @@ async fn auth_get_failure_no_key() {
 #[tokio::test]
 async fn auth_get_failure_invalid_key() {
     let docker = clients::Cli::default();
-    let container = start_postgres(&docker).await;
-    let postgres_port = container.get_host_port_ipv4(5432);
+    let postgres = start_containers(&docker).await;
+    let postgres_port = postgres.get_host_port_ipv4(5432);
 
     let mut config = test_config(postgres_port);
     config.user_auth_enabled = true;
-    let (_, config) = start_server(config).await;
+    let (_, config) = start_test_server(config).await;
 
     let (audience, signature) = party_1();
     let dime = generate_dime(vec![audience.clone()], vec![signature]);
@@ -631,14 +614,14 @@ async fn auth_get_failure_invalid_key() {
 #[tokio::test]
 async fn auth_get_success() {
     let docker = clients::Cli::default();
-    let container = start_postgres(&docker).await;
-    let postgres_port = container.get_host_port_ipv4(5432);
+    let postgres = start_containers(&docker).await;
+    let postgres_port = postgres.get_host_port_ipv4(5432);
 
     let config = Config {
         user_auth_enabled: true,
         ..test_config(postgres_port)
     };
-    let (_, config) = start_server(config).await;
+    let (_, config) = start_test_server(config).await;
 
     let (audience, signature) = party_1();
     let dime = generate_dime(vec![audience.clone()], vec![signature]);
@@ -682,10 +665,10 @@ async fn auth_get_success() {
 #[tokio::test]
 async fn multi_packet_file_store_get() {
     let docker = clients::Cli::default();
-    let container = start_postgres(&docker).await;
-    let postgres_port = container.get_host_port_ipv4(5432);
+    let postgres = start_containers(&docker).await;
+    let postgres_port = postgres.get_host_port_ipv4(5432);
 
-    let (_, config) = start_server(test_config(postgres_port)).await;
+    let (_, config) = start_test_server(test_config(postgres_port)).await;
 
     let (audience, signature) = party_1();
     let dime = generate_dime(vec![audience.clone()], vec![signature]);
@@ -727,10 +710,10 @@ async fn multi_packet_file_store_get() {
 #[tokio::test]
 async fn multi_party_non_owner_get() {
     let docker = clients::Cli::default();
-    let container = start_postgres(&docker).await;
-    let postgres_port = container.get_host_port_ipv4(5432);
+    let postgres = start_containers(&docker).await;
+    let postgres_port = postgres.get_host_port_ipv4(5432);
 
-    let (_, config) = start_server(test_config(postgres_port)).await;
+    let (_, config) = start_test_server(test_config(postgres_port)).await;
 
     let (audience1, signature1) = party_1();
     let (audience2, signature2) = party_2();
@@ -773,10 +756,10 @@ async fn multi_party_non_owner_get() {
 #[tokio::test]
 async fn dupe_objects_noop() {
     let docker = clients::Cli::default();
-    let container = start_postgres(&docker).await;
-    let postgres_port = container.get_host_port_ipv4(5432);
+    let postgres = start_containers(&docker).await;
+    let postgres_port = postgres.get_host_port_ipv4(5432);
 
-    let (_, config) = start_server(test_config(postgres_port)).await;
+    let (_, config) = start_test_server(test_config(postgres_port)).await;
 
     let (audience, signature) = party_1();
     let dime = generate_dime(vec![audience], vec![signature]);
@@ -811,10 +794,10 @@ async fn dupe_objects_noop() {
 #[tokio::test]
 async fn dupe_objects_added_audience() {
     let docker = clients::Cli::default();
-    let container = start_postgres(&docker).await;
-    let postgres_port = container.get_host_port_ipv4(5432);
+    let postgres = start_containers(&docker).await;
+    let postgres_port = postgres.get_host_port_ipv4(5432);
 
-    let (_, config) = start_server(test_config(postgres_port)).await;
+    let (_, config) = start_test_server(test_config(postgres_port)).await;
 
     let (audience, signature) = party_1();
     let (audience2, signature2) = party_2();
@@ -852,10 +835,10 @@ async fn dupe_objects_added_audience() {
 #[tokio::test]
 async fn get_with_wrong_key() {
     let docker = clients::Cli::default();
-    let container = start_postgres(&docker).await;
-    let postgres_port = container.get_host_port_ipv4(5432);
+    let postgres = start_containers(&docker).await;
+    let postgres_port = postgres.get_host_port_ipv4(5432);
 
-    let (_, config) = start_server(test_config(postgres_port)).await;
+    let (_, config) = start_test_server(test_config(postgres_port)).await;
 
     let (audience1, signature1) = party_1();
     let (audience2, signature2) = party_2();
@@ -895,10 +878,10 @@ async fn get_with_wrong_key() {
 #[tokio::test]
 async fn get_nonexistent_hash() {
     let docker = clients::Cli::default();
-    let container = start_postgres(&docker).await;
-    let postgres_port = container.get_host_port_ipv4(5432);
+    let postgres = start_containers(&docker).await;
+    let postgres_port = postgres.get_host_port_ipv4(5432);
 
-    let (_, config) = start_server(test_config(postgres_port)).await;
+    let (_, config) = start_test_server(test_config(postgres_port)).await;
 
     let (audience1, _) = party_1();
     let payload: bytes::Bytes = "testing small payload".as_bytes().into();
@@ -921,10 +904,10 @@ async fn get_nonexistent_hash() {
 #[tokio::test]
 async fn put_with_replication() {
     let docker = clients::Cli::default();
-    let container = start_postgres(&docker).await;
-    let postgres_port = container.get_host_port_ipv4(5432);
+    let postgres = start_containers(&docker).await;
+    let postgres_port = postgres.get_host_port_ipv4(5432);
 
-    let (db, config) = start_server(test_config(postgres_port)).await;
+    let (db, config) = start_test_server(test_config(postgres_port)).await;
 
     let (audience1, signature1) = party_1();
     let (audience2, signature2) = party_2();
@@ -991,10 +974,10 @@ async fn put_with_replication() {
 #[tokio::test]
 async fn put_with_replication_different_owner() {
     let docker = clients::Cli::default();
-    let container = start_postgres(&docker).await;
-    let postgres_port = container.get_host_port_ipv4(5432);
+    let postgres = start_containers(&docker).await;
+    let postgres_port = postgres.get_host_port_ipv4(5432);
 
-    let (db, config) = start_server(test_config(postgres_port)).await;
+    let (db, config) = start_test_server(test_config(postgres_port)).await;
 
     let (audience1, signature1) = party_1();
     let (audience2, signature2) = party_2();
@@ -1059,10 +1042,10 @@ async fn put_with_replication_different_owner() {
 #[tokio::test]
 async fn put_with_double_replication() {
     let docker = clients::Cli::default();
-    let container = start_postgres(&docker).await;
-    let postgres_port = container.get_host_port_ipv4(5432);
+    let postgres = start_containers(&docker).await;
+    let postgres_port = postgres.get_host_port_ipv4(5432);
 
-    let (db, config) = start_server(test_config(postgres_port)).await;
+    let (db, config) = start_test_server(test_config(postgres_port)).await;
 
     let (audience1, signature1) = party_1();
     let (audience2, signature2) = party_2();
@@ -1117,10 +1100,10 @@ async fn put_with_double_replication() {
 #[tokio::test]
 async fn get_object_no_properties() {
     let docker = clients::Cli::default();
-    let container = start_postgres(&docker).await;
-    let postgres_port = container.get_host_port_ipv4(5432);
+    let postgres = start_containers(&docker).await;
+    let postgres_port = postgres.get_host_port_ipv4(5432);
 
-    let (db, config) = start_server(test_config(postgres_port)).await;
+    let (db, config) = start_test_server(test_config(postgres_port)).await;
 
     let (audience, signature) = party_1();
     let dime = generate_dime(vec![audience.clone()], vec![signature]);

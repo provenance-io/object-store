@@ -120,9 +120,7 @@ impl From<Vec<u8>> for Key {
 
 impl From<Key> for PublicKey {
     fn from(key: Key) -> Self {
-        Self {
-            key: Some(key.into()),
-        }
+        Self { key: Some(key) }
     }
 }
 

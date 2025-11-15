@@ -4,11 +4,11 @@ use object_store::config::Config;
 use sqlx::{postgres::PgPoolOptions, PgPool};
 use testcontainers::{clients::Cli, images, Container, RunnableImage};
 
-pub async fn start_postgres(docker: &Cli) -> Container<'_, images::postgres::Postgres> {
+pub async fn start_containers(docker: &Cli) -> Container<'_, images::postgres::Postgres> {
     let image = RunnableImage::from(images::postgres::Postgres::default()).with_tag("14-alpine");
-    let container = docker.run(image);
+    let postgres = docker.run(image);
 
-    container
+    postgres
 }
 
 // TODO: wire up whole config
