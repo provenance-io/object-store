@@ -1,7 +1,6 @@
 mod common;
 
 use std::collections::HashMap;
-use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
@@ -44,7 +43,7 @@ pub async fn setup_postgres(config: &Config) -> PgPool {
     pool
 }
 
-async fn start_server(config: Config) -> (Arc<PgPool>, Arc<Config>, SocketAddr) {
+async fn start_server(config: Config) -> (Arc<PgPool>, Arc<Config>) {
     let cache = {
         let mut cache = Cache::default();
         cache.add_public_key(PublicKey {
@@ -84,7 +83,7 @@ async fn start_server(config: Config) -> (Arc<PgPool>, Arc<Config>, SocketAddr) 
         ..test_config(db_port)
     });
 
-    (pool, updated_config, local_addr)
+    (pool, updated_config)
 }
 
 pub async fn delete_properties(db: &PgPool, object_uuid: &uuid::Uuid) -> u64 {
@@ -106,7 +105,7 @@ async fn simple_put() {
     let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
-    let (db, _config, addr) = start_server(test_config(postgres_port)).await;
+    let (db, config) = start_server(test_config(postgres_port)).await;
 
     let (audience, signature) = party_1();
     let dime = generate_dime(vec![audience], vec![signature]);
@@ -122,7 +121,7 @@ async fn simple_put() {
         Vec::default(),
     );
 
-    let mut os_client = get_object_client(addr).await;
+    let mut os_client = get_object_client(config.url).await;
     let response = os_client.put(request).await;
 
     match response {
@@ -163,7 +162,7 @@ async fn simple_put_with_auth_failure_no_header() {
         user_auth_enabled: true,
         ..test_config(postgres_port)
     };
-    let (_, config, addr) = start_server(config).await;
+    let (_, config) = start_server(config).await;
 
     let (audience, signature) = party_1();
     let dime = generate_dime(vec![audience], vec![signature]);
@@ -177,7 +176,7 @@ async fn simple_put_with_auth_failure_no_header() {
         Vec::default(),
     );
 
-    let mut os_client = get_object_client(addr).await;
+    let mut os_client = get_object_client(config.url).await;
     let response = os_client.put(request).await;
 
     match response {
@@ -196,7 +195,7 @@ async fn simple_put_with_auth_failure_incorrect_value() {
         user_auth_enabled: true,
         ..test_config(postgres_port)
     };
-    let (_, config, addr) = start_server(config).await;
+    let (_, config) = start_server(config).await;
 
     let (audience, signature) = party_1();
     let dime = generate_dime(vec![audience], vec![signature]);
@@ -210,7 +209,7 @@ async fn simple_put_with_auth_failure_incorrect_value() {
         vec![("x-test-header", "test_value_2")],
     );
 
-    let mut os_client = get_object_client(addr).await;
+    let mut os_client = get_object_client(config.url).await;
     let response = os_client.put(request).await;
 
     match response {
@@ -229,7 +228,7 @@ async fn simple_put_with_auth_success() {
         user_auth_enabled: true,
         ..test_config(postgres_port)
     };
-    let (db, config, addr) = start_server(config).await;
+    let (db, config) = start_server(config).await;
 
     let (audience, signature) = party_1();
     let dime = generate_dime(vec![audience], vec![signature]);
@@ -245,7 +244,7 @@ async fn simple_put_with_auth_success() {
         vec![("x-test-header", "test_value_1")],
     );
 
-    let mut os_client = get_object_client(addr).await;
+    let mut os_client = get_object_client(config.url).await;
     let response = os_client.put(request).await;
 
     match response {
@@ -282,7 +281,7 @@ async fn multi_packet_file_store_put() {
     let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
-    let (_, config, addr) = start_server(test_config(postgres_port)).await;
+    let (_, config) = start_server(test_config(postgres_port)).await;
 
     let (audience, signature) = party_1();
     let dime = generate_dime(vec![audience], vec![signature]);
@@ -298,7 +297,7 @@ async fn multi_packet_file_store_put() {
         Vec::default(),
     );
 
-    let mut os_client = get_object_client(addr).await;
+    let mut os_client = get_object_client(config.url).await;
     let response = os_client.put(request).await;
 
     match response {
@@ -319,7 +318,7 @@ async fn multi_party_put() {
     let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
-    let (db, config, addr) = start_server(test_config(postgres_port)).await;
+    let (db, config) = start_server(test_config(postgres_port)).await;
 
     let (audience1, signature1) = party_1();
     let (audience2, signature2) = party_2();
@@ -338,7 +337,7 @@ async fn multi_party_put() {
         Vec::default(),
     );
 
-    let mut os_client = get_object_client(addr).await;
+    let mut os_client = get_object_client(config.url).await;
     let response = os_client.put(request).await;
 
     match response {
@@ -360,7 +359,7 @@ async fn small_mailbox_put() {
     let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
-    let (db, config, addr) = start_server(test_config(postgres_port)).await;
+    let (db, config) = start_server(test_config(postgres_port)).await;
 
     let (audience1, signature1) = party_1();
     let (audience2, signature2) = party_2();
@@ -381,7 +380,7 @@ async fn small_mailbox_put() {
         Vec::default(),
     );
 
-    let mut os_client = get_object_client(addr).await;
+    let mut os_client = get_object_client(config.url).await;
     let response = os_client.put(request).await;
 
     match response {
@@ -404,7 +403,7 @@ async fn large_mailbox_put() {
     let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
-    let (db, config, addr) = start_server(test_config(postgres_port)).await;
+    let (db, config) = start_server(test_config(postgres_port)).await;
 
     let (audience1, signature1) = party_1();
     let (audience2, signature2) = party_2();
@@ -425,7 +424,7 @@ async fn large_mailbox_put() {
         Vec::default(),
     );
 
-    let mut os_client = get_object_client(addr).await;
+    let mut os_client = get_object_client(config.url).await;
     let response = os_client.put(request).await;
 
     match response {
@@ -448,7 +447,7 @@ async fn simple_get() {
     let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
-    let (_, config, addr) = start_server(test_config(postgres_port)).await;
+    let (_, config) = start_server(test_config(postgres_port)).await;
 
     let (audience, signature) = party_1();
     let dime = generate_dime(vec![audience.clone()], vec![signature]);
@@ -462,7 +461,7 @@ async fn simple_get() {
         Vec::default(),
     );
 
-    let mut os_client = get_object_client(addr).await;
+    let mut os_client = get_object_client(config.url).await;
     let response = os_client.put(request).await;
 
     match response {
@@ -539,7 +538,7 @@ async fn auth_get_failure_no_key() {
 
     let mut config = test_config(postgres_port);
     config.user_auth_enabled = true;
-    let (_, config, addr) = start_server(config).await;
+    let (_, config) = start_server(config).await;
 
     let (audience, signature) = party_1();
     let dime = generate_dime(vec![audience.clone()], vec![signature]);
@@ -553,7 +552,7 @@ async fn auth_get_failure_no_key() {
         vec![("x-test-header", "test_value_1")],
     );
 
-    let mut os_client = get_object_client(addr).await;
+    let mut os_client = get_object_client(config.url).await;
     let response = os_client.put(request).await;
 
     match response {
@@ -587,7 +586,7 @@ async fn auth_get_failure_invalid_key() {
 
     let mut config = test_config(postgres_port);
     config.user_auth_enabled = true;
-    let (_, config, addr) = start_server(config).await;
+    let (_, config) = start_server(config).await;
 
     let (audience, signature) = party_1();
     let dime = generate_dime(vec![audience.clone()], vec![signature]);
@@ -601,7 +600,7 @@ async fn auth_get_failure_invalid_key() {
         vec![("x-test-header", "test_value_1")],
     );
 
-    let mut os_client = get_object_client(addr).await;
+    let mut os_client = get_object_client(config.url).await;
     let response = os_client.put(request).await;
 
     match response {
@@ -639,7 +638,7 @@ async fn auth_get_success() {
         user_auth_enabled: true,
         ..test_config(postgres_port)
     };
-    let (_, config, addr) = start_server(config).await;
+    let (_, config) = start_server(config).await;
 
     let (audience, signature) = party_1();
     let dime = generate_dime(vec![audience.clone()], vec![signature]);
@@ -652,7 +651,7 @@ async fn auth_get_success() {
         HashMap::default(),
         vec![("x-test-header", "test_value_1")],
     );
-    let mut os_client = get_object_client(addr).await;
+    let mut os_client = get_object_client(config.url).await;
     let response = os_client.put(request).await;
 
     match response {
@@ -686,7 +685,7 @@ async fn multi_packet_file_store_get() {
     let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
-    let (_, config, addr) = start_server(test_config(postgres_port)).await;
+    let (_, config) = start_server(test_config(postgres_port)).await;
 
     let (audience, signature) = party_1();
     let dime = generate_dime(vec![audience.clone()], vec![signature]);
@@ -699,7 +698,7 @@ async fn multi_packet_file_store_get() {
         HashMap::default(),
         Vec::default(),
     );
-    let mut os_client = get_object_client(addr).await;
+    let mut os_client = get_object_client(config.url).await;
     let response = os_client.put(request).await;
 
     match response {
@@ -731,7 +730,7 @@ async fn multi_party_non_owner_get() {
     let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
-    let (_, config, addr) = start_server(test_config(postgres_port)).await;
+    let (_, config) = start_server(test_config(postgres_port)).await;
 
     let (audience1, signature1) = party_1();
     let (audience2, signature2) = party_2();
@@ -750,7 +749,7 @@ async fn multi_party_non_owner_get() {
         Vec::default(),
     );
 
-    let mut os_client = get_object_client(addr).await;
+    let mut os_client = get_object_client(config.url).await;
     let response = os_client.put(request).await;
 
     match response {
@@ -777,7 +776,7 @@ async fn dupe_objects_noop() {
     let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
-    let (_, config, addr) = start_server(test_config(postgres_port)).await;
+    let (_, config) = start_server(test_config(postgres_port)).await;
 
     let (audience, signature) = party_1();
     let dime = generate_dime(vec![audience], vec![signature]);
@@ -797,7 +796,7 @@ async fn dupe_objects_noop() {
         HashMap::default(),
         Vec::default(),
     );
-    let mut os_client = get_object_client(addr).await;
+    let mut os_client = get_object_client(config.url).await;
     let response = os_client.put(request).await;
     let response_dupe = os_client.put(request_dupe).await;
 
@@ -815,7 +814,7 @@ async fn dupe_objects_added_audience() {
     let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
-    let (_, config, addr) = start_server(test_config(postgres_port)).await;
+    let (_, config) = start_server(test_config(postgres_port)).await;
 
     let (audience, signature) = party_1();
     let (audience2, signature2) = party_2();
@@ -838,7 +837,7 @@ async fn dupe_objects_added_audience() {
         Vec::default(),
     );
 
-    let mut os_client = get_object_client(addr).await;
+    let mut os_client = get_object_client(config.url).await;
     let response = os_client.put(request).await;
     let response_dupe = os_client.put(request_dupe).await;
 
@@ -856,7 +855,7 @@ async fn get_with_wrong_key() {
     let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
-    let (_, config, addr) = start_server(test_config(postgres_port)).await;
+    let (_, config) = start_server(test_config(postgres_port)).await;
 
     let (audience1, signature1) = party_1();
     let (audience2, signature2) = party_2();
@@ -872,7 +871,7 @@ async fn get_with_wrong_key() {
         Vec::default(),
     );
 
-    let mut os_client = get_object_client(addr).await;
+    let mut os_client = get_object_client(config.url).await;
     let response = os_client.put(request).await;
 
     match response {
@@ -899,7 +898,7 @@ async fn get_nonexistent_hash() {
     let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
-    let (_, config, _) = start_server(test_config(postgres_port)).await;
+    let (_, config) = start_server(test_config(postgres_port)).await;
 
     let (audience1, _) = party_1();
     let payload: bytes::Bytes = "testing small payload".as_bytes().into();
@@ -925,7 +924,7 @@ async fn put_with_replication() {
     let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
-    let (db, config, addr) = start_server(test_config(postgres_port)).await;
+    let (db, config) = start_server(test_config(postgres_port)).await;
 
     let (audience1, signature1) = party_1();
     let (audience2, signature2) = party_2();
@@ -940,7 +939,7 @@ async fn put_with_replication() {
     let chunk_size = 500; // full payload in one packet
     let request = put_helper(dime, payload, chunk_size, extra_properties, Vec::default());
 
-    let mut os_client = get_object_client(addr).await;
+    let mut os_client = get_object_client(config.url).await;
     let response = os_client.put(request).await;
 
     match response {
@@ -995,7 +994,7 @@ async fn put_with_replication_different_owner() {
     let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
-    let (db, config, addr) = start_server(test_config(postgres_port)).await;
+    let (db, config) = start_server(test_config(postgres_port)).await;
 
     let (audience1, signature1) = party_1();
     let (audience2, signature2) = party_2();
@@ -1009,7 +1008,7 @@ async fn put_with_replication_different_owner() {
     let payload: bytes::Bytes = "testing small payload".as_bytes().into();
     let chunk_size = 500; // full payload in one packet
     let request = put_helper(dime, payload, chunk_size, extra_properties, Vec::default());
-    let mut os_client = get_object_client(addr).await;
+    let mut os_client = get_object_client(config.url).await;
     let response = os_client.put(request).await;
     match response {
         Ok(response) => {
@@ -1063,7 +1062,7 @@ async fn put_with_double_replication() {
     let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
-    let (db, config, addr) = start_server(test_config(postgres_port)).await;
+    let (db, config) = start_server(test_config(postgres_port)).await;
 
     let (audience1, signature1) = party_1();
     let (audience2, signature2) = party_2();
@@ -1078,7 +1077,7 @@ async fn put_with_double_replication() {
     let chunk_size = 500; // full payload in one packet
     let request = put_helper(dime, payload, chunk_size, extra_properties, Vec::default());
 
-    let mut os_client = get_object_client(addr).await;
+    let mut os_client = get_object_client(config.url).await;
     let response = os_client.put(request).await;
 
     match response {
@@ -1121,7 +1120,7 @@ async fn get_object_no_properties() {
     let container = start_postgres(&docker).await;
     let postgres_port = container.get_host_port_ipv4(5432);
 
-    let (db, config, addr) = start_server(test_config(postgres_port)).await;
+    let (db, config) = start_server(test_config(postgres_port)).await;
 
     let (audience, signature) = party_1();
     let dime = generate_dime(vec![audience.clone()], vec![signature]);
@@ -1135,7 +1134,7 @@ async fn get_object_no_properties() {
         Vec::default(),
     );
 
-    let mut os_client = get_object_client(addr).await;
+    let mut os_client = get_object_client(config.url).await;
     let response = os_client.put(request).await;
 
     match response {
