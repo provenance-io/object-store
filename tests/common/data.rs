@@ -70,7 +70,7 @@ pub fn generate_dime(audience: Vec<Audience>, signatures: Vec<Signature>) -> Dim
         uuid: uuid::Uuid::from_u128(300),
         uri: String::default(),
         proto,
-        metadata: std::collections::HashMap::default(),
+        metadata: HashMap::default(),
         signatures,
     }
 }
