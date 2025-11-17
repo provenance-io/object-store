@@ -536,7 +536,7 @@ pub async fn replicate_iteration(inner: &mut ReplicationState, client_cache: &mu
     }
 }
 
-/// Every second, run [replicate_iteration]
+/// Run [replicate_iteration] with a one second delay between runs
 pub async fn replicate(mut inner: ReplicationState) {
     log::info!("Starting replication");
 
@@ -582,7 +582,7 @@ pub async fn reap_unknown_keys_iteration(db_pool: &Arc<PgPool>, cache: &Arc<Mute
     }
 }
 
-/// Every hour, run [reap_unknown_keys_iteration]
+/// Run [reap_unknown_keys_iteration] with a one hours delay between runs
 pub async fn reap_unknown_keys(db_pool: Arc<PgPool>, cache: Arc<Mutex<Cache>>) {
     log::info!("Starting reap unknown keys");
 

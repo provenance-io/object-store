@@ -7,7 +7,8 @@ use crate::pb::chunk::Impl::{Data, End, Value};
 use crate::pb::chunk_bidi::Impl::{Chunk as ChunkEnum, MultiStreamHeader as MultiStreamHeaderEnum};
 use crate::pb::object_service_server::ObjectService;
 use crate::pb::MultiStreamHeader;
-use crate::pb::{Chunk, ChunkBidi, ChunkEnd, HashRequest, ObjectResponse, StreamHeader};
+use crate::pb::{Chunk, ChunkBidi, HashRequest, ObjectResponse, StreamHeader};
+use crate::proto_helpers::create_stream_end;
 use crate::proto_helpers::VecUtil;
 use crate::types::{GrpcResult, OsError};
 use crate::{
@@ -68,30 +69,34 @@ impl ObjectService for ObjectGrpc {
     ) -> GrpcResult<Response<ObjectResponse>> {
         let metadata = request.metadata().clone();
         let mut stream = request.into_inner();
-        let mut chunk_buffer = Vec::new();
-        let mut byte_buffer = BytesMut::new();
-        let mut end = false;
-        let mut properties: LinkedHashMap<String, Vec<u8>> = LinkedHashMap::new();
 
-        while let Some(chunk) = stream.next().await {
-            match chunk {
-                Ok(chunk) => {
-                    let mut buffer = BytesMut::with_capacity(chunk.encoded_len());
-                    chunk.clone().encode(&mut buffer).unwrap();
-                    chunk_buffer.push(chunk);
-                }
-                Err(e) => {
-                    let message = format!("Error received instead of ChunkBidi - {:?}", e);
+        // Read stream into buffer
+        let chunk_buffer = {
+            let mut chunk_buffer = Vec::new();
 
-                    return Err(Status::invalid_argument(message));
+            while let Some(chunk) = stream.next().await {
+                match chunk {
+                    Ok(chunk) => {
+                        let mut buffer = BytesMut::with_capacity(chunk.encoded_len());
+                        chunk.clone().encode(&mut buffer).unwrap();
+                        chunk_buffer.push(chunk);
+                    }
+                    Err(e) => {
+                        let message = format!("Error received instead of ChunkBidi - {:?}", e);
+
+                        return Err(Status::invalid_argument(message));
+                    }
                 }
             }
-        }
+
+            chunk_buffer
+        };
 
         // check validity of stream header
         if chunk_buffer.is_empty() {
             return Err(Status::invalid_argument("Multipart upload is empty"));
         }
+
         match chunk_buffer[0].r#impl {
             Some(MultiStreamHeaderEnum(ref header)) => {
                 if header.stream_count != 1 {
@@ -115,6 +120,7 @@ impl ObjectService for ObjectGrpc {
                 "Multi stream has a header but no chunks",
             ));
         }
+
         let (header_chunk_header, header_chunk_data) = match chunk_buffer[1].r#impl {
             Some(ChunkEnum(ref chunk)) => {
                 let chunk_header = match chunk.header {
@@ -148,8 +154,11 @@ impl ObjectService for ObjectGrpc {
             _ => return Err(Status::invalid_argument("Chunk has no impl value")),
         };
 
+        let mut byte_buffer = BytesMut::new();
         byte_buffer.put(header_chunk_data.as_ref());
 
+        let mut end = false;
+        let mut properties: LinkedHashMap<String, Vec<u8>> = LinkedHashMap::new();
         for chunk in &chunk_buffer[2..] {
             match chunk.r#impl {
                 Some(ChunkEnum(ref chunk)) => match chunk.r#impl {
@@ -216,7 +225,6 @@ impl ObjectService for ObjectGrpc {
             content_length: header_chunk_header.content_length,
             dime_length: raw_dime.len() as i64,
         };
-        let mut replication_key_states = Vec::new();
 
         if self.config.user_auth_enabled {
             let owner_public_key = dime
@@ -243,22 +251,30 @@ impl ObjectService for ObjectGrpc {
             }?;
         }
 
-        if self.config.replication_enabled {
-            let audience = dime
-                .unique_audience_without_owner_base64()
-                .map_err(|_| Status::invalid_argument("Invalid Dime proto - audience list"))?;
-            let cache = self.cache.lock().unwrap();
+        let replication_key_states = {
+            let mut replication_key_states = Vec::new();
 
-            for ref party in audience {
-                replication_key_states.push((party.clone(), cache.get_public_key_state(party)));
-            }
-        }
+            if self.config.replication_enabled {
+                let audience = dime
+                    .unique_audience_without_owner_base64()
+                    .map_err(|_| Status::invalid_argument("Invalid Dime proto - audience list"))?;
+                let cache = self.cache.lock().unwrap();
+
+                for ref party in audience {
+                    replication_key_states.push((party.clone(), cache.get_public_key_state(party)));
+                }
+            };
+
+            replication_key_states
+        };
 
         // mail items should be under any reasonable threshold set, but explicitly check for
         // mail and always used database storage
-        let response = if !dime.metadata.contains_key(consts::MAILBOX_KEY)
-            && dime_properties.dime_length > self.config.storage_threshold.into()
-        {
+        let is_mail = dime.metadata.contains_key(consts::MAILBOX_KEY);
+        let above_storage_threshold =
+            dime_properties.dime_length > self.config.storage_threshold.into();
+
+        let response = if !is_mail && above_storage_threshold {
             let response = datastore::put_object(
                 &self.db_pool,
                 &dime,
@@ -269,6 +285,7 @@ impl ObjectService for ObjectGrpc {
                 self.config.replication_enabled,
             )
             .await?;
+
             let storage_path = StoragePath {
                 dir: response.directory.clone(),
                 file: response.name.clone(),
@@ -302,6 +319,7 @@ impl ObjectService for ObjectGrpc {
     async fn get(&self, request: Request<HashRequest>) -> GrpcResult<Response<Self::GetStream>> {
         let metadata = request.metadata().clone();
         let request = request.into_inner();
+
         let hash = request.hash.encoded();
         let public_key = request.public_key.encoded();
 
@@ -340,6 +358,7 @@ impl ObjectService for ObjectGrpc {
                 dir: object.directory.clone(),
                 file: object.name.clone(),
             };
+
             let payload = self
                 .storage
                 .fetch(&storage_path, object.dime_length as u64)
@@ -396,14 +415,7 @@ impl ObjectService for ObjectGrpc {
                 }
             }
 
-            // send end chunk
-            let end = Chunk {
-                header: None,
-                r#impl: Some(End(ChunkEnd::default())),
-            };
-            let msg = ChunkBidi {
-                r#impl: Some(ChunkEnum(end)),
-            };
+            let msg = create_stream_end();
 
             if (tx.send(Ok(msg)).await).is_err() {
                 log::debug!("stream closed early");
