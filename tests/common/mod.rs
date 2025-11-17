@@ -6,28 +6,36 @@ pub mod containers;
 pub mod data;
 
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 use bytes::{BufMut, BytesMut};
-use chrono::Utc;
 use futures::stream;
 use futures_util::TryStreamExt;
+use object_store::cache::Cache;
+use object_store::config::Config;
 use object_store::consts::{
     CREATED_BY_HEADER, DIME_FIELD_NAME, HASH_FIELD_NAME, SIGNATURE_FIELD_NAME,
     SIGNATURE_PUBLIC_KEY_FIELD_NAME,
 };
-use object_store::datastore::{AuthType, KeyType, MailboxPublicKey, ObjectPublicKey, PublicKey};
+use object_store::datastore::{MailboxPublicKey, ObjectPublicKey};
 use object_store::dime::Dime;
 use object_store::pb::chunk_bidi::Impl::{
     Chunk as ChunkEnum, MultiStreamHeader as MultiStreamHeaderEnum,
 };
+use object_store::pb::mailbox_service_server::MailboxServiceServer;
+use object_store::pb::object_service_server::ObjectServiceServer;
 use object_store::pb::{
     chunk::Impl::{Data, End, Value},
     Chunk, ChunkBidi, ChunkEnd, MultiStreamHeader, StreamHeader,
 };
+use object_store::replication::ReplicationState;
+use object_store::AppContext;
 use prost::Message;
 use sqlx::{FromRow, PgPool};
 use std::hash::Hasher;
 use tonic::Request;
+
+use crate::common::data::seed_cache;
 
 pub fn put_helper(
     dime: Dime,
@@ -38,11 +46,11 @@ pub fn put_helper(
 ) -> Request<stream::Iter<std::vec::IntoIter<ChunkBidi>>> {
     let mut packets = Vec::new();
 
-    let mut metadata = HashMap::new();
-    metadata.insert(
+    let metadata = HashMap::from([(
         CREATED_BY_HEADER.to_owned(),
         uuid::Uuid::nil().as_hyphenated().to_string(),
-    );
+    )]);
+
     let header = MultiStreamHeader {
         stream_count: 1,
         metadata,
@@ -205,19 +213,61 @@ pub async fn get_mailbox_keys_by_object(
 
     result
 }
+/// Starts a test server
+/// 1. Seeds cache if remote config is supplied
+/// 2. Create new [AppContext] and run [AppContext::init]
+/// 3. Start server
+/// 4. Init, but don't run replication
+pub async fn start_test_server(
+    config: Config,
+    remote_config: Option<&Config>,
+) -> (
+    Arc<PgPool>,
+    Arc<Mutex<Cache>>,
+    ReplicationState,
+    Arc<Config>,
+) {
+    let listener = tokio::net::TcpListener::bind(config.url).await.unwrap();
+    let local_addr = listener.local_addr().unwrap();
 
-pub fn test_public_key(public_key: Vec<u8>) -> PublicKey {
-    let now = Utc::now();
+    // Update config with bound port to be used later for connecting client, etc.
+    let updated_config = Arc::new(Config {
+        url: local_addr,
+        ..config
+    });
 
-    PublicKey {
-        uuid: uuid::Uuid::new_v4(),
-        public_key: std::str::from_utf8(&public_key).unwrap().to_owned(),
-        public_key_type: KeyType::Secp256k1,
-        url: String::from(""),
-        metadata: Vec::default(),
-        auth_type: Some(AuthType::Header),
-        auth_data: Some(String::from("x-test-header:test_value_1")),
-        created_at: now,
-        updated_at: now,
+    let context = AppContext::new(updated_config.clone()).await.unwrap();
+    context.init().await;
+
+    if let Some(remote_config) = remote_config {
+        {
+            let mut cache = context.cache.lock().unwrap();
+            seed_cache(&mut cache, remote_config);
+        };
     }
+
+    tokio::spawn(async move {
+        tonic::transport::Server::builder()
+            .add_service(MailboxServiceServer::new(context.mailbox_service))
+            .add_service(ObjectServiceServer::new(context.object_service))
+            .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener))
+            .await
+            .unwrap()
+    });
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    println!("test server running on {:?}", local_addr);
+
+    let replication_state = ReplicationState::new(
+        context.cache.clone(),
+        context.config.clone(),
+        context.db_pool.clone(),
+        context.storage.clone(),
+    );
+
+    (
+        context.db_pool,
+        context.cache,
+        replication_state,
+        context.config,
+    )
 }

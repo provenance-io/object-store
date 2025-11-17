@@ -1,151 +1,26 @@
 mod common;
 
-use object_store::cache::Cache;
 use object_store::config::Config;
 use object_store::datastore::{replication_object_uuids, PublicKey};
-use object_store::pb::object_service_server::ObjectServiceServer;
+use object_store::pb;
 use object_store::proto_helpers::AudienceUtil;
-use object_store::replication::{
-    reap_unknown_keys_iteration, replicate_iteration, ClientCache, ReplicationState,
-};
+use object_store::replication::{reap_unknown_keys_iteration, replicate_iteration, ClientCache};
 use object_store::types::Result;
-use object_store::{pb, AppContext};
 
 use testcontainers::clients;
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
 
 use futures::StreamExt;
 use sqlx::postgres::PgPool;
 
 use crate::common::client::get_object_client;
+use crate::common::config::{test_config_no_replication, test_config_replication};
 use crate::common::containers::start_containers;
-use crate::common::data::{generate_dime, party_1, party_2, party_3};
-use crate::common::{config::test_config, hash, put_helper, test_public_key};
+use crate::common::data::{generate_dime, party_1, party_2, party_3, test_public_key};
+use crate::common::{hash, put_helper, start_test_server};
 
-pub fn test_config_one(db_port: u16) -> Config {
-    Config {
-        storage_base_url: None,
-        replication_enabled: true,
-        replication_batch_size: 2,
-        dd_config: None,
-        backoff_min_wait: 5,
-        backoff_max_wait: 5,
-        ..test_config(db_port)
-    }
-}
-
-pub fn test_config_one_no_replication(db_port: u16) -> Config {
-    Config {
-        replication_enabled: false,
-        dd_config: None,
-        backoff_min_wait: 5,
-        backoff_max_wait: 5,
-        ..test_config(db_port)
-    }
-}
-
-pub fn test_config_two(db_port: u16) -> Config {
-    Config {
-        replication_enabled: true,
-        dd_config: None,
-        backoff_min_wait: 5,
-        backoff_max_wait: 5,
-        ..test_config(db_port)
-    }
-}
-
-fn set_cache(cache: &mut Cache, remote_config: &Config) {
-    cache.add_public_key(PublicKey {
-        auth_data: Some(String::from("X-Test-Header:test_value")),
-        ..test_public_key(party_1().0.public_key)
-    });
-    cache.add_public_key(PublicKey {
-        url: String::from(format!("tcp://{}", remote_config.url)),
-        auth_data: Some(String::from("X-Test-Header:test_value")),
-        ..test_public_key(party_2().0.public_key)
-    });
-}
-
-async fn start_server_one(
-    context: AppContext,
-    remote_config: &Config,
-) -> (Arc<Mutex<Cache>>, ReplicationState, Arc<Config>) {
-    {
-        let mut cache = context.cache.lock().unwrap();
-        set_cache(&mut cache, remote_config);
-    };
-
-    let listener = tokio::net::TcpListener::bind(context.config.url)
-        .await
-        .unwrap();
-    let local_addr = listener.local_addr().unwrap();
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-    println!("test server running on {:?}", local_addr);
-
-    tokio::spawn(async move {
-        tonic::transport::Server::builder()
-            .add_service(ObjectServiceServer::new(context.object_service))
-            .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener))
-            .await
-            .unwrap()
-    });
-    let updated_config = Arc::new(Config {
-        url: local_addr,
-        ..test_config_one(context.config.db_port) // TODO: fix - use actual config
-    });
-    // TODO replace with context init
-    let replication_state = ReplicationState::new(
-        context.cache.clone(),
-        updated_config.clone(),
-        context.db_pool.clone(),
-        context.storage.clone(),
-    );
-
-    (context.cache.clone(), replication_state, updated_config)
-}
-
-async fn start_server_two(context: AppContext) -> (ReplicationState, Arc<Config>) {
-    // TODO new config with addr
-    let db_port = context.config.db_port;
-
-    {
-        let mut cache = context.cache.lock().unwrap();
-
-        set_cache(&mut cache, &test_config_one(db_port));
-    };
-
-    let listener = tokio::net::TcpListener::bind(context.config.url)
-        .await
-        .unwrap();
-    let local_addr = listener.local_addr().unwrap();
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-    println!("test server running on {:?}", local_addr);
-
-    tokio::spawn(async move {
-        tonic::transport::Server::builder()
-            .add_service(ObjectServiceServer::new(context.object_service))
-            .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener))
-            .await
-            .unwrap()
-    });
-    let updated_config = Arc::new(Config {
-        url: local_addr,
-        ..test_config_two(db_port) // TODO: fix - use actual config
-    });
-    // TODO: replace with appcontext init
-    let replication_state = ReplicationState::new(
-        context.cache.clone(),
-        updated_config.clone(),
-        context.db_pool.clone(),
-        context.storage.clone(),
-    );
-
-    (replication_state, updated_config)
-}
-
-pub async fn get_object_count(db: &PgPool) -> i64 {
+async fn get_object_count(db: &PgPool) -> i64 {
     let row: (i64,) = sqlx::query_as("SELECT count(*) as count FROM object")
         .fetch_one(db)
         .await
@@ -159,14 +34,12 @@ async fn client_caching() -> Result<()> {
     let docker = clients::Cli::default();
 
     let (db_port_one, _postgres_one) = start_containers(&docker).await;
-    let config_one = test_config_one(db_port_one);
-    let context_one = AppContext::new(Arc::new(config_one)).await?;
+    let config_one = test_config_replication(db_port_one);
 
     let (db_port_two, _postgres_two) = start_containers(&docker).await;
-    let config_two = Arc::new(test_config_two(db_port_two));
-    let context_two = AppContext::new(config_two.clone()).await?;
+    let config_two = test_config_replication(db_port_two);
 
-    let (_, _state_one, config_one) = start_server_one(context_one, &config_two).await;
+    let (_, _, _, config_one) = start_test_server(config_one, Some(&config_two)).await;
 
     let url_one = format!("tcp://{}", config_one.url);
 
@@ -190,7 +63,7 @@ async fn client_caching() -> Result<()> {
     assert_eq!(client_one_id_first, client_one_id_second);
 
     // Client 2:
-    let (_state_two, config_two) = start_server_two(context_two).await;
+    let (_, _, _, config_two) = start_test_server(config_two, None).await;
     let url_two = format!("tcp://{}", config_two.url);
 
     let client_two = client_cache.request(&url_two).await.unwrap().unwrap();
@@ -206,11 +79,9 @@ async fn replication_can_be_disabled() -> Result<()> {
     let docker = clients::Cli::default();
 
     let (db_port, _postgres) = start_containers(&docker).await;
-    let config = test_config_one_no_replication(db_port);
-    let context = AppContext::new(Arc::new(config)).await?;
-    let db_pool = context.db_pool.clone();
 
-    let (_, _state_one, config_one) = start_server_one(context, &test_config_two(0)).await;
+    let config = test_config_no_replication(db_port);
+    let (db_pool, _, _, config_one) = start_test_server(config, None).await;
 
     let (audience1, signature1) = party_1();
     let (audience2, signature2) = party_2();
@@ -297,20 +168,17 @@ async fn end_to_end_replication() -> Result<()> {
     let docker = clients::Cli::default();
 
     let (db_port_one, _postgres_one) = start_containers(&docker).await;
-    let config_one = test_config_one(db_port_one);
-    let context_one = AppContext::new(Arc::new(config_one)).await?;
-    let db_pool_one = context_one.db_pool.clone();
+    let config_one = test_config_replication(db_port_one);
 
     let (db_port_two, _postgres_two) = start_containers(&docker).await;
-    let config_two = Arc::new(Config {
+    let config_two = Config {
         url: "0.0.0.0:6790".parse().unwrap(), // hardcoded - make sure it's different in other tests with replication
-        ..test_config_two(db_port_two)
-    });
-    let context_two = AppContext::new(config_two.clone()).await?;
-    let db_pool_two = context_two.db_pool.clone();
+        ..test_config_replication(db_port_two)
+    };
 
-    let (_, mut state_one, config_one) = start_server_one(context_one, &config_two).await;
-    let (_state_two, config_two) = start_server_two(context_two).await;
+    let (db_pool_one, _, mut state_one, config_one) =
+        start_test_server(config_one, Some(&config_two)).await;
+    let (db_pool_two, _, _, config_two) = start_test_server(config_two, None).await;
 
     let mut client_one = get_object_client(config_one.url).await;
 
@@ -520,11 +388,9 @@ async fn late_local_url_can_cleanup() -> Result<()> {
     let docker = clients::Cli::default();
 
     let (db_port, _postgres) = start_containers(&docker).await;
-    let config = test_config_one(db_port);
-    let context = AppContext::new(Arc::new(config)).await?;
-    let db_pool = context.db_pool.clone();
+    let config = test_config_replication(db_port);
 
-    let (cache, _state_one, config) = start_server_one(context, &test_config_two(0)).await;
+    let (db_pool, cache, _, config) = start_test_server(config, None).await;
 
     let (audience1, signature1) = party_1();
     let (audience3, signature3) = party_3();
@@ -599,8 +465,6 @@ async fn late_local_url_can_cleanup() -> Result<()> {
     }
 
     // set unknown key to local and reap
-    let cache = cache.clone();
-
     {
         let mut cache = cache.lock().unwrap();
 

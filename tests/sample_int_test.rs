@@ -4,8 +4,8 @@ use object_store::{datastore, server::configure_and_start_server, AppContext};
 use testcontainers::clients;
 
 use crate::common::config::test_config;
-use crate::common::data::party_1;
-use crate::common::{containers::start_containers, test_public_key};
+use crate::common::containers::start_containers;
+use crate::common::data::{party_1, test_public_key};
 
 use object_store::types::Result;
 

@@ -1,20 +1,18 @@
 mod common;
 
 use std::collections::HashMap;
-use std::str::FromStr;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use linked_hash_map::LinkedHashMap;
+use object_store::cache::Cache;
 use object_store::config::Config;
 use object_store::datastore::{self, replication_object_uuids, PublicKey};
 use object_store::pb::chunk::Impl::{Data, End};
 use object_store::pb::chunk_bidi::Impl::{
     Chunk as ChunkEnum, MultiStreamHeader as MultiStreamHeaderEnum,
 };
-use object_store::AppContext;
 
-use object_store::pb::object_service_server::ObjectServiceServer;
-use object_store::proto_helpers::{AudienceUtil, StringUtil, VecUtil};
+use object_store::proto_helpers::{AudienceUtil, ObjectResponseUtil, StringUtil, VecUtil};
 use object_store::{consts::*, pb::HashRequest};
 
 use sqlx::PgPool;
@@ -24,50 +22,23 @@ use tonic::Request;
 use crate::common::client::get_object_client;
 use crate::common::config::test_config;
 use crate::common::containers::start_containers;
-use crate::common::data::{generate_dime, party_1, party_2, party_3};
+use crate::common::data::{generate_dime, party_1, party_2, party_3, test_public_key};
 use crate::common::{
-    get_mailbox_keys_by_object, get_public_keys_by_object, hash, put_helper, test_public_key,
+    get_mailbox_keys_by_object, get_public_keys_by_object, hash, put_helper, start_test_server,
 };
 
-async fn start_test_server(config: Config) -> (Arc<PgPool>, Arc<Config>) {
-    let config = Arc::new(config);
-    let context = AppContext::new(config.clone()).await.unwrap();
+fn add_keys_cache(cache: Arc<Mutex<Cache>>) {
+    let mut guard = cache.lock().unwrap();
 
-    {
-        let mut guard = context.cache.lock().unwrap();
-
-        guard.add_public_key(PublicKey {
-            auth_data: Some(String::from("x-test-header:test_value_1")),
-            ..test_public_key(party_1().0.public_key)
-        });
-        guard.add_public_key(PublicKey {
-            url: String::from("tcp://party2:8080"),
-            auth_data: Some(String::from("x-test-header:test_value_2")),
-            ..test_public_key(party_2().0.public_key)
-        });
-    }
-
-    context.init().await;
-
-    let listener = tokio::net::TcpListener::bind(config.url).await.unwrap();
-    let local_addr = listener.local_addr().unwrap();
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-    println!("test server running on {:?}", local_addr);
-
-    tokio::spawn(async move {
-        tonic::transport::Server::builder()
-            .add_service(ObjectServiceServer::new(context.object_service))
-            .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener))
-            .await
-            .unwrap()
+    guard.add_public_key(PublicKey {
+        auth_data: Some(String::from("x-test-header:test_value_1")),
+        ..test_public_key(party_1().0.public_key)
     });
-
-    let updated_config = Arc::new(Config {
-        url: local_addr,
-        ..test_config(context.config.db_port)
+    guard.add_public_key(PublicKey {
+        url: String::from("tcp://party2:8080"),
+        auth_data: Some(String::from("x-test-header:test_value_2")),
+        ..test_public_key(party_2().0.public_key)
     });
-
-    (context.db_pool, updated_config)
 }
 
 pub async fn delete_properties(db: &PgPool, object_uuid: &uuid::Uuid) -> u64 {
@@ -88,7 +59,7 @@ async fn simple_put() {
     let docker = clients::Cli::default();
     let (db_port, _postgres) = start_containers(&docker).await;
 
-    let (db, config) = start_test_server(test_config(db_port)).await;
+    let (db, _, _, config) = start_test_server(test_config(db_port), None).await;
 
     let (audience, signature) = party_1();
     let dime = generate_dime(vec![audience], vec![signature]);
@@ -105,16 +76,13 @@ async fn simple_put() {
     );
 
     let mut os_client = get_object_client(config.url).await;
-    let response = os_client.put(request).await;
+    let response = os_client.put(request).await.map(|r| r.into_inner());
 
     match response {
         Ok(response) => {
-            let response = response.into_inner();
-            let uuid = response.uuid.unwrap().value;
-            let uuid_typed = uuid::Uuid::from_str(uuid.as_str()).unwrap();
-            let object = datastore::get_object_by_uuid(&db, &uuid_typed)
-                .await
-                .unwrap();
+            let uuid = response.uuid();
+
+            let object = datastore::get_object_by_uuid(&db, &uuid).await.unwrap();
             let mut properties = LinkedHashMap::new();
             properties.insert(HASH_FIELD_NAME.to_owned(), object.hash.decoded().unwrap());
             properties.insert(
@@ -126,7 +94,7 @@ async fn simple_put() {
                 "signature public key".as_bytes().to_owned(),
             );
 
-            assert_ne!(uuid, dime_uuid);
+            assert_ne!(uuid.as_hyphenated().to_string(), dime_uuid);
             assert_eq!(response.name, NOT_STORAGE_BACKED);
             assert_eq!(response.metadata.unwrap().content_length, payload_len);
             assert_eq!(object.properties, properties)
@@ -144,7 +112,7 @@ async fn simple_put_with_auth_failure_no_header() {
         user_auth_enabled: true,
         ..test_config(db_port)
     };
-    let (_, config) = start_test_server(config).await;
+    let (_, _, _, config) = start_test_server(config, None).await;
 
     let (audience, signature) = party_1();
     let dime = generate_dime(vec![audience], vec![signature]);
@@ -176,7 +144,7 @@ async fn simple_put_with_auth_failure_incorrect_value() {
         user_auth_enabled: true,
         ..test_config(db_port)
     };
-    let (_, config) = start_test_server(config).await;
+    let (_, _, _, config) = start_test_server(config, None).await;
 
     let (audience, signature) = party_1();
     let dime = generate_dime(vec![audience], vec![signature]);
@@ -208,7 +176,8 @@ async fn simple_put_with_auth_success() {
         user_auth_enabled: true,
         ..test_config(db_port)
     };
-    let (db, config) = start_test_server(config).await;
+    let (db, cache, _, config) = start_test_server(config, None).await;
+    add_keys_cache(cache);
 
     let (audience, signature) = party_1();
     let dime = generate_dime(vec![audience], vec![signature]);
@@ -225,28 +194,29 @@ async fn simple_put_with_auth_success() {
     );
 
     let mut os_client = get_object_client(config.url).await;
-    let response = os_client.put(request).await;
+    let response = os_client.put(request).await.map(|r| r.into_inner());
 
     match response {
         Ok(response) => {
-            let response = response.into_inner();
-            let uuid = response.uuid.unwrap().value;
-            let uuid_typed = uuid::Uuid::from_str(uuid.as_str()).unwrap();
-            let object = datastore::get_object_by_uuid(&db, &uuid_typed)
-                .await
-                .unwrap();
-            let mut properties = LinkedHashMap::new();
-            properties.insert(HASH_FIELD_NAME.to_owned(), object.hash.decoded().unwrap());
-            properties.insert(
-                SIGNATURE_FIELD_NAME.to_owned(),
-                "signature".as_bytes().to_owned(),
-            );
-            properties.insert(
-                SIGNATURE_PUBLIC_KEY_FIELD_NAME.to_owned(),
-                "signature public key".as_bytes().to_owned(),
-            );
+            let uuid = response.uuid();
 
-            assert_ne!(uuid, dime_uuid);
+            let object = datastore::get_object_by_uuid(&db, &uuid).await.unwrap();
+
+            let properties = {
+                let mut properties = LinkedHashMap::new();
+                properties.insert(HASH_FIELD_NAME.to_owned(), object.hash.decoded().unwrap());
+                properties.insert(
+                    SIGNATURE_FIELD_NAME.to_owned(),
+                    "signature".as_bytes().to_owned(),
+                );
+                properties.insert(
+                    SIGNATURE_PUBLIC_KEY_FIELD_NAME.to_owned(),
+                    "signature public key".as_bytes().to_owned(),
+                );
+                properties
+            };
+
+            assert_ne!(uuid.as_hyphenated().to_string(), dime_uuid);
             assert_eq!(response.name, NOT_STORAGE_BACKED);
             assert_eq!(response.metadata.unwrap().content_length, payload_len);
             assert_eq!(object.properties, properties)
@@ -260,7 +230,7 @@ async fn multi_packet_file_store_put() {
     let docker = clients::Cli::default();
     let (db_port, _postgres) = start_containers(&docker).await;
 
-    let (_, config) = start_test_server(test_config(db_port)).await;
+    let (_, _, _, config) = start_test_server(test_config(db_port), None).await;
 
     let (audience, signature) = party_1();
     let dime = generate_dime(vec![audience], vec![signature]);
@@ -277,12 +247,10 @@ async fn multi_packet_file_store_put() {
     );
 
     let mut os_client = get_object_client(config.url).await;
-    let response = os_client.put(request).await;
+    let response = os_client.put(request).await.map(|r| r.into_inner());
 
     match response {
         Ok(response) => {
-            let response = response.into_inner();
-
             assert_ne!(response.uuid.unwrap().value, dime_uuid);
             assert_ne!(response.name, NOT_STORAGE_BACKED);
             assert_eq!(response.metadata.unwrap().content_length, payload_len);
@@ -296,7 +264,7 @@ async fn multi_party_put() {
     let docker = clients::Cli::default();
     let (db_port, _postgres) = start_containers(&docker).await;
 
-    let (db, config) = start_test_server(test_config(db_port)).await;
+    let (db, _, _, config) = start_test_server(test_config(db_port), None).await;
 
     let (audience1, signature1) = party_1();
     let (audience2, signature2) = party_2();
@@ -316,13 +284,11 @@ async fn multi_party_put() {
     );
 
     let mut os_client = get_object_client(config.url).await;
-    let response = os_client.put(request).await;
+    let response = os_client.put(request).await.map(|r| r.into_inner());
 
     match response {
         Ok(response) => {
-            let response = response.into_inner();
-            let uuid = response.uuid.unwrap().value;
-            let uuid = uuid::Uuid::from_str(uuid.as_str()).unwrap();
+            let uuid = response.uuid();
 
             assert_eq!(get_public_keys_by_object(&db, &uuid).await.len(), 3);
             assert_eq!(get_mailbox_keys_by_object(&db, &uuid).await.len(), 0);
@@ -336,17 +302,22 @@ async fn small_mailbox_put() {
     let docker = clients::Cli::default();
     let (db_port, _postgres) = start_containers(&docker).await;
 
-    let (db, config) = start_test_server(test_config(db_port)).await;
+    let (db, _, _, config) = start_test_server(test_config(db_port), None).await;
 
     let (audience1, signature1) = party_1();
     let (audience2, signature2) = party_2();
     let (audience3, signature3) = party_3();
-    let mut dime = generate_dime(
-        vec![audience1, audience2, audience3],
-        vec![signature1, signature2, signature3],
-    );
-    dime.metadata
-        .insert(MAILBOX_KEY.to_owned(), MAILBOX_FRAGMENT_REQUEST.to_owned());
+
+    let dime = {
+        let mut dime = generate_dime(
+            vec![audience1, audience2, audience3],
+            vec![signature1, signature2, signature3],
+        );
+        dime.metadata
+            .insert(MAILBOX_KEY.to_owned(), MAILBOX_FRAGMENT_REQUEST.to_owned());
+
+        dime
+    };
     let payload: bytes::Bytes = "testing small payload".as_bytes().into();
     let chunk_size = 500; // full payload in one packet
     let request = put_helper(
@@ -358,13 +329,11 @@ async fn small_mailbox_put() {
     );
 
     let mut os_client = get_object_client(config.url).await;
-    let response = os_client.put(request).await;
+    let response = os_client.put(request).await.map(|r| r.into_inner());
 
     match response {
         Ok(response) => {
-            let response = response.into_inner();
-            let uuid = response.uuid.unwrap().value;
-            let uuid = uuid::Uuid::from_str(uuid.as_str()).unwrap();
+            let uuid = response.uuid();
 
             assert_eq!(response.name, NOT_STORAGE_BACKED);
             assert_eq!(get_public_keys_by_object(&db, &uuid).await.len(), 3);
@@ -379,17 +348,23 @@ async fn large_mailbox_put() {
     let docker = clients::Cli::default();
     let (db_port, _postgres) = start_containers(&docker).await;
 
-    let (db, config) = start_test_server(test_config(db_port)).await;
+    let (db, _, _, config) = start_test_server(test_config(db_port), None).await;
 
     let (audience1, signature1) = party_1();
     let (audience2, signature2) = party_2();
     let (audience3, signature3) = party_3();
-    let mut dime = generate_dime(
-        vec![audience1, audience2, audience3],
-        vec![signature1, signature2, signature3],
-    );
-    dime.metadata
-        .insert(MAILBOX_KEY.to_owned(), MAILBOX_FRAGMENT_REQUEST.to_owned());
+
+    let dime = {
+        let mut dime = generate_dime(
+            vec![audience1, audience2, audience3],
+            vec![signature1, signature2, signature3],
+        );
+        dime.metadata
+            .insert(MAILBOX_KEY.to_owned(), MAILBOX_FRAGMENT_REQUEST.to_owned());
+
+        dime
+    };
+
     let payload: bytes::Bytes = "testing larger payload ".repeat(250).into_bytes().into();
     let chunk_size = 100; // split payload into packets
     let request = put_helper(
@@ -401,13 +376,11 @@ async fn large_mailbox_put() {
     );
 
     let mut os_client = get_object_client(config.url).await;
-    let response = os_client.put(request).await;
+    let response = os_client.put(request).await.map(|r| r.into_inner());
 
     match response {
         Ok(response) => {
-            let response = response.into_inner();
-            let uuid = response.uuid.unwrap().value;
-            let uuid = uuid::Uuid::from_str(uuid.as_str()).unwrap();
+            let uuid = response.uuid();
 
             assert_eq!(response.name, NOT_STORAGE_BACKED);
             assert_eq!(get_public_keys_by_object(&db, &uuid).await.len(), 3);
@@ -422,7 +395,7 @@ async fn simple_get() {
     let docker = clients::Cli::default();
     let (db_port, _postgres) = start_containers(&docker).await;
 
-    let (_, config) = start_test_server(test_config(db_port)).await;
+    let (_, _, _, config) = start_test_server(test_config(db_port), None).await;
 
     let (audience, signature) = party_1();
     let dime = generate_dime(vec![audience.clone()], vec![signature]);
@@ -437,23 +410,22 @@ async fn simple_get() {
     );
 
     let mut os_client = get_object_client(config.url).await;
-    let response = os_client.put(request).await;
+    let response = os_client.put(request).await.map(|r| r.into_inner());
 
     match response {
         Ok(response) => {
-            let response = response.into_inner();
-
             assert_eq!(response.name, NOT_STORAGE_BACKED);
         }
         _ => assert_eq!(format!("{:?}", response), ""),
     }
 
-    let mut client = get_object_client(config.url).await;
     let public_key = audience.public_key_decoded();
     let request = HashRequest {
         hash: hash(payload),
         public_key,
     };
+
+    let mut client = get_object_client(config.url).await;
     let response = client.get(Request::new(request)).await;
 
     match response {
@@ -510,9 +482,13 @@ async fn auth_get_failure_no_key() {
     let docker = clients::Cli::default();
     let (db_port, _postgres) = start_containers(&docker).await;
 
-    let mut config = test_config(db_port);
-    config.user_auth_enabled = true;
-    let (_, config) = start_test_server(config).await;
+    let config = Config {
+        user_auth_enabled: true,
+        ..test_config(db_port)
+    };
+    let (_, cache, _, config) = start_test_server(config, None).await;
+
+    add_keys_cache(cache);
 
     let (audience, signature) = party_1();
     let dime = generate_dime(vec![audience.clone()], vec![signature]);
@@ -527,23 +503,22 @@ async fn auth_get_failure_no_key() {
     );
 
     let mut os_client = get_object_client(config.url).await;
-    let response = os_client.put(request).await;
+    let response = os_client.put(request).await.map(|r| r.into_inner());
 
     match response {
         Ok(response) => {
-            let response = response.into_inner();
-
             assert_ne!(response.name, NOT_STORAGE_BACKED);
         }
         _ => assert_eq!(format!("{:?}", response), ""),
     }
 
-    let mut client = get_object_client(config.url).await;
     let public_key = audience.public_key_decoded();
     let request = HashRequest {
         hash: hash(payload),
         public_key,
     };
+
+    let mut client = get_object_client(config.url).await;
     let response = client.get(Request::new(request)).await;
 
     match response {
@@ -557,9 +532,13 @@ async fn auth_get_failure_invalid_key() {
     let docker = clients::Cli::default();
     let (db_port, _postgres) = start_containers(&docker).await;
 
-    let mut config = test_config(db_port);
-    config.user_auth_enabled = true;
-    let (_, config) = start_test_server(config).await;
+    let config = Config {
+        user_auth_enabled: true,
+        ..test_config(db_port)
+    };
+    let (_, cache, _, config) = start_test_server(config, None).await;
+
+    add_keys_cache(cache);
 
     let (audience, signature) = party_1();
     let dime = generate_dime(vec![audience.clone()], vec![signature]);
@@ -574,18 +553,15 @@ async fn auth_get_failure_invalid_key() {
     );
 
     let mut os_client = get_object_client(config.url).await;
-    let response = os_client.put(request).await;
+    let response = os_client.put(request).await.map(|r| r.into_inner());
 
     match response {
         Ok(response) => {
-            let response = response.into_inner();
-
             assert_ne!(response.name, NOT_STORAGE_BACKED);
         }
         _ => assert_eq!(format!("{:?}", response), ""),
     }
 
-    let mut client = get_object_client(config.url).await;
     let public_key = audience.public_key_decoded();
     let mut request = Request::new(HashRequest {
         hash: hash(payload),
@@ -593,6 +569,8 @@ async fn auth_get_failure_invalid_key() {
     });
     let metadata = request.metadata_mut();
     metadata.insert("x-test-header", "test_value_2".parse().unwrap());
+
+    let mut client = get_object_client(config.url).await;
     let response = client.get(request).await;
 
     match response {
@@ -610,7 +588,9 @@ async fn auth_get_success() {
         user_auth_enabled: true,
         ..test_config(db_port)
     };
-    let (_, config) = start_test_server(config).await;
+    let (_, cache, _, config) = start_test_server(config, None).await;
+
+    add_keys_cache(cache);
 
     let (audience, signature) = party_1();
     let dime = generate_dime(vec![audience.clone()], vec![signature]);
@@ -624,18 +604,15 @@ async fn auth_get_success() {
         vec![("x-test-header", "test_value_1")],
     );
     let mut os_client = get_object_client(config.url).await;
-    let response = os_client.put(request).await;
+    let response = os_client.put(request).await.map(|r| r.into_inner());
 
     match response {
         Ok(response) => {
-            let response = response.into_inner();
-
             assert_ne!(response.name, NOT_STORAGE_BACKED);
         }
         _ => assert_eq!(format!("{:?}", response), ""),
     }
 
-    let mut client = get_object_client(config.url).await;
     let public_key = audience.public_key_decoded();
     let mut request = Request::new(HashRequest {
         hash: hash(payload),
@@ -643,6 +620,8 @@ async fn auth_get_success() {
     });
     let metadata = request.metadata_mut();
     metadata.insert("x-test-header", "test_value_1".parse().unwrap());
+
+    let mut client = get_object_client(config.url).await;
     let response = client.get(request).await;
 
     match response {
@@ -656,7 +635,7 @@ async fn multi_packet_file_store_get() {
     let docker = clients::Cli::default();
     let (db_port, _postgres) = start_containers(&docker).await;
 
-    let (_, config) = start_test_server(test_config(db_port)).await;
+    let (_, _, _, config) = start_test_server(test_config(db_port), None).await;
 
     let (audience, signature) = party_1();
     let dime = generate_dime(vec![audience.clone()], vec![signature]);
@@ -670,12 +649,10 @@ async fn multi_packet_file_store_get() {
         Vec::default(),
     );
     let mut os_client = get_object_client(config.url).await;
-    let response = os_client.put(request).await;
+    let response = os_client.put(request).await.map(|r| r.into_inner());
 
     match response {
         Ok(response) => {
-            let response = response.into_inner();
-
             assert_ne!(response.name, NOT_STORAGE_BACKED);
         }
         _ => assert_eq!(format!("{:?}", response), ""),
@@ -700,7 +677,7 @@ async fn multi_party_non_owner_get() {
     let docker = clients::Cli::default();
     let (db_port, _postgres) = start_containers(&docker).await;
 
-    let (_, config) = start_test_server(test_config(db_port)).await;
+    let (_, _, _, config) = start_test_server(test_config(db_port), None).await;
 
     let (audience1, signature1) = party_1();
     let (audience2, signature2) = party_2();
@@ -726,12 +703,14 @@ async fn multi_party_non_owner_get() {
         Ok(_) => (),
         _ => assert_eq!(format!("{:?}", response), ""),
     }
-    let mut client = get_object_client(config.url).await;
+
     let public_key = audience3.public_key_decoded();
     let request = HashRequest {
         hash: hash(payload),
         public_key,
     };
+
+    let mut client = get_object_client(config.url).await;
     let response = client.get(Request::new(request)).await;
 
     match response {
@@ -745,7 +724,7 @@ async fn dupe_objects_noop() {
     let docker = clients::Cli::default();
     let (db_port, _postgres) = start_containers(&docker).await;
 
-    let (_, config) = start_test_server(test_config(db_port)).await;
+    let (_, _, _, config) = start_test_server(test_config(db_port), None).await;
 
     let (audience, signature) = party_1();
     let dime = generate_dime(vec![audience], vec![signature]);
@@ -782,7 +761,7 @@ async fn dupe_objects_added_audience() {
     let docker = clients::Cli::default();
     let (db_port, _postgres) = start_containers(&docker).await;
 
-    let (_, config) = start_test_server(test_config(db_port)).await;
+    let (_, _, _, config) = start_test_server(test_config(db_port), None).await;
 
     let (audience, signature) = party_1();
     let (audience2, signature2) = party_2();
@@ -822,7 +801,7 @@ async fn get_with_wrong_key() {
     let docker = clients::Cli::default();
     let (db_port, _postgres) = start_containers(&docker).await;
 
-    let (_, config) = start_test_server(test_config(db_port)).await;
+    let (_, _, _, config) = start_test_server(test_config(db_port), None).await;
 
     let (audience1, signature1) = party_1();
     let (audience2, signature2) = party_2();
@@ -864,16 +843,18 @@ async fn get_nonexistent_hash() {
     let docker = clients::Cli::default();
     let (db_port, _postgres) = start_containers(&docker).await;
 
-    let (_, config) = start_test_server(test_config(db_port)).await;
+    let (_, _, _, config) = start_test_server(test_config(db_port), None).await;
 
     let (audience1, _) = party_1();
+
     let payload: bytes::Bytes = "testing small payload".as_bytes().into();
-    let mut client = get_object_client(config.url).await;
     let public_key = audience1.public_key_decoded();
     let request = HashRequest {
         hash: hash(payload),
         public_key,
     };
+
+    let mut client = get_object_client(config.url).await;
     let response = client.get(Request::new(request)).await;
 
     match response {
@@ -889,7 +870,7 @@ async fn put_with_replication() {
     let docker = clients::Cli::default();
     let (db_port, _postgres) = start_containers(&docker).await;
 
-    let (db, config) = start_test_server(test_config(db_port)).await;
+    let (db, _, _, config) = start_test_server(test_config(db_port), None).await;
 
     let (audience1, signature1) = party_1();
     let (audience2, signature2) = party_2();
@@ -898,20 +879,17 @@ async fn put_with_replication() {
         vec![audience1.clone(), audience2.clone(), audience3.clone()],
         vec![signature1, signature2, signature3],
     );
-    let mut extra_properties = HashMap::new();
-    extra_properties.insert(SOURCE_KEY.to_owned(), String::from("standard key"));
+    let extra_properties = HashMap::from([(SOURCE_KEY.to_owned(), String::from("standard key"))]);
     let payload: bytes::Bytes = "testing small payload".as_bytes().into();
     let chunk_size = 500; // full payload in one packet
     let request = put_helper(dime, payload, chunk_size, extra_properties, Vec::default());
 
     let mut os_client = get_object_client(config.url).await;
-    let response = os_client.put(request).await;
+    let response = os_client.put(request).await.map(|r| r.into_inner());
 
     match response {
         Ok(response) => {
-            let response = response.into_inner();
-            let uuid = response.uuid.unwrap().value;
-            let uuid = uuid::Uuid::from_str(uuid.as_str()).unwrap();
+            let uuid = response.uuid();
 
             assert_eq!(response.name, NOT_STORAGE_BACKED);
             assert_eq!(get_public_keys_by_object(&db, &uuid).await.len(), 3);
@@ -958,7 +936,8 @@ async fn put_with_replication_different_owner() {
     let docker = clients::Cli::default();
     let (db_port, _postgres) = start_containers(&docker).await;
 
-    let (db, config) = start_test_server(test_config(db_port)).await;
+    let (db, cache, _, config) = start_test_server(test_config(db_port), None).await;
+    add_keys_cache(cache);
 
     let (audience1, signature1) = party_1();
     let (audience2, signature2) = party_2();
@@ -967,18 +946,17 @@ async fn put_with_replication_different_owner() {
         vec![audience2.clone(), audience1.clone(), audience3.clone()],
         vec![signature2, signature1, signature3],
     );
-    let mut extra_properties = HashMap::new();
-    extra_properties.insert(SOURCE_KEY.to_owned(), String::from("standard key"));
+    let extra_properties = HashMap::from([(SOURCE_KEY.to_owned(), String::from("standard key"))]);
     let payload: bytes::Bytes = "testing small payload".as_bytes().into();
     let chunk_size = 500; // full payload in one packet
     let request = put_helper(dime, payload, chunk_size, extra_properties, Vec::default());
+
     let mut os_client = get_object_client(config.url).await;
-    let response = os_client.put(request).await;
+    let response = os_client.put(request).await.map(|r| r.into_inner());
+
     match response {
         Ok(response) => {
-            let response = response.into_inner();
-            let uuid = response.uuid.unwrap().value;
-            let uuid = uuid::Uuid::from_str(uuid.as_str()).unwrap();
+            let uuid = response.uuid();
 
             assert_eq!(response.name, NOT_STORAGE_BACKED);
             assert_eq!(get_public_keys_by_object(&db, &uuid).await.len(), 3);
@@ -1025,7 +1003,7 @@ async fn put_with_double_replication() {
     let docker = clients::Cli::default();
     let (db_port, _postgres) = start_containers(&docker).await;
 
-    let (db, config) = start_test_server(test_config(db_port)).await;
+    let (db, _, _, config) = start_test_server(test_config(db_port), None).await;
 
     let (audience1, signature1) = party_1();
     let (audience2, signature2) = party_2();
@@ -1034,20 +1012,17 @@ async fn put_with_double_replication() {
         vec![audience1.clone(), audience2.clone(), audience3.clone()],
         vec![signature1, signature2, signature3],
     );
-    let mut extra_properties = HashMap::new();
-    extra_properties.insert(SOURCE_KEY.to_owned(), SOURCE_REPLICATION.to_owned());
+    let extra_properties = HashMap::from([(SOURCE_KEY.to_owned(), SOURCE_REPLICATION.to_owned())]);
     let payload: bytes::Bytes = "testing small payload".as_bytes().into();
     let chunk_size = 500; // full payload in one packet
     let request = put_helper(dime, payload, chunk_size, extra_properties, Vec::default());
 
     let mut os_client = get_object_client(config.url).await;
-    let response = os_client.put(request).await;
+    let response = os_client.put(request).await.map(|r| r.into_inner());
 
     match response {
         Ok(response) => {
-            let response = response.into_inner();
-            let uuid = response.uuid.unwrap().value;
-            let uuid = uuid::Uuid::from_str(uuid.as_str()).unwrap();
+            let uuid = response.uuid();
 
             assert_eq!(response.name, NOT_STORAGE_BACKED);
             assert_eq!(get_public_keys_by_object(&db, &uuid).await.len(), 3);
@@ -1082,7 +1057,7 @@ async fn get_object_no_properties() {
     let docker = clients::Cli::default();
     let (db_port, _postgres) = start_containers(&docker).await;
 
-    let (db, config) = start_test_server(test_config(db_port)).await;
+    let (db, _, _, config) = start_test_server(test_config(db_port), None).await;
 
     let (audience, signature) = party_1();
     let dime = generate_dime(vec![audience.clone()], vec![signature]);
@@ -1097,13 +1072,11 @@ async fn get_object_no_properties() {
     );
 
     let mut os_client = get_object_client(config.url).await;
-    let response = os_client.put(request).await;
+    let response = os_client.put(request).await.map(|r| r.into_inner());
 
     match response {
         Ok(response) => {
-            let response = response.into_inner();
-            let uuid = response.uuid.unwrap().value;
-            let uuid = uuid::Uuid::from_str(uuid.as_str()).unwrap();
+            let uuid = response.uuid();
 
             assert_eq!(response.name, NOT_STORAGE_BACKED);
             assert_eq!(delete_properties(&db, &uuid).await, 1);

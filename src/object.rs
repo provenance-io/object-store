@@ -353,15 +353,16 @@ impl ObjectService for ObjectGrpc {
         tokio::spawn(async move {
             let _ = &object;
             // send multi stream header
-            let mut metadata = HashMap::new();
-            metadata.insert(
+            let metadata = HashMap::from([(
                 consts::CREATED_BY_HEADER.to_owned(),
                 uuid::Uuid::nil().as_hyphenated().to_string(),
-            );
+            )]);
+
             let header = MultiStreamHeader {
                 stream_count: 1,
                 metadata,
             };
+
             let msg = ChunkBidi {
                 r#impl: Some(MultiStreamHeaderEnum(header)),
             };

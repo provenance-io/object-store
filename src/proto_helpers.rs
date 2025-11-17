@@ -4,28 +4,30 @@ use base64::{DecodeError, Engine};
 use crate::consts;
 use core::result::Result;
 use std::collections::HashMap;
+use std::str::FromStr;
 
 use crate::pb::chunk::Impl::{Data, End, Value};
 use crate::pb::chunk_bidi::Impl::{Chunk as ChunkEnum, MultiStreamHeader as MultiStreamHeaderEnum};
 use crate::pb::{public_key::Key, MultiStreamHeader, PublicKey};
-use crate::pb::{Audience, Chunk, ChunkBidi, ChunkEnd, StreamHeader};
+use crate::pb::{Audience, Chunk, ChunkBidi, ChunkEnd, ObjectResponse, StreamHeader};
 
 pub fn create_multi_stream_header(
     uuid: uuid::Uuid,
     stream_count: i32,
     is_replication: bool,
 ) -> ChunkBidi {
-    let mut metadata = HashMap::new();
-    metadata.insert(
+    let mut metadata = HashMap::from([(
         consts::CREATED_BY_HEADER.to_owned(),
         uuid.as_hyphenated().to_string(),
-    );
+    )]);
+
     if is_replication {
         metadata.insert(
             consts::SOURCE_KEY.to_owned(),
             consts::SOURCE_REPLICATION.to_owned(),
         );
     }
+
     let header = MultiStreamHeader {
         stream_count,
         metadata,
@@ -41,6 +43,7 @@ pub fn create_stream_header_field(key: String, value: Vec<u8>) -> ChunkBidi {
         name: key,
         content_length: 0,
     };
+
     let value_chunk = Chunk {
         header: Some(header),
         r#impl: Some(Value(value)),
@@ -88,6 +91,18 @@ impl AudienceUtil for Audience {
     }
     fn public_key_decoded(&self) -> Vec<u8> {
         BASE64_STANDARD.decode(&self.public_key).unwrap()
+    }
+}
+
+pub trait ObjectResponseUtil {
+    fn uuid(&self) -> uuid::Uuid;
+}
+impl ObjectResponseUtil for ObjectResponse {
+    fn uuid(&self) -> uuid::Uuid {
+        self.uuid
+            .as_ref()
+            .map(|uuid| uuid::Uuid::from_str(uuid.value.as_str()).unwrap())
+            .unwrap()
     }
 }
 

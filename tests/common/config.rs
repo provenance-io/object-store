@@ -33,3 +33,24 @@ pub fn test_config(db_port: u16) -> Config {
         health_service_enabled: false,
     }
 }
+
+pub fn test_config_replication(db_port: u16) -> Config {
+    Config {
+        replication_enabled: true,
+        replication_batch_size: 2,
+        dd_config: None,
+        backoff_min_wait: 5,
+        backoff_max_wait: 5,
+        ..test_config(db_port)
+    }
+}
+
+pub fn test_config_no_replication(db_port: u16) -> Config {
+    Config {
+        replication_enabled: false,
+        dd_config: None,
+        backoff_min_wait: 5,
+        backoff_max_wait: 5,
+        ..test_config(db_port)
+    }
+}
