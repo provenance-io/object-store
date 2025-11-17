@@ -44,4 +44,4 @@ tonic-build = "0.6"
 
 [dev-dependencies]
 testcontainers = "0.14"
-tokio-stream = {version = "0.1", features=["net"]}
+tokio-stream = { version = "0.1", features=["net"] }
