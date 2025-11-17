@@ -494,8 +494,6 @@ pub async fn replicate_iteration(inner: &mut ReplicationState, client_cache: &mu
         }
     }
 
-    // TODO: consider using FuturesUnordered instead of join_all
-
     for result in futures::future::join_all(futures).await {
         let (client, url) = match result {
             Ok(ReplicationOk {
