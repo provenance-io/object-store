@@ -60,12 +60,12 @@ pub fn party_3() -> (Audience, Signature) {
     )
 }
 
-pub fn generate_dime(audience: Vec<Audience>, signatures: Vec<Signature>) -> Dime {
+pub fn generate_dime(audiences: Vec<Audience>, signatures: Vec<Signature>) -> Dime {
     let proto = DimeProto {
         uuid: None,
-        owner: Some(audience.first().unwrap().clone()),
+        owner: Some(audiences.first().unwrap().clone()),
         metadata: HashMap::default(),
-        audience,
+        audience: audiences,
         payload: Vec::default(),
         audit_fields: None,
     };

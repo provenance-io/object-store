@@ -20,6 +20,7 @@ use crate::common::containers::start_containers;
 use crate::common::data::{generate_dime, party_1, party_2, party_3, test_public_key};
 use crate::common::{hash, put_helper, start_test_server};
 
+/// Get count of ALL objects
 async fn get_object_count(db: &PgPool) -> i64 {
     let row: (i64,) = sqlx::query_as("SELECT count(*) as count FROM object")
         .fetch_one(db)

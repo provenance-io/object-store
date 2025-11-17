@@ -23,12 +23,17 @@ pub struct Config {
     pub db_password: String,
     pub db_database: String,
     pub db_schema: String,
+    /// One of: `file_system`, `google_cloud`
     pub storage_type: String,
+    /// Only applicable for `[Config::storage_type] == "google_cloud"`
     pub storage_base_url: Option<String>,
     pub storage_base_path: String,
+    /// Objects with size, in bytes, below this threshold will be stored in database.
+    /// Larger objects will be in configured storage
     pub storage_threshold: u32,
     pub replication_enabled: bool,
     pub replication_batch_size: i32,
+    /// If None, trace middleware [MinitraceGrpcMiddlewareLayer][crate::middleware::MinitraceGrpcMiddlewareLayer] disabled
     pub dd_config: Option<DatadogConfig>,
     pub backoff_min_wait: i64,
     pub backoff_max_wait: i64,

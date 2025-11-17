@@ -1,5 +1,14 @@
 use object_store::config::{Config, DatadogConfig};
 
+/// Builds a default config suitable for most tests.
+///
+/// Customize further in a test with struct update syntax:
+/// ```no_run
+/// Config {
+///   health_service_enabled: true,
+///   ..test_config(5432)
+/// }
+///
 pub fn test_config(db_port: u16) -> Config {
     let dd_config = DatadogConfig {
         agent_host: "127.0.0.1".parse().unwrap(),

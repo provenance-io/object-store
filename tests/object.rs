@@ -27,6 +27,7 @@ use crate::common::{
     get_mailbox_keys_by_object, get_public_keys_by_object, hash, put_helper, start_test_server,
 };
 
+/// Add a public key for [party_1] and [party_2] to cache
 fn add_keys_cache(cache: Arc<Mutex<Cache>>) {
     let mut guard = cache.lock().unwrap();
 

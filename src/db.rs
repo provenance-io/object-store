@@ -4,6 +4,9 @@ use sqlx::{postgres::PgPoolOptions, Error, Executor, PgPool};
 
 use crate::config::Config;
 
+/// 1. Creates [PgPool] with default schema of [Config::db_schema]
+/// 2. Connects to [Config::db_connection_string]
+/// 3. Migrates database
 pub async fn connect_and_migrate(config: &Config) -> Result<Arc<PgPool>, Error> {
     let schema = config.db_schema.clone();
 
