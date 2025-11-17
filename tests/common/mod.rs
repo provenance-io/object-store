@@ -246,6 +246,7 @@ pub async fn start_test_server(
         };
     }
 
+    // TODO: call configure_and_start_server here once it supports using a listener
     tokio::spawn(async move {
         tonic::transport::Server::builder()
             .add_service(MailboxServiceServer::new(context.mailbox_service))
