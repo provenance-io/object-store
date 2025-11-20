@@ -13,6 +13,8 @@ use tokio::sync::mpsc::{Receiver, Sender};
 use tonic::{body::BoxBody, codegen::http::HeaderValue, transport::Body};
 use tower::{Layer, Service};
 
+// TODO add logging in Trace middleware
+
 #[derive(Debug, Clone)]
 pub struct MinitraceGrpcMiddlewareLayer {
     config: Arc<Config>,
@@ -177,13 +179,18 @@ pub async fn report_datadog_traces(
     port: u16,
     service_name: String,
 ) {
-    log::info!("Starting Datadog reporting");
-
     let socket = SocketAddr::new(host, port);
-    let url = format!("http://{}/v0.4/traces", socket);
-    let mut headers = HeaderMap::new();
-    headers.append("Datadog-Meta-Tracer-Version", "v1.27.0".parse().unwrap());
-    headers.append("Content-Type", "application/msgpack".parse().unwrap());
+
+    log::info!("Starting Datadog reporting to agent at {}", socket);
+
+    let headers = {
+        let mut headers = HeaderMap::new();
+        headers.append("Datadog-Meta-Tracer-Version", "v1.27.0".parse().unwrap());
+        headers.append("Content-Type", "application/msgpack".parse().unwrap());
+
+        headers
+    };
+
     let client = reqwest::Client::builder().default_headers(headers).build();
 
     match client {
@@ -202,6 +209,7 @@ pub async fn report_datadog_traces(
 
                 match bytes {
                     Ok(bytes) => {
+                        let url = format!("http://{}/v0.4/traces", socket);
                         let response = client.post(&url).body(bytes).send().await;
 
                         if let Err(error) = response {

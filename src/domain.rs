@@ -2,13 +2,11 @@ use crate::config::Config;
 use crate::datastore::{AuthType, KeyType, Object, PublicKey};
 use crate::pb::public_key_response::Impl::HeaderAuth as HeaderAuthEnumResponse;
 use crate::pb::{
-    public_key::Key, HeaderAuth, ObjectMetadata, ObjectResponse, PublicKey as PublicKeyProto,
-    PublicKeyResponse, Uuid,
+    public_key::Key, HeaderAuth, ObjectMetadata, ObjectResponse, PublicKeyResponse, Uuid,
 };
+use crate::proto_helpers::StringUtil;
 use crate::types::{OsError, Result};
 
-use base64::prelude::BASE64_STANDARD;
-use base64::Engine;
 use prost::Message;
 
 use std::time::SystemTime;
@@ -33,7 +31,7 @@ impl ObjectApiResponse for Object {
             dime_uuid: Some(Uuid {
                 value: self.dime_uuid.as_hyphenated().to_string(),
             }),
-            hash: BASE64_STANDARD.decode(&self.hash)?,
+            hash: self.hash.decoded()?,
             uri: format!("object://{}/{}", &config.uri_host, &self.hash),
             bucket: config.storage_base_path.clone(),
             name: self.name.clone(),
@@ -53,8 +51,9 @@ pub trait PublicKeyApiResponse {
 
 impl PublicKeyApiResponse for PublicKey {
     fn to_response(self) -> Result<PublicKeyResponse> {
-        let key_bytes: Vec<u8> = BASE64_STANDARD
-            .decode(&self.public_key)
+        let key_bytes: Vec<u8> = self
+            .public_key
+            .decoded()
             .map_err(|err| sqlx::Error::Decode(Box::new(err)))?;
         let public_key = match self.public_key_type {
             KeyType::Secp256k1 => Key::Secp256k1(key_bytes),
@@ -95,9 +94,7 @@ impl PublicKeyApiResponse for PublicKey {
             uuid: Some(Uuid {
                 value: self.uuid.as_hyphenated().to_string(),
             }),
-            public_key: Some(PublicKeyProto {
-                key: Some(public_key),
-            }),
+            public_key: Some(public_key.into()),
             url: self.url,
             r#impl,
             metadata,

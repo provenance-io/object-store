@@ -44,7 +44,6 @@ tonic-build v0.6.2
 ```
 ### Dev Dependencies
 ```
-serial_test v0.6.0
 testcontainers v0.14.0
 ```
 
@@ -68,7 +67,6 @@ prost              0.9.0    ---      0.14.1   Normal
 prost-types        0.9.0    ---      0.14.1   Normal
 reqwest            0.11.8   0.11.27  0.12.24  Normal
 serde_json         1.0.91   1.0.145  1.0.145  Normal
-serial_test        0.6.0    3.2.0    3.2.0    Development
 sqlx               0.6.3    0.6.3    0.8.6    Normal
 testcontainers     0.14.0   ---      0.25.2   Development
 tokio              1.19.2   1.48.0   1.48.0   Normal
@@ -102,10 +100,4 @@ tonic-health       0.5.0    ---      0.14.2   Normal
 tower              0.4.13   ---      0.5.2    Normal
 url                2.3.1    2.5.7    2.5.7    Normal
 uuid               1.2.2    1.18.1   1.18.1   Normal
-```
-#### Major
-```
-Name               Project  Compat   Latest   Kind
-----               -------  ------   ------   ----
-serial_test        0.6.0    3.2.0    3.2.0    Development
 ```

@@ -17,7 +17,7 @@ const MAGIC_BYTES: u32 = 0x44494D45;
 const VERSION: u16 = 1;
 
 #[derive(Debug, PartialEq, Deserialize, Serialize)]
-#[cfg_attr(test, derive(Clone))]
+#[cfg_attr(any(test, debug_assertions), derive(Clone))]
 pub struct Signature {
     pub signature: String,
     #[serde(rename(serialize = "publicKey", deserialize = "publicKey"))]
@@ -25,7 +25,7 @@ pub struct Signature {
 }
 
 #[derive(Debug, PartialEq)]
-#[cfg_attr(test, derive(Clone))]
+#[cfg_attr(any(test, debug_assertions), derive(Clone))]
 pub struct Dime {
     pub uuid: Uuid,
     pub uri: String,

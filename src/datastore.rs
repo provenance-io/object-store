@@ -1,5 +1,3 @@
-use std::convert::TryFrom;
-
 use crate::authorization::{Authorization, HeaderAuth, NoAuthorization};
 use crate::cache::PublicKeyState;
 use crate::consts::*;
@@ -7,16 +5,16 @@ use crate::dime::Dime;
 use crate::domain::DimeProperties;
 use crate::pb::public_key_request::Impl::HeaderAuth as HeaderAuthEnumRequest;
 use crate::pb::{public_key::Key, PublicKeyRequest};
+use crate::proto_helpers::VecUtil;
 use crate::types::{OsError, Result};
+use prost::Message;
+use std::convert::TryFrom;
 
-use base64::prelude::BASE64_STANDARD;
-use base64::Engine;
 use bytes::{Bytes, BytesMut};
 use chrono::prelude::*;
 use futures_util::TryStreamExt;
 use linked_hash_map::LinkedHashMap;
 use minitrace_macro::trace;
-use prost::Message;
 use sqlx::postgres::{PgConnection, PgPool, PgQueryResult};
 use sqlx::Acquire;
 use sqlx::{FromRow, Row};
@@ -126,6 +124,7 @@ pub enum KeyType {
 #[derive(Clone, Debug)]
 pub struct PublicKey {
     pub uuid: uuid::Uuid,
+    /// Encoded
     pub public_key: String,
     pub public_key_type: KeyType,
     pub url: String,
@@ -165,7 +164,7 @@ impl TryFrom<PublicKeyRequest> for PublicKey {
 
     fn try_from(request: PublicKeyRequest) -> Result<Self> {
         let (public_key_type, public_key) = match request.public_key.unwrap().key.unwrap() {
-            Key::Secp256k1(data) => (KeyType::Secp256k1, BASE64_STANDARD.encode(data)),
+            Key::Secp256k1(data) => (KeyType::Secp256k1, data.encoded()),
         };
         let metadata = if let Some(metadata) = request.metadata {
             let mut buffer = BytesMut::with_capacity(metadata.encoded_len());
@@ -182,7 +181,7 @@ impl TryFrom<PublicKeyRequest> for PublicKey {
             None => (None, None),
         };
 
-        Ok(PublicKey {
+        Ok(Self {
             uuid: uuid::Uuid::new_v4(),
             public_key,
             public_key_type,
@@ -208,7 +207,7 @@ impl sqlx::FromRow<'_, sqlx::postgres::PgRow> for PublicKey {
         let created_at = row.try_get("created_at")?;
         let updated_at = row.try_get("updated_at")?;
 
-        Ok(PublicKey {
+        Ok(Self {
             uuid,
             public_key,
             public_key_type,
@@ -335,6 +334,9 @@ SELECT * FROM UNNEST($1, $2, $3)
     Ok(())
 }
 
+/// Set replicated_at to now
+///
+/// Returns OK(true) if one or more rows were updated
 #[trace("datastore::ack_object_replication")]
 pub async fn ack_object_replication(db: &PgPool, uuid: &uuid::Uuid) -> Result<bool> {
     let query_str = r#"
@@ -351,6 +353,9 @@ UPDATE object_replication SET replicated_at = $1 WHERE uuid = $2
     Ok(rows_affected > 0)
 }
 
+/// Set replicated_at to now for all objects not yet replicated for public_key
+///
+/// Returns OK(u64) with update count
 #[trace("datastore::reap_object_replication")]
 pub async fn reap_object_replication(db: &PgPool, public_key: &str) -> Result<u64> {
     let query_str = r#"
@@ -368,13 +373,13 @@ UPDATE object_replication SET replicated_at = $1
     Ok(rows_affected)
 }
 
+/// Returns a [Result] of a [Vec] of (uuid, object_uuid) tuples for the public key that have NOT been replicated
 #[trace("datastore::replication_object_uuids")]
 pub async fn replication_object_uuids(
     db: &PgPool,
     public_key: &str,
     limit: i32,
 ) -> Result<Vec<(uuid::Uuid, uuid::Uuid)>> {
-    let mut result = Vec::new();
     let query_str = r#"
 SELECT uuid, object_uuid FROM object_replication
   WHERE public_key = $1 AND replicated_at IS NULL
@@ -386,11 +391,17 @@ SELECT uuid, object_uuid FROM object_replication
         .bind(limit)
         .fetch(db);
 
-    while let Some(row) = query_result.try_next().await? {
-        let uuid = row.try_get("uuid")?;
-        let object_uuid = row.try_get("object_uuid")?;
-        result.push((uuid, object_uuid));
-    }
+    let result = {
+        let mut result = Vec::new();
+
+        while let Some(row) = query_result.try_next().await? {
+            let uuid = row.try_get("uuid")?;
+            let object_uuid = row.try_get("object_uuid")?;
+            result.push((uuid, object_uuid));
+        }
+
+        result
+    };
 
     Ok(result)
 }

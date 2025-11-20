@@ -1,5 +1,6 @@
 use std::env;
 use std::net::{IpAddr, SocketAddr};
+use std::sync::Arc;
 
 use percent_encoding::NON_ALPHANUMERIC;
 
@@ -22,18 +23,24 @@ pub struct Config {
     pub db_password: String,
     pub db_database: String,
     pub db_schema: String,
+    /// One of: `file_system`, `google_cloud`
     pub storage_type: String,
+    /// Only applicable for `[Config::storage_type] == "google_cloud"`
     pub storage_base_url: Option<String>,
     pub storage_base_path: String,
+    /// Objects with size, in bytes, below this threshold will be stored in database.
+    /// Larger objects will be in configured storage
     pub storage_threshold: u32,
     pub replication_enabled: bool,
     pub replication_batch_size: i32,
+    /// If None, trace middleware [MinitraceGrpcMiddlewareLayer][crate::middleware::MinitraceGrpcMiddlewareLayer] disabled
     pub dd_config: Option<DatadogConfig>,
     pub backoff_min_wait: i64,
     pub backoff_max_wait: i64,
     pub logging_threshold_seconds: f64,
     pub trace_header: String,
     pub user_auth_enabled: bool,
+    pub health_service_enabled: bool,
 }
 
 const BASE_SPAN_TAGS: [(&str, &str); 3] = [
@@ -43,7 +50,7 @@ const BASE_SPAN_TAGS: [(&str, &str); 3] = [
 ];
 
 impl Config {
-    pub fn new() -> Self {
+    pub fn from_env() -> Arc<Self> {
         let url = env::var("OS_URL").expect("OS_URL not set");
         let uri_host = env::var("URI_HOST").expect("URI_HOST not set");
         let port: u16 = env::var("OS_PORT")
@@ -78,6 +85,7 @@ impl Config {
             .unwrap_or("10".to_owned())
             .parse()
             .expect("REPLICATION_BATCH_SIZE could not be parsed into a u32");
+
         let dd_agent_enabled: bool = env::var("DD_AGENT_ENABLED")
             .unwrap_or("false".to_owned())
             .parse()
@@ -133,8 +141,12 @@ impl Config {
             .unwrap_or("false".to_owned())
             .parse()
             .expect("USER_AUTH_ENABLED could not be parsed into a bool");
+        let health_service_enabled: bool = env::var("HEALTH_SERVICE_ENABLED")
+            .unwrap_or("true".to_owned())
+            .parse()
+            .expect("HEALTH_SERVICE_ENABLED could not be parsed into a bool");
 
-        Self {
+        Arc::new(Self {
             url,
             uri_host,
             db_connection_pool_size,
@@ -156,7 +168,8 @@ impl Config {
             logging_threshold_seconds,
             trace_header,
             user_auth_enabled,
-        }
+            health_service_enabled,
+        })
     }
 
     pub fn db_connection_string(&self) -> String {
