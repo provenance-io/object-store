@@ -40,7 +40,7 @@ impl MailboxGrpc {
 impl MailboxService for MailboxGrpc {
     type GetStream = tokio_stream::wrappers::ReceiverStream<GrpcResult<MailPayload>>;
 
-    #[trace("mailbox::get")]
+    #[trace(name = "mailbox::get")]
     async fn get(&self, request: Request<GetRequest>) -> GrpcResult<Response<Self::GetStream>> {
         let metadata = request.metadata().clone();
         let request = request.into_inner();
@@ -114,7 +114,7 @@ impl MailboxService for MailboxGrpc {
         )))
     }
 
-    #[trace("mailbox::ack")]
+    #[trace(name = "mailbox::ack")]
     async fn ack(&self, request: Request<AckRequest>) -> GrpcResult<Response<()>> {
         let metadata = request.metadata().clone();
         let request = request.into_inner();

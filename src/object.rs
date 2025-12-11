@@ -62,7 +62,7 @@ impl ObjectGrpc {
 
 #[tonic::async_trait]
 impl ObjectService for ObjectGrpc {
-    #[trace("object::put")]
+    #[trace(name = "object::put")]
     async fn put(
         &self,
         request: Request<Streaming<ChunkBidi>>,
@@ -315,7 +315,7 @@ impl ObjectService for ObjectGrpc {
 
     type GetStream = ReceiverStream<GrpcResult<ChunkBidi>>;
 
-    #[trace("object::get")]
+    #[trace(name = "object::get")]
     async fn get(&self, request: Request<HashRequest>) -> GrpcResult<Response<Self::GetStream>> {
         let metadata = request.metadata().clone();
         let request = request.into_inner();

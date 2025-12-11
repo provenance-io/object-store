@@ -30,7 +30,7 @@ impl GoogleCloud {
 
 #[async_trait::async_trait]
 impl Storage for GoogleCloud {
-    #[trace("google_cloud::store")]
+    #[trace(name = "google_cloud::store")]
     async fn store(&self, path: &StoragePath, content_length: u64, data: &[u8]) -> Result<()> {
         if let Err(e) = self.validate_content_length(path, content_length, data) {
             log::warn!("{:?}", e);
@@ -50,7 +50,7 @@ impl Storage for GoogleCloud {
         Ok(())
     }
 
-    #[trace("google_cloud::fetch")]
+    #[trace(name = "google_cloud::fetch")]
     async fn fetch(&self, path: &StoragePath, content_length: u64) -> Result<Vec<u8>> {
         let data = self
             .client

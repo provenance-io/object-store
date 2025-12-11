@@ -221,7 +221,7 @@ impl sqlx::FromRow<'_, sqlx::postgres::PgRow> for PublicKey {
     }
 }
 
-#[trace("datastore::get_public_key_object_uuid")]
+#[trace(name = "datastore::get_public_key_object_uuid")]
 pub async fn get_public_key_object_uuid(
     db: &PgPool,
     hash: &str,
@@ -244,7 +244,7 @@ pub async fn get_public_key_object_uuid(
     }
 }
 
-#[trace("datastore::get_object_by_unique_hash")]
+#[trace(name = "datastore::get_object_by_unique_hash")]
 async fn get_object_by_unique_hash(db: &PgPool, unique_hash: &str) -> Result<Object> {
     let query_str = "SELECT * FROM object WHERE md5(unique_hash) = md5($1)";
     let result = sqlx::query_as::<_, Object>(query_str)
@@ -255,7 +255,7 @@ async fn get_object_by_unique_hash(db: &PgPool, unique_hash: &str) -> Result<Obj
     Ok(result)
 }
 
-#[trace("datastore::get_object_by_uuid")]
+#[trace(name = "datastore::get_object_by_uuid")]
 pub async fn get_object_by_uuid(db: &PgPool, uuid: &uuid::Uuid) -> Result<Object> {
     let query_str = "SELECT * FROM object WHERE uuid = $1";
     let result = sqlx::query_as::<_, Object>(query_str)
@@ -266,7 +266,7 @@ pub async fn get_object_by_uuid(db: &PgPool, uuid: &uuid::Uuid) -> Result<Object
     Ok(result)
 }
 
-#[trace("datastore::maybe_put_replication_objects")]
+#[trace(name = "datastore::maybe_put_replication_objects")]
 async fn maybe_put_replication_objects(
     conn: &mut PgConnection,
     object_uuid: uuid::Uuid,
@@ -302,7 +302,7 @@ SELECT * FROM UNNEST($1, $2, $3)
     Ok(())
 }
 
-#[trace("datastore::put_object_public_keys")]
+#[trace(name = "datastore::put_object_public_keys")]
 async fn put_object_public_keys(
     conn: &mut PgConnection,
     object_uuid: uuid::Uuid,
@@ -337,7 +337,7 @@ SELECT * FROM UNNEST($1, $2, $3)
 /// Set replicated_at to now
 ///
 /// Returns OK(true) if one or more rows were updated
-#[trace("datastore::ack_object_replication")]
+#[trace(name = "datastore::ack_object_replication")]
 pub async fn ack_object_replication(db: &PgPool, uuid: &uuid::Uuid) -> Result<bool> {
     let query_str = r#"
 UPDATE object_replication SET replicated_at = $1 WHERE uuid = $2
@@ -356,7 +356,7 @@ UPDATE object_replication SET replicated_at = $1 WHERE uuid = $2
 /// Set replicated_at to now for all objects not yet replicated for public_key
 ///
 /// Returns OK(u64) with update count
-#[trace("datastore::reap_object_replication")]
+#[trace(name = "datastore::reap_object_replication")]
 pub async fn reap_object_replication(db: &PgPool, public_key: &str) -> Result<u64> {
     let query_str = r#"
 UPDATE object_replication SET replicated_at = $1
@@ -374,7 +374,7 @@ UPDATE object_replication SET replicated_at = $1
 }
 
 /// Returns a [Result] of a [Vec] of (uuid, object_uuid) tuples for the public key that have NOT been replicated
-#[trace("datastore::replication_object_uuids")]
+#[trace(name = "datastore::replication_object_uuids")]
 pub async fn replication_object_uuids(
     db: &PgPool,
     public_key: &str,
@@ -406,7 +406,7 @@ SELECT uuid, object_uuid FROM object_replication
     Ok(result)
 }
 
-#[trace("datastore::stream_mailbox_public_keys")]
+#[trace(name = "datastore::stream_mailbox_public_keys")]
 pub async fn stream_mailbox_public_keys(
     db: &PgPool,
     public_key: &str,
@@ -471,7 +471,7 @@ SELECT mpk.uuid mpk_uuid, o.uuid, o.dime_uuid, hash, unique_hash, content_length
 //     rx
 // }
 
-#[trace("datastore::maybe_put_mailbox_public_keys")]
+#[trace(name = "datastore::maybe_put_mailbox_public_keys")]
 async fn maybe_put_mailbox_public_keys(
     conn: &mut PgConnection,
     object_uuid: uuid::Uuid,
@@ -512,7 +512,7 @@ SELECT * FROM UNNEST($1, $2, $3, $4)
     Ok(())
 }
 
-#[trace("datastore::ack_mailbox_public_key")]
+#[trace(name = "datastore::ack_mailbox_public_key")]
 pub async fn ack_mailbox_public_key(
     db: &PgPool,
     uuid: &uuid::Uuid,
@@ -546,7 +546,7 @@ UPDATE mailbox_public_key SET acked_at = $1 WHERE uuid = $2
     Ok(rows_affected > 0)
 }
 
-#[trace("datastore::put_object")]
+#[trace(name = "datastore::put_object")]
 pub async fn put_object(
     db: &PgPool,
     dime: &Dime,
@@ -622,7 +622,7 @@ ON CONFLICT DO NOTHING
     Ok(object)
 }
 
-#[trace("datastore::update_public_key")]
+#[trace(name = "datastore::update_public_key")]
 pub async fn update_public_key(db: &PgPool, public_key: PublicKey) -> Result<PublicKey> {
     // TODO change to compile time validated
     let record = sqlx::query_as(
@@ -642,7 +642,7 @@ RETURNING uuid, public_key, public_key_type, auth_type, auth_data, url, metadata
     Ok(record)
 }
 
-#[trace("datastore::add_public_key")]
+#[trace(name = "datastore::add_public_key")]
 pub async fn add_public_key(db: &PgPool, public_key: PublicKey) -> Result<PublicKey> {
     let record = sqlx::query_as(
         r#"
@@ -673,7 +673,7 @@ RETURNING uuid, public_key, public_key_type, auth_type, auth_data, url, metadata
     }
 }
 
-#[trace("datastore::get_all_public_keys")]
+#[trace(name = "datastore::get_all_public_keys")]
 pub async fn get_all_public_keys(db: &PgPool) -> Result<Vec<PublicKey>> {
     let mut result = Vec::new();
     let query_str = "SELECT uuid, public_key, public_key_type, url, metadata, auth_type, auth_data, created_at, updated_at FROM public_key";
@@ -687,7 +687,7 @@ pub async fn get_all_public_keys(db: &PgPool) -> Result<Vec<PublicKey>> {
     Ok(result)
 }
 
-#[trace("datastore::health_check")]
+#[trace(name = "datastore::health_check")]
 pub async fn health_check(db: &PgPool) -> Result<()> {
     sqlx::query("SELECT 1").fetch_one(db).await?;
 
