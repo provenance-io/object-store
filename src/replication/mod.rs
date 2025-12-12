@@ -247,13 +247,12 @@ impl<T> CachedClient<T> {
     pub fn take(&mut self) -> Option<T> {
         match self.state {
             ClientState::Present(_) => {
-                if let ClientState::Present(client) =
-                    mem::replace(&mut self.state, ClientState::Using)
-                {
+                match mem::replace(&mut self.state, ClientState::Using)
+                { ClientState::Present(client) => {
                     Some(client)
-                } else {
+                } _ => {
                     None
-                }
+                }}
             }
             _ => None,
         }
