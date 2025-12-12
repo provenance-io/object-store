@@ -1,10 +1,10 @@
 mod common;
 
 use object_store::config::Config;
-use object_store::datastore::{replication_object_uuids, PublicKey};
+use object_store::datastore::{PublicKey, replication_object_uuids};
 use object_store::pb;
 use object_store::proto_helpers::AudienceUtil;
-use object_store::replication::{reap_unknown_keys_iteration, replicate_iteration, ClientCache};
+use object_store::replication::{ClientCache, reap_unknown_keys_iteration, replicate_iteration};
 use object_store::types::Result;
 
 use testcontainers::clients;
@@ -29,6 +29,8 @@ async fn get_object_count(db: &PgPool) -> i64 {
 
     row.0
 }
+
+// TODO some tests started logging debug and info
 
 #[tokio::test]
 async fn client_caching() -> Result<()> {

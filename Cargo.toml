@@ -2,7 +2,7 @@
 name = "object-store"
 version = "0.9.0-beta.0"
 authors = ["Stephen Cirner <scirner@figure.com>"]
-edition = "2021"
+edition = "2024"
 
 [dependencies]
 async-trait = "0.1"
