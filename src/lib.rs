@@ -12,7 +12,7 @@ use crate::{
     public_key::PublicKeyGrpc,
     replication::init_replication,
     server::health::init_health_service,
-    storage::{new_storage, Storage},
+    storage::{Storage, new_storage},
     types::OsError,
 };
 

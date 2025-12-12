@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex};
 use bytes::{BufMut, BytesMut};
 use futures::stream;
 use futures_util::TryStreamExt;
+use object_store::AppContext;
 use object_store::cache::Cache;
 use object_store::config::Config;
 use object_store::consts::{
@@ -25,11 +26,10 @@ use object_store::pb::chunk_bidi::Impl::{
 use object_store::pb::mailbox_service_server::MailboxServiceServer;
 use object_store::pb::object_service_server::ObjectServiceServer;
 use object_store::pb::{
-    chunk::Impl::{Data, End, Value},
     Chunk, ChunkBidi, ChunkEnd, MultiStreamHeader, StreamHeader,
+    chunk::Impl::{Data, End, Value},
 };
 use object_store::replication::ReplicationState;
-use object_store::AppContext;
 use prost::Message;
 use sqlx::{FromRow, PgPool};
 use std::hash::Hasher;

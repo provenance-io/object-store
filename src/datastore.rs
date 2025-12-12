@@ -4,7 +4,7 @@ use crate::consts::*;
 use crate::dime::Dime;
 use crate::domain::DimeProperties;
 use crate::pb::public_key_request::Impl::HeaderAuth as HeaderAuthEnumRequest;
-use crate::pb::{public_key::Key, PublicKeyRequest};
+use crate::pb::{PublicKeyRequest, public_key::Key};
 use crate::proto_helpers::VecUtil;
 use crate::types::{OsError, Result};
 use prost::Message;
@@ -15,8 +15,8 @@ use chrono::prelude::*;
 use fastrace_macro::trace;
 use futures_util::TryStreamExt;
 use linked_hash_map::LinkedHashMap;
-use sqlx::postgres::{PgConnection, PgPool, PgQueryResult};
 use sqlx::Acquire;
+use sqlx::postgres::{PgConnection, PgPool, PgQueryResult};
 use sqlx::{FromRow, Row};
 
 // TODO model public keys like the other objects and don't use grpc types directly

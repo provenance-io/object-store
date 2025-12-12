@@ -2,7 +2,7 @@ use crate::config::Config;
 use crate::datastore::{AuthType, KeyType, Object, PublicKey};
 use crate::pb::public_key_response::Impl::HeaderAuth as HeaderAuthEnumResponse;
 use crate::pb::{
-    public_key::Key, HeaderAuth, ObjectMetadata, ObjectResponse, PublicKeyResponse, Uuid,
+    HeaderAuth, ObjectMetadata, ObjectResponse, PublicKeyResponse, Uuid, public_key::Key,
 };
 use crate::proto_helpers::StringUtil;
 use crate::types::{OsError, Result};

@@ -2,13 +2,13 @@ mod common;
 
 use std::sync::Arc;
 
+use object_store::AppContext;
+use object_store::pb::PublicKeyRequest;
 use object_store::pb::public_key_request::Impl::HeaderAuth as HeaderAuthEnumRequest;
 use object_store::pb::public_key_response::Impl::HeaderAuth as HeaderAuthEnumResponse;
 use object_store::pb::public_key_service_server::PublicKeyService;
-use object_store::pb::PublicKeyRequest;
-use object_store::pb::{public_key::Key, HeaderAuth, PublicKey};
+use object_store::pb::{HeaderAuth, PublicKey, public_key::Key};
 use object_store::proto_helpers::VecUtil;
-use object_store::AppContext;
 use testcontainers::clients;
 use tonic::Request;
 
@@ -320,9 +320,11 @@ async fn adds_empty_urls_to_local_cache() {
 
     let cache = context.cache.lock().unwrap();
     assert_eq!(cache.public_keys.len(), 1);
-    assert!(cache
-        .public_keys
-        .contains_key(&vec![1u8, 2u8, 3u8].encoded()));
+    assert!(
+        cache
+            .public_keys
+            .contains_key(&vec![1u8, 2u8, 3u8].encoded())
+    );
     assert_eq!(
         cache
             .public_keys
@@ -357,9 +359,11 @@ async fn adds_nonempty_urls_to_remote_cache() {
 
     let cache = context.cache.lock().unwrap();
     assert_eq!(cache.public_keys.len(), 1);
-    assert!(cache
-        .public_keys
-        .contains_key(&vec![1u8, 2u8, 3u8].encoded()));
+    assert!(
+        cache
+            .public_keys
+            .contains_key(&vec![1u8, 2u8, 3u8].encoded())
+    );
     assert_ne!(
         cache
             .public_keys

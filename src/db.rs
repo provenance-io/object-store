@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use fastrace::{future::FutureExt, prelude::SpanContext, Span};
-use sqlx::{postgres::PgPoolOptions, Error, Executor, PgPool};
+use fastrace::{Span, future::FutureExt, prelude::SpanContext};
+use sqlx::{Error, Executor, PgPool, postgres::PgPoolOptions};
 
 use crate::config::Config;
 

@@ -4,10 +4,12 @@ use fastrace::prelude::*;
 use sqlx::PgPool;
 use tonic_health::proto::health_server::{Health, HealthServer};
 
-use crate::{datastore, AppContext};
+use crate::{AppContext, datastore};
 
 /// If [crate::Config::health_service_enabled] is true, initializes [tonic_health::server::HealthReporter] and starts periodic health check [health_status]
-pub async fn init_health_service(context: &AppContext) -> Option<HealthServer<impl Health + use<>>> {
+pub async fn init_health_service(
+    context: &AppContext,
+) -> Option<HealthServer<impl Health + use<>>> {
     if context.config.health_service_enabled {
         log::info!("Starting health service...");
 
@@ -45,17 +47,20 @@ async fn start_database_health_check(
 }
 
 async fn health_check_iteration(reporter: &mut tonic_health::server::HealthReporter, db: &PgPool) {
-    match datastore::health_check(db).await { Err(err) => {
-        log::warn!("Failed to health check the database connection {:?}", err);
+    match datastore::health_check(db).await {
+        Err(err) => {
+            log::warn!("Failed to health check the database connection {:?}", err);
 
-        reporter
-            .set_service_status("", tonic_health::ServingStatus::NotServing)
-            .await;
-    } _ => {
-        log::trace!("Database health check success!");
+            reporter
+                .set_service_status("", tonic_health::ServingStatus::NotServing)
+                .await;
+        }
+        _ => {
+            log::trace!("Database health check success!");
 
-        reporter
-            .set_service_status("", tonic_health::ServingStatus::Serving)
-            .await;
-    }}
+            reporter
+                .set_service_status("", tonic_health::ServingStatus::Serving)
+                .await;
+        }
+    }
 }

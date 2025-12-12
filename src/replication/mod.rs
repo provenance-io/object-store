@@ -3,21 +3,21 @@ mod error;
 use error::{ReplicationError, Result};
 use fastrace::future::FutureExt;
 use fastrace::prelude::SpanContext;
-use fastrace::{func_path, trace, Span};
+use fastrace::{Span, func_path, trace};
 
+use crate::AppContext;
 use crate::datastore;
 use crate::pb::object_service_client::ObjectServiceClient;
 use crate::proto_helpers::{
     create_data_chunk, create_multi_stream_header, create_stream_end, create_stream_header_field,
 };
 use crate::storage::{Storage, StoragePath};
-use crate::AppContext;
 use crate::{cache::Cache, config::Config, consts, types::OsError};
 
 use bytes::Bytes;
 use std::cmp::min;
-use std::collections::hash_map::Entry;
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use std::mem;
 use std::ops::{Deref, DerefMut};
 use std::sync::{Arc, Mutex};
@@ -246,14 +246,10 @@ impl<T> CachedClient<T> {
 
     pub fn take(&mut self) -> Option<T> {
         match self.state {
-            ClientState::Present(_) => {
-                match mem::replace(&mut self.state, ClientState::Using)
-                { ClientState::Present(client) => {
-                    Some(client)
-                } _ => {
-                    None
-                }}
-            }
+            ClientState::Present(_) => match mem::replace(&mut self.state, ClientState::Using) {
+                ClientState::Present(client) => Some(client),
+                _ => None,
+            },
             _ => None,
         }
     }
@@ -398,7 +394,7 @@ async fn replicate_public_key(
                         public_key,
                         url.to_owned(),
                         client,
-                    ))
+                    ));
                 }
             };
 
@@ -436,7 +432,7 @@ async fn replicate_public_key(
                 match datastore::ack_object_replication(&inner.db_pool, uuid).await {
                     Ok(data) => data,
                     Err(e) => {
-                        return Err(ReplicationErr::new(e, public_key, url.to_owned(), client))
+                        return Err(ReplicationErr::new(e, public_key, url.to_owned(), client));
                     }
                 };
             }

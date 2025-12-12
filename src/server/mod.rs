@@ -6,6 +6,7 @@ use std::sync::Arc;
 use tonic::transport::{Error, Server};
 
 use crate::{
+    AppContext,
     config::Config,
     middleware::{LoggingMiddlewareLayer, MinitraceGrpcMiddlewareLayer},
     pb::{
@@ -13,7 +14,6 @@ use crate::{
         public_key_service_server::PublicKeyServiceServer,
     },
     server::trace::start_trace_reporter,
-    AppContext,
 };
 
 fn base_server(config: Arc<Config>) -> Server<LoggingMiddlewareLayer> {

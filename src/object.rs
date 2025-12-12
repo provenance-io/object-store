@@ -3,18 +3,18 @@ use crate::datastore;
 use crate::datastore::get_object_by_uuid;
 use crate::datastore::get_public_key_object_uuid;
 use crate::domain::{DimeProperties, ObjectApiResponse};
+use crate::pb::MultiStreamHeader;
 use crate::pb::chunk::Impl::{Data, End, Value};
 use crate::pb::chunk_bidi::Impl::{Chunk as ChunkEnum, MultiStreamHeader as MultiStreamHeaderEnum};
 use crate::pb::object_service_server::ObjectService;
-use crate::pb::MultiStreamHeader;
 use crate::pb::{Chunk, ChunkBidi, HashRequest, ObjectResponse, StreamHeader};
-use crate::proto_helpers::create_stream_end;
 use crate::proto_helpers::VecUtil;
+use crate::proto_helpers::create_stream_end;
 use crate::types::{GrpcResult, OsError};
 use crate::{
     cache::{Cache, PublicKeyState},
     config::Config,
-    dime::{format_dime_bytes, Dime, Signature},
+    dime::{Dime, Signature, format_dime_bytes},
     storage::{Storage, StoragePath},
 };
 
@@ -110,7 +110,7 @@ impl ObjectService for ObjectGrpc {
             _ => {
                 return Err(Status::invalid_argument(
                     "Multipart upload must start with a multi stream header",
-                ))
+                ));
             }
         };
 
@@ -128,7 +128,7 @@ impl ObjectService for ObjectGrpc {
                     None => {
                         return Err(Status::invalid_argument(
                             "Multi stream must start with a header",
-                        ))
+                        ));
                     }
                 };
 
@@ -137,17 +137,17 @@ impl ObjectService for ObjectGrpc {
                     Some(Value(_)) => {
                         return Err(Status::invalid_argument(
                             "Chunk header must have data and not a value",
-                        ))
+                        ));
                     }
                     Some(End(_)) => {
                         return Err(Status::invalid_argument(
                             "Chunk header must have data and not an end of chunk",
-                        ))
+                        ));
                     }
                     None => {
                         return Err(Status::invalid_argument(
                             "Chunk header must have data and not an empty impl",
-                        ))
+                        ));
                     }
                 }
             }
@@ -186,7 +186,7 @@ impl ObjectService for ObjectGrpc {
                     None => {
                         return Err(Status::invalid_argument(
                             "Chunk header must have data and not an empty impl",
-                        ))
+                        ));
                     }
                 },
                 _ => return Err(Status::invalid_argument("Non chunk detected in stream")),
@@ -237,7 +237,9 @@ impl ObjectService for ObjectGrpc {
                     if let Some(cached_key) = cache.public_keys.get(&owner_public_key) {
                         cached_key.auth()?.authorize(&metadata)
                     } else {
-                        Err(Status::internal("this should not happen - key was resolved to Local state and then could not be fetched"))
+                        Err(Status::internal(
+                            "this should not happen - key was resolved to Local state and then could not be fetched",
+                        ))
                     }
                 }
                 PublicKeyState::Remote => Err(Status::permission_denied(format!(
@@ -331,7 +333,9 @@ impl ObjectService for ObjectGrpc {
                     if let Some(cached_key) = cache.public_keys.get(&public_key) {
                         cached_key.auth()?.authorize(&metadata)
                     } else {
-                        Err(Status::internal("this should not happen - key was resolved to Local state and then could not be fetched"))
+                        Err(Status::internal(
+                            "this should not happen - key was resolved to Local state and then could not be fetched",
+                        ))
                     }
                 }
                 PublicKeyState::Remote => Err(Status::permission_denied(format!(
