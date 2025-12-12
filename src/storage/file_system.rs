@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use minitrace_macro::trace;
+use fastrace_macro::trace;
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt;
 

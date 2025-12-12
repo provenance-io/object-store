@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use fastrace::prelude::*;
 use sqlx::PgPool;
 use tonic_health::proto::health_server::{Health, HealthServer};
 
@@ -16,7 +17,10 @@ pub async fn init_health_service(context: &AppContext) -> Option<HealthServer<im
             .set_service_status("", tonic_health::ServingStatus::NotServing)
             .await;
 
-        tokio::spawn(health_status(health_reporter, context.db_pool.clone()));
+        tokio::spawn(start_database_health_check(
+            health_reporter,
+            context.db_pool.clone(),
+        ));
 
         Some(health_service)
     } else {
@@ -25,24 +29,33 @@ pub async fn init_health_service(context: &AppContext) -> Option<HealthServer<im
 }
 
 /// Every two seconds, sets the overall service status based on database connection via [datastore::health_check]
-async fn health_status(mut reporter: tonic_health::server::HealthReporter, db: Arc<PgPool>) {
+async fn start_database_health_check(
+    mut reporter: tonic_health::server::HealthReporter,
+    db: Arc<PgPool>,
+) {
     log::info!("Starting health status check");
 
     loop {
+        health_check_iteration(&mut reporter, &db)
+            .in_span(Span::root("database::health_check", SpanContext::random()))
+            .await;
+
         tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+    }
+}
 
-        if let Err(err) = datastore::health_check(&db).await {
-            log::warn!("Failed to health check the database connection {:?}", err);
+async fn health_check_iteration(reporter: &mut tonic_health::server::HealthReporter, db: &PgPool) {
+    if let Err(err) = datastore::health_check(db).await {
+        log::warn!("Failed to health check the database connection {:?}", err);
 
-            reporter
-                .set_service_status("", tonic_health::ServingStatus::NotServing)
-                .await;
-        } else {
-            log::trace!("Database health check success!");
+        reporter
+            .set_service_status("", tonic_health::ServingStatus::NotServing)
+            .await;
+    } else {
+        log::trace!("Database health check success!");
 
-            reporter
-                .set_service_status("", tonic_health::ServingStatus::Serving)
-                .await;
-        }
+        reporter
+            .set_service_status("", tonic_health::ServingStatus::Serving)
+            .await;
     }
 }

@@ -1,5 +1,5 @@
 use cloud_storage::client::Client;
-use minitrace_macro::trace;
+use fastrace_macro::trace;
 
 use crate::storage::{Result, Storage, StorageError, StoragePath};
 

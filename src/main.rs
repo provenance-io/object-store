@@ -13,3 +13,9 @@ async fn main() -> Result<()> {
 
     Ok(())
 }
+
+#[fastrace::trace]
+fn multiply() {
+    let sum = 2 * 2;
+    println!("product is {}", sum);
+}

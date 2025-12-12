@@ -29,13 +29,11 @@ pub async fn configure_and_start_server(context: AppContext) -> Result<(), Error
 
     // TODO add server fields that make sense
     if let Some(ref dd_config) = context.config.dd_config {
-        let datadog_sender = start_trace_reporter(dd_config);
+        start_trace_reporter(dd_config);
 
         base_server(context.config.clone())
             .layer(MinitraceGrpcMiddlewareLayer::new(
-                context.config.clone(),
                 dd_config.span_tags.clone(),
-                datadog_sender,
             ))
             .add_optional_service(health_service)
             .add_service(PublicKeyServiceServer::new(context.public_key_service))

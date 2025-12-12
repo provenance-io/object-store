@@ -19,9 +19,9 @@ use crate::{
 };
 
 use bytes::{BufMut, Bytes, BytesMut};
+use fastrace_macro::trace;
 use futures_util::StreamExt;
 use linked_hash_map::LinkedHashMap;
-use minitrace_macro::trace;
 use prost::Message;
 use sqlx::postgres::PgPool;
 use std::{

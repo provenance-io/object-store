@@ -12,9 +12,9 @@ use std::convert::TryFrom;
 
 use bytes::{Bytes, BytesMut};
 use chrono::prelude::*;
+use fastrace_macro::trace;
 use futures_util::TryStreamExt;
 use linked_hash_map::LinkedHashMap;
-use minitrace_macro::trace;
 use sqlx::postgres::{PgConnection, PgPool, PgQueryResult};
 use sqlx::Acquire;
 use sqlx::{FromRow, Row};

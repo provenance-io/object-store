@@ -8,7 +8,7 @@ use crate::{
     config::Config,
 };
 
-use minitrace_macro::trace;
+use fastrace_macro::trace;
 use sqlx::postgres::PgPool;
 use std::{
     str::FromStr,

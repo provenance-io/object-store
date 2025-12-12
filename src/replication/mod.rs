@@ -1,8 +1,11 @@
 mod error;
 
 use error::{ReplicationError, Result};
+use fastrace::future::FutureExt;
+use fastrace::prelude::SpanContext;
+use fastrace::{func_path, trace, Span};
 
-use crate::datastore::{self, reap_object_replication, replication_object_uuids};
+use crate::datastore;
 use crate::pb::object_service_client::ObjectServiceClient;
 use crate::proto_helpers::{
     create_data_chunk, create_multi_stream_header, create_stream_end, create_stream_header_field,
@@ -343,6 +346,7 @@ impl ReplicationState {
 
 // ----------------------------------------------------------------------------
 
+#[trace(name = "replication::replicate_public_key")]
 async fn replicate_public_key(
     inner: &ReplicationState,
     mut client: ID<ObjectServiceClient<tonic::transport::Channel>>,
@@ -543,8 +547,11 @@ pub async fn replicate(mut inner: ReplicationState) {
     let mut client_cache =
         ClientCache::new(inner.config.backoff_min_wait, inner.config.backoff_max_wait);
     loop {
+        replicate_iteration(&mut inner, &mut client_cache)
+            .in_span(Span::root(func_path!(), SpanContext::random()))
+            .await;
+
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-        replicate_iteration(&mut inner, &mut client_cache).await;
     }
 }
 
@@ -554,12 +561,12 @@ pub async fn reap_unknown_keys_iteration(db_pool: &Arc<PgPool>, cache: &Arc<Mute
     let unknown_keys = public_keys.iter().filter(|(_, v)| v.url.is_empty());
 
     for (public_key, _) in unknown_keys {
-        let result = replication_object_uuids(db_pool, public_key, 1).await;
+        let result = datastore::replication_object_uuids(db_pool, public_key, 1).await;
 
         match result {
             Ok(result) => {
                 if !result.is_empty() {
-                    match reap_object_replication(db_pool, public_key).await {
+                    match datastore::reap_object_replication(db_pool, public_key).await {
                         Ok(rows_affected) => log::info!(
                             "Reaping public_key {} - rows_affected {}",
                             &public_key,
@@ -587,11 +594,13 @@ pub async fn reap_unknown_keys(db_pool: Arc<PgPool>, cache: Arc<Mutex<Cache>>) {
     log::info!("Starting reap unknown keys");
 
     loop {
-        tokio::time::sleep(std::time::Duration::from_secs(60 * 60)).await;
-
         log::trace!("Reaping previously unknown keys");
 
-        reap_unknown_keys_iteration(&db_pool, &cache).await;
+        reap_unknown_keys_iteration(&db_pool, &cache)
+            .in_span(Span::root(func_path!(), SpanContext::random()))
+            .await;
+
+        tokio::time::sleep(std::time::Duration::from_secs(60 * 60)).await;
     }
 }
 
