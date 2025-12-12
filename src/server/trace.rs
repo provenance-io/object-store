@@ -4,19 +4,27 @@ use fastrace::collector::ConsoleReporter;
 
 use crate::config::DatadogConfig;
 
-pub fn start_trace_reporter(_dd_config: &DatadogConfig) {
+// https://docs.datadoghq.com/standard-attributes/
+// service	string	The unified service name for the application or service that is generating the data, used to correlate user sessions.
+// db.instance/statement/user/sql.table/row_count/operation/system
+// error.type/message/stack
+// rpc.system/service/method
+
+pub fn start_trace_reporter(dd_config: &DatadogConfig) {
     // TODO: header managment?
     // headers.append("Datadog-Meta-Tracer-Version", "v1.27.0".parse().unwrap());
     // headers.append("Content-Type", "application/msgpack".parse().unwrap());
     // old way posted via reqwest client to http://{}/v0.4/traces
 
     // TODO: configure DD/Console by env
-    // fastrace_datadog::DatadogReporter::new(
-    //     dd_config.agent_addr().unwrap(),
-    //     dd_config.service.clone(),
-    //     "all",
-    //     "select",
-    // );
+    if false {
+        fastrace_datadog::DatadogReporter::new(
+            dd_config.agent_addr().unwrap(),
+            dd_config.service.clone(),
+            "all",
+            "select",
+        );
+    }
 
     // TODO: add logging - moved from grpc
     // log::info!("Starting Datadog reporting to agent at {}", socket);

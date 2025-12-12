@@ -4,7 +4,7 @@ use std::{
     fmt::Debug,
     task::{Context, Poll},
 };
-use tonic::{body::BoxBody, codegen::http::HeaderValue, transport::Body, Code};
+use tonic::{Code, body::BoxBody, codegen::http::HeaderValue, transport::Body};
 use tower::{Layer, Service};
 
 // TODO add logging in Trace middleware
@@ -75,6 +75,7 @@ where
         self.inner.poll_ready(cx)
     }
 
+    /// https://docs.datadoghq.com/tracing/trace_collection/trace_context_propagation/#custom-header-formats
     fn call(&mut self, req: tonic::codegen::http::Request<Body>) -> Self::Future {
         // This is necessary because tonic internally uses `tower::buffer::Buffer`.
         // See https://github.com/tower-rs/tower/issues/547#issuecomment-767629149
@@ -86,67 +87,47 @@ where
 
         let headers: HeaderMap = req.headers().clone();
 
-        // TODO: add resource?
-        // let mut resource = req.uri().path().chars();
-        // resource.next();
-        // let resource = String::from(resource.as_str());
-
         Box::pin(async move {
-            // https://docs.datadoghq.com/tracing/trace_collection/trace_context_propagation/#custom-header-formats
-            let parent_span_context = {
-                let parent_span_id: SpanId =
-                    if let Some(parent_span_id_header) = headers.get("x-datadog-parent-id") {
-                        parent_span_id_header
-                            .to_str()
-                            .map(|h| h.parse())
-                            .map(|n| n.map(|id| SpanId(id)).unwrap_or(SpanId(0)))
-                            .unwrap_or(SpanId(0))
-                    } else {
-                        SpanId(0)
-                    };
+            let root_span = {
+                let parent_span_context = {
+                    let parent_span_id: SpanId =
+                        if let Some(parent_span_id_header) = headers.get("x-datadog-parent-id") {
+                            parent_span_id_header
+                                .to_str()
+                                .map(|h| h.parse())
+                                .map(|n| n.map(SpanId).unwrap_or(SpanId(0)))
+                                .unwrap_or(SpanId(0))
+                        } else {
+                            SpanId(0)
+                        };
 
-                let parent_trace_id: TraceId =
-                    if let Some(parent_trace_id_header) = headers.get("x-datadog-trace-id") {
-                        parent_trace_id_header
-                            .to_str()
-                            .map(|h| h.parse())
-                            .map(|n| n.map(|id| TraceId(id)).unwrap_or(TraceId::random()))
-                            .unwrap_or(TraceId::random())
-                    } else {
-                        TraceId::random()
-                    };
+                    let parent_trace_id: TraceId =
+                        if let Some(parent_trace_id_header) = headers.get("x-datadog-trace-id") {
+                            parent_trace_id_header
+                                .to_str()
+                                .map(|h| h.parse())
+                                .map(|n| n.map(TraceId).unwrap_or(TraceId::random()))
+                                .unwrap_or(TraceId::random())
+                        } else {
+                            TraceId::random()
+                        };
 
-                SpanContext::new(parent_trace_id, parent_span_id)
+                    SpanContext::new(parent_trace_id, parent_span_id)
+                };
+
+                Span::root("grpc.server", parent_span_context)
             };
-
-            let root_span = Span::root("grpc.server", parent_span_context);
 
             let response = inner.call(req).in_span(root_span).await?;
 
             let status_code = response.status_code(default_status_code);
-            // span_tags.push(("status.code", format!("{:?}", &status_code)));
-            // root_span.add_property(|| ("status.code", format!("{:?}", &status_code)));
 
             match status_code {
                 tonic::Code::Ok => {}
                 _ => {
-                    log::info!("RR: add the status description");
-                    // root_span.add_property(|| {
-                    //     (
-                    //         "status.description",
-                    //         String::from(status_code.description()),
-                    //     )
-                    // });
-                    // span_tags.push((
-                    //     "status.description",
-                    //     String::from(status_code.description()),
-                    // ));
+                    log::warn!("rpc call failed");
                 }
             };
-
-            // TODO: (if?) span.parent_id == 0
-            // log::info!(format!("RR: add the span tags: {:?}", self.span_tags));
-            // root_span.add_properties(|| self.span_tags.clone());
 
             Ok(response)
         })

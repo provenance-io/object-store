@@ -54,7 +54,9 @@ impl MailboxService for MailboxGrpc {
                     if let Some(cached_key) = cache.public_keys.get(&public_key) {
                         cached_key.auth()?.authorize(&metadata)
                     } else {
-                        Err(Status::internal("this should not happen - key was resolved to Local state and then could not be fetched"))
+                        Err(Status::internal(
+                            "this should not happen - key was resolved to Local state and then could not be fetched",
+                        ))
                     }
                 }
                 PublicKeyState::Remote => Err(Status::permission_denied(format!(
@@ -85,7 +87,7 @@ impl MailboxService for MailboxGrpc {
                     None => {
                         log::error!(
                             "mailbox object without a payload {}",
-                            object.uuid.as_hyphenated().to_string()
+                            object.uuid.as_hyphenated(),
                         );
 
                         if tx
@@ -145,7 +147,9 @@ impl MailboxService for MailboxGrpc {
                     if let Some(cached_key) = cache.public_keys.get(&public_key) {
                         cached_key.auth()?.authorize(&metadata)
                     } else {
-                        Err(Status::internal("this should not happen - key was resolved to Local state and then could not be fetched"))
+                        Err(Status::internal(
+                            "this should not happen - key was resolved to Local state and then could not be fetched",
+                        ))
                     }
                 }
                 PublicKeyState::Remote => Err(Status::permission_denied(format!(
