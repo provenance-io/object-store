@@ -1,4 +1,4 @@
-use object_store::config::{Config, DatadogConfig};
+use object_store::config::{Config, DatadogConfig, ReplicationConfig};
 
 /// Builds a default config suitable for most tests.
 ///
@@ -31,8 +31,7 @@ pub fn test_config(db_port: u16) -> Config {
         storage_base_url: None,
         storage_base_path: std::env::temp_dir().to_string_lossy().to_string(),
         storage_threshold: 5000,
-        replication_enabled: true,
-        replication_batch_size: 2,
+        replication_config: ReplicationConfig::new(true, 2),
         dd_config: Some(dd_config),
         backoff_min_wait: 1,
         backoff_max_wait: 1,
@@ -45,8 +44,7 @@ pub fn test_config(db_port: u16) -> Config {
 
 pub fn test_config_replication(db_port: u16) -> Config {
     Config {
-        replication_enabled: true,
-        replication_batch_size: 2,
+        replication_config: ReplicationConfig::new(true, 2),
         dd_config: None,
         backoff_min_wait: 5,
         backoff_max_wait: 5,
@@ -56,7 +54,7 @@ pub fn test_config_replication(db_port: u16) -> Config {
 
 pub fn test_config_no_replication(db_port: u16) -> Config {
     Config {
-        replication_enabled: false,
+        replication_config: ReplicationConfig::new(false, 2),
         dd_config: None,
         backoff_min_wait: 5,
         backoff_max_wait: 5,

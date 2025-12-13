@@ -256,7 +256,7 @@ impl ObjectService for ObjectGrpc {
         let replication_key_states = {
             let mut replication_key_states = Vec::new();
 
-            if self.config.replication_enabled {
+            if self.config.replication_config.replication_enabled {
                 let audience = dime
                     .unique_audience_without_owner_base64()
                     .map_err(|_| Status::invalid_argument("Invalid Dime proto - audience list"))?;
@@ -284,7 +284,7 @@ impl ObjectService for ObjectGrpc {
                 &properties,
                 replication_key_states,
                 None,
-                self.config.replication_enabled,
+                self.config.replication_config.replication_enabled,
             )
             .await?;
 
@@ -306,7 +306,7 @@ impl ObjectService for ObjectGrpc {
                 &properties,
                 replication_key_states,
                 Some(&raw_dime),
-                self.config.replication_enabled,
+                self.config.replication_config.replication_enabled,
             )
             .await?
             .to_response(&self.config)?

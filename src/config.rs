@@ -1,6 +1,7 @@
 use std::env;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
+use std::time::Duration;
 
 use percent_encoding::NON_ALPHANUMERIC;
 
@@ -10,6 +11,25 @@ pub struct DatadogConfig {
     pub agent_port: u16,
     pub service: String,
     pub span_tags: Vec<(&'static str, String)>,
+}
+
+#[derive(Debug)]
+pub struct ReplicationConfig {
+    pub replication_enabled: bool,
+    pub replication_batch_size: i32,
+    pub reap_unknown_keys_fixed_delay: Duration,
+    pub replicate_fixed_delay: Duration,
+}
+
+impl ReplicationConfig {
+    pub fn new(replication_enabled: bool, replication_batch_size: i32) -> Self {
+        Self {
+            replication_enabled,
+            replication_batch_size,
+            reap_unknown_keys_fixed_delay: Duration::from_secs(60 * 60),
+            replicate_fixed_delay: Duration::from_secs(1),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -31,8 +51,7 @@ pub struct Config {
     /// Objects with size, in bytes, below this threshold will be stored in database.
     /// Larger objects will be in configured storage
     pub storage_threshold: u32,
-    pub replication_enabled: bool,
-    pub replication_batch_size: i32,
+    pub replication_config: ReplicationConfig,
     /// If None, trace middleware [MinitraceGrpcMiddlewareLayer][crate::middleware::MinitraceGrpcMiddlewareLayer] disabled
     pub dd_config: Option<DatadogConfig>,
     pub backoff_min_wait: i64,
@@ -160,11 +179,10 @@ impl Config {
             storage_base_url,
             storage_base_path,
             storage_threshold,
-            replication_batch_size,
+            replication_config: ReplicationConfig::new(replication_enabled, replication_batch_size),
             dd_config,
             backoff_min_wait,
             backoff_max_wait,
-            replication_enabled,
             logging_threshold_seconds,
             trace_header,
             user_auth_enabled,

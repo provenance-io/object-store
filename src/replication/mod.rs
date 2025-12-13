@@ -6,6 +6,7 @@ use fastrace::prelude::SpanContext;
 use fastrace::{Span, func_path, trace};
 
 use crate::AppContext;
+use crate::config::ReplicationConfig;
 use crate::datastore;
 use crate::pb::object_service_client::ObjectServiceClient;
 use crate::proto_helpers::{
@@ -310,7 +311,7 @@ impl<T> DerefMut for ID<T> {
 
 // ----------------------------------------------------------------------------
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ReplicationState {
     cache: Arc<Mutex<Cache>>,
     config: Arc<Config>,
@@ -354,7 +355,7 @@ async fn replicate_public_key(
     let batch = match datastore::replication_object_uuids(
         &inner.db_pool,
         public_key.as_ref(),
-        inner.config.replication_batch_size,
+        inner.config.replication_config.replication_batch_size,
     )
     .await
     {
@@ -546,7 +547,7 @@ pub async fn replicate(mut inner: ReplicationState) {
             .in_span(Span::root(func_path!(), SpanContext::random()))
             .await;
 
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        tokio::time::sleep(inner.config.replication_config.replicate_fixed_delay).await;
     }
 }
 
@@ -584,8 +585,49 @@ pub async fn reap_unknown_keys_iteration(db_pool: &Arc<PgPool>, cache: &Arc<Mute
     }
 }
 
+impl ReplicationState {
+    pub fn init(&self) {
+        // start replication
+        tokio::spawn(self.clone().replicate());
+        // start unknown reaper - removes replication objects for public_keys that moved from Unknown -> Local
+        tokio::spawn(self.clone().reap_unknown_keys());
+    }
+
+    async fn reap_unknown_keys(self) {
+        log::info!("Starting reap unknown keys");
+
+        loop {
+            log::trace!("Reaping previously unknown keys");
+
+            reap_unknown_keys_iteration(&self.db_pool, &self.cache)
+                .in_span(Span::root(func_path!(), SpanContext::random()))
+                .await;
+
+            tokio::time::sleep(self.config.replication_config.reap_unknown_keys_fixed_delay).await;
+        }
+    }
+
+    async fn replicate(mut self) {
+        log::info!("Starting replication");
+
+        let mut client_cache =
+            ClientCache::new(self.config.backoff_min_wait, self.config.backoff_max_wait);
+
+        loop {
+            replicate_iteration(&mut self, &mut client_cache)
+                .in_span(Span::root(func_path!(), SpanContext::random()))
+                .await;
+
+            tokio::time::sleep(self.config.replication_config.replicate_fixed_delay).await;
+        }
+    }
+}
 /// Run [reap_unknown_keys_iteration] with a one hours delay between runs
-pub async fn reap_unknown_keys(db_pool: Arc<PgPool>, cache: Arc<Mutex<Cache>>) {
+pub async fn reap_unknown_keys(
+    db_pool: Arc<PgPool>,
+    cache: Arc<Mutex<Cache>>,
+    replication_config: ReplicationConfig,
+) {
     log::info!("Starting reap unknown keys");
 
     loop {
@@ -595,7 +637,7 @@ pub async fn reap_unknown_keys(db_pool: Arc<PgPool>, cache: Arc<Mutex<Cache>>) {
             .in_span(Span::root(func_path!(), SpanContext::random()))
             .await;
 
-        tokio::time::sleep(std::time::Duration::from_secs(60 * 60)).await;
+        tokio::time::sleep(replication_config.reap_unknown_keys_fixed_delay).await;
     }
 }
 
@@ -603,7 +645,7 @@ pub async fn reap_unknown_keys(db_pool: Arc<PgPool>, cache: Arc<Mutex<Cache>>) {
 /// 1. Start [replicate] job
 /// 2. Start [reap_unknown_keys] job
 pub fn init_replication(app_context: &AppContext) {
-    if app_context.config.replication_enabled {
+    if app_context.config.replication_config.replication_enabled {
         let replication_state = ReplicationState::new(
             app_context.cache.clone(),
             app_context.config.clone(),
@@ -611,13 +653,6 @@ pub fn init_replication(app_context: &AppContext) {
             app_context.storage.clone(),
         );
 
-        // start replication
-        tokio::spawn(replicate(replication_state));
-
-        // start unknown reaper - removes replication objects for public_keys that moved from Unknown -> Local
-        tokio::spawn(reap_unknown_keys(
-            app_context.db_pool.clone(),
-            app_context.cache.clone(),
-        ));
+        replication_state.init();
     }
 }
