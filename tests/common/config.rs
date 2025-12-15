@@ -31,10 +31,8 @@ pub fn test_config(db_port: u16) -> Config {
         storage_base_url: None,
         storage_base_path: std::env::temp_dir().to_string_lossy().to_string(),
         storage_threshold: 5000,
-        replication_config: ReplicationConfig::new(true, 2),
+        replication_config: ReplicationConfig::new(true, 2, 1, 1),
         dd_config: Some(dd_config),
-        backoff_min_wait: 1,
-        backoff_max_wait: 1,
         logging_threshold_seconds: 1f64,
         trace_header: String::default(),
         user_auth_enabled: false,
@@ -44,20 +42,16 @@ pub fn test_config(db_port: u16) -> Config {
 
 pub fn test_config_replication(db_port: u16) -> Config {
     Config {
-        replication_config: ReplicationConfig::new(true, 2),
+        replication_config: ReplicationConfig::new(true, 2, 5, 5),
         dd_config: None,
-        backoff_min_wait: 5,
-        backoff_max_wait: 5,
         ..test_config(db_port)
     }
 }
 
 pub fn test_config_no_replication(db_port: u16) -> Config {
     Config {
-        replication_config: ReplicationConfig::new(false, 2),
+        replication_config: ReplicationConfig::new(false, 2, 5, 5),
         dd_config: None,
-        backoff_min_wait: 5,
-        backoff_max_wait: 5,
         ..test_config(db_port)
     }
 }

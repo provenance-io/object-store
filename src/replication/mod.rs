@@ -5,7 +5,6 @@ use fastrace::future::FutureExt;
 use fastrace::prelude::SpanContext;
 use fastrace::{Span, func_path, trace};
 
-use crate::AppContext;
 use crate::config::ReplicationConfig;
 use crate::datastore;
 use crate::pb::object_service_client::ObjectServiceClient;
@@ -13,7 +12,7 @@ use crate::proto_helpers::{
     create_data_chunk, create_multi_stream_header, create_stream_end, create_stream_header_field,
 };
 use crate::storage::{Storage, StoragePath};
-use crate::{cache::Cache, config::Config, consts, types::OsError};
+use crate::{cache::Cache, consts, types::OsError};
 
 use bytes::Bytes;
 use std::cmp::min;
@@ -314,7 +313,7 @@ impl<T> DerefMut for ID<T> {
 #[derive(Debug, Clone)]
 pub struct ReplicationState {
     cache: Arc<Mutex<Cache>>,
-    config: Arc<Config>,
+    config: ReplicationConfig,
     snapshot_cache: (DateTime<Utc>, Cache),
     db_pool: Arc<PgPool>,
     storage: Arc<Box<dyn Storage>>,
@@ -323,7 +322,7 @@ pub struct ReplicationState {
 impl ReplicationState {
     pub fn new(
         cache: Arc<Mutex<Cache>>,
-        config: Arc<Config>,
+        config: ReplicationConfig,
         db_pool: Arc<PgPool>,
         storage: Arc<Box<dyn Storage>>,
     ) -> Self {
@@ -355,7 +354,7 @@ async fn replicate_public_key(
     let batch = match datastore::replication_object_uuids(
         &inner.db_pool,
         public_key.as_ref(),
-        inner.config.replication_config.replication_batch_size,
+        inner.config.replication_batch_size,
     )
     .await
     {
@@ -536,21 +535,6 @@ pub async fn replicate_iteration(inner: &mut ReplicationState, client_cache: &mu
     }
 }
 
-/// Run [replicate_iteration] with a one second delay between runs
-pub async fn replicate(mut inner: ReplicationState) {
-    log::info!("Starting replication");
-
-    let mut client_cache =
-        ClientCache::new(inner.config.backoff_min_wait, inner.config.backoff_max_wait);
-    loop {
-        replicate_iteration(&mut inner, &mut client_cache)
-            .in_span(Span::root(func_path!(), SpanContext::random()))
-            .await;
-
-        tokio::time::sleep(inner.config.replication_config.replicate_fixed_delay).await;
-    }
-}
-
 pub async fn reap_unknown_keys_iteration(db_pool: &Arc<PgPool>, cache: &Arc<Mutex<Cache>>) {
     let public_keys = cache.lock().unwrap().public_keys.clone();
 
@@ -586,6 +570,8 @@ pub async fn reap_unknown_keys_iteration(db_pool: &Arc<PgPool>, cache: &Arc<Mute
 }
 
 impl ReplicationState {
+    /// 1. Start [replicate] job
+    /// 2. Start [reap_unknown_keys] job
     pub fn init(&self) {
         // start replication
         tokio::spawn(self.clone().replicate());
@@ -593,6 +579,7 @@ impl ReplicationState {
         tokio::spawn(self.clone().reap_unknown_keys());
     }
 
+    /// Run [reap_unknown_keys_iteration] with a one hours delay between runs
     async fn reap_unknown_keys(self) {
         log::info!("Starting reap unknown keys");
 
@@ -603,10 +590,11 @@ impl ReplicationState {
                 .in_span(Span::root(func_path!(), SpanContext::random()))
                 .await;
 
-            tokio::time::sleep(self.config.replication_config.reap_unknown_keys_fixed_delay).await;
+            tokio::time::sleep(self.config.reap_unknown_keys_fixed_delay).await;
         }
     }
 
+    /// Run [replicate_iteration] with a one second delay between runs
     async fn replicate(mut self) {
         log::info!("Starting replication");
 
@@ -618,41 +606,7 @@ impl ReplicationState {
                 .in_span(Span::root(func_path!(), SpanContext::random()))
                 .await;
 
-            tokio::time::sleep(self.config.replication_config.replicate_fixed_delay).await;
+            tokio::time::sleep(self.config.replicate_fixed_delay).await;
         }
-    }
-}
-/// Run [reap_unknown_keys_iteration] with a one hours delay between runs
-pub async fn reap_unknown_keys(
-    db_pool: Arc<PgPool>,
-    cache: Arc<Mutex<Cache>>,
-    replication_config: ReplicationConfig,
-) {
-    log::info!("Starting reap unknown keys");
-
-    loop {
-        log::trace!("Reaping previously unknown keys");
-
-        reap_unknown_keys_iteration(&db_pool, &cache)
-            .in_span(Span::root(func_path!(), SpanContext::random()))
-            .await;
-
-        tokio::time::sleep(replication_config.reap_unknown_keys_fixed_delay).await;
-    }
-}
-
-/// If replication is enabled:
-/// 1. Start [replicate] job
-/// 2. Start [reap_unknown_keys] job
-pub fn init_replication(app_context: &AppContext) {
-    if app_context.config.replication_config.replication_enabled {
-        let replication_state = ReplicationState::new(
-            app_context.cache.clone(),
-            app_context.config.clone(),
-            app_context.db_pool.clone(),
-            app_context.storage.clone(),
-        );
-
-        replication_state.init();
     }
 }

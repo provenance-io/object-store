@@ -10,7 +10,7 @@ use crate::{
     mailbox::MailboxGrpc,
     object::ObjectGrpc,
     public_key::PublicKeyGrpc,
-    replication::init_replication,
+    replication::ReplicationState,
     server::health::init_health_service,
     storage::{Storage, new_storage},
     types::OsError,
@@ -47,6 +47,7 @@ pub struct AppContext {
     pub public_key_service: PublicKeyGrpc,
     pub mailbox_service: MailboxGrpc,
     pub object_service: ObjectGrpc,
+    pub replication_state: Option<ReplicationState>,
 }
 
 impl AppContext {
@@ -67,6 +68,21 @@ impl AppContext {
             storage.clone(),
         );
 
+        let replication_state = {
+            let replication_config = config.replication_config.clone();
+
+            if replication_config.replication_enabled {
+                Some(ReplicationState::new(
+                    cache.clone(),
+                    replication_config,
+                    db_pool.clone(),
+                    storage.clone(),
+                ))
+            } else {
+                None
+            }
+        };
+
         Ok(Self {
             config,
             cache,
@@ -75,6 +91,7 @@ impl AppContext {
             public_key_service,
             mailbox_service,
             object_service,
+            replication_state,
         })
     }
 
@@ -83,7 +100,7 @@ impl AppContext {
     pub async fn init(&self) -> Option<HealthServer<impl Health + use<>>> {
         let health_service = init_health_service(self).await;
 
-        init_replication(self);
+        self.replication_state.clone().map(|r| r.init());
 
         health_service
     }

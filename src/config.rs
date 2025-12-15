@@ -13,21 +13,30 @@ pub struct DatadogConfig {
     pub span_tags: Vec<(&'static str, String)>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct ReplicationConfig {
     pub replication_enabled: bool,
     pub replication_batch_size: i32,
     pub reap_unknown_keys_fixed_delay: Duration,
     pub replicate_fixed_delay: Duration,
+    pub backoff_min_wait: i64,
+    pub backoff_max_wait: i64,
 }
 
 impl ReplicationConfig {
-    pub fn new(replication_enabled: bool, replication_batch_size: i32) -> Self {
+    pub fn new(
+        replication_enabled: bool,
+        replication_batch_size: i32,
+        backoff_min_wait: i64,
+        backoff_max_wait: i64,
+    ) -> Self {
         Self {
             replication_enabled,
             replication_batch_size,
             reap_unknown_keys_fixed_delay: Duration::from_secs(60 * 60),
             replicate_fixed_delay: Duration::from_secs(1),
+            backoff_min_wait,
+            backoff_max_wait,
         }
     }
 }
@@ -54,8 +63,6 @@ pub struct Config {
     pub replication_config: ReplicationConfig,
     /// If None, trace middleware [MinitraceGrpcMiddlewareLayer][crate::middleware::MinitraceGrpcMiddlewareLayer] disabled
     pub dd_config: Option<DatadogConfig>,
-    pub backoff_min_wait: i64,
-    pub backoff_max_wait: i64,
     pub logging_threshold_seconds: f64,
     pub trace_header: String,
     pub user_auth_enabled: bool,
@@ -165,6 +172,13 @@ impl Config {
             .parse()
             .expect("HEALTH_SERVICE_ENABLED could not be parsed into a bool");
 
+        let replication_config = ReplicationConfig::new(
+            replication_enabled,
+            replication_batch_size,
+            backoff_min_wait,
+            backoff_max_wait,
+        );
+
         Arc::new(Self {
             url,
             uri_host,
@@ -179,10 +193,8 @@ impl Config {
             storage_base_url,
             storage_base_path,
             storage_threshold,
-            replication_config: ReplicationConfig::new(replication_enabled, replication_batch_size),
+            replication_config,
             dd_config,
-            backoff_min_wait,
-            backoff_max_wait,
             logging_threshold_seconds,
             trace_header,
             user_auth_enabled,

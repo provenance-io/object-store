@@ -46,8 +46,10 @@ async fn client_caching() -> Result<()> {
 
     let url_one = format!("tcp://{}", config_one.url);
 
-    let mut client_cache =
-        ClientCache::new(config_one.backoff_min_wait, config_one.backoff_max_wait);
+    let mut client_cache = ClientCache::new(
+        config_one.replication_config.backoff_min_wait,
+        config_one.replication_config.backoff_max_wait,
+    );
 
     // Client 1:
 
@@ -179,8 +181,10 @@ async fn end_to_end_replication() -> Result<()> {
         ..test_config_replication(db_port_two)
     };
 
-    let (db_pool_one, _, mut state_one, config_one) =
+    let (db_pool_one, _, state_one, config_one) =
         start_test_server(config_one, Some(&config_two)).await;
+    let mut state_one = state_one.expect("Replication enabled");
+
     let (db_pool_two, _, _, config_two) = start_test_server(config_two, None).await;
 
     let mut client_one = get_object_client(config_one.url).await;
@@ -300,8 +304,10 @@ async fn end_to_end_replication() -> Result<()> {
         }
     }
 
-    let mut client_cache_one =
-        ClientCache::new(config_one.backoff_min_wait, config_one.backoff_max_wait);
+    let mut client_cache_one = ClientCache::new(
+        config_one.replication_config.backoff_min_wait,
+        config_one.replication_config.backoff_max_wait,
+    );
 
     // run replication iteration
     // Check source server for correct counts

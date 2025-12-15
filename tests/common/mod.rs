@@ -224,7 +224,7 @@ pub async fn start_test_server(
 ) -> (
     Arc<PgPool>,
     Arc<Mutex<Cache>>,
-    ReplicationState,
+    Option<ReplicationState>,
     Arc<Config>,
 ) {
     let listener = tokio::net::TcpListener::bind(config.url).await.unwrap();
@@ -258,17 +258,10 @@ pub async fn start_test_server(
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     println!("test server running on {:?}", local_addr);
 
-    let replication_state = ReplicationState::new(
-        context.cache.clone(),
-        context.config.clone(),
-        context.db_pool.clone(),
-        context.storage.clone(),
-    );
-
     (
         context.db_pool,
         context.cache,
-        replication_state,
+        context.replication_state,
         context.config,
     )
 }
