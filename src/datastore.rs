@@ -600,7 +600,7 @@ ON CONFLICT DO NOTHING
     };
 
     let mut tx = db.begin().await?;
-    let result = query.execute(&mut tx).await?.into();
+    let result = query.execute(&mut *tx).await?.into();
     match result {
         UpsertOutcome::Created => {
             put_object_public_keys(&mut tx, uuid, dime, dime_properties).await?;

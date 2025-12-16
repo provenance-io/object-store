@@ -24,7 +24,7 @@ quick-error = "2.0"
 rand = "0.9.2"
 serde = "1.0"
 serde_json = "1.0"
-sqlx = { version = "0.6.3", features = ["runtime-tokio-rustls", "postgres", "macros", "uuid", "chrono", "json"] }
+sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "postgres", "macros", "uuid", "chrono", "json"] }
 tonic = "0.6"
 tonic-health = "0.5"
 tower = "0.4"
