@@ -1,3 +1,4 @@
+use chrono::Duration;
 use object_store::config::{Config, DatadogConfig, ReplicationConfig};
 
 /// Builds a default config suitable for most tests.
@@ -31,7 +32,7 @@ pub fn test_config(db_port: u16) -> Config {
         storage_base_url: None,
         storage_base_path: std::env::temp_dir().to_string_lossy().to_string(),
         storage_threshold: 5000,
-        replication_config: ReplicationConfig::new(true, 2, 1, 1),
+        replication_config: ReplicationConfig::new(true, 2, 1, 1, Duration::minutes(5)),
         dd_config: Some(dd_config),
         logging_threshold_seconds: 1f64,
         trace_header: String::default(),
@@ -42,7 +43,7 @@ pub fn test_config(db_port: u16) -> Config {
 
 pub fn test_config_replication(db_port: u16) -> Config {
     Config {
-        replication_config: ReplicationConfig::new(true, 2, 5, 5),
+        replication_config: ReplicationConfig::new(true, 2, 5, 5, Duration::minutes(5)),
         dd_config: None,
         ..test_config(db_port)
     }
@@ -50,7 +51,7 @@ pub fn test_config_replication(db_port: u16) -> Config {
 
 pub fn test_config_no_replication(db_port: u16) -> Config {
     Config {
-        replication_config: ReplicationConfig::new(false, 2, 5, 5),
+        replication_config: ReplicationConfig::new(false, 2, 5, 5, Duration::minutes(5)),
         dd_config: None,
         ..test_config(db_port)
     }

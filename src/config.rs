@@ -3,6 +3,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
 
+use chrono::TimeDelta;
 use percent_encoding::NON_ALPHANUMERIC;
 
 #[derive(Debug)]
@@ -21,6 +22,7 @@ pub struct ReplicationConfig {
     pub replicate_fixed_delay: Duration,
     pub backoff_min_wait: i64,
     pub backoff_max_wait: i64,
+    pub snapshot_cache_refresh_frequency: TimeDelta,
 }
 
 impl ReplicationConfig {
@@ -29,6 +31,7 @@ impl ReplicationConfig {
         replication_batch_size: i32,
         backoff_min_wait: i64,
         backoff_max_wait: i64,
+        snapshot_cache_refresh_frequency: TimeDelta,
     ) -> Self {
         Self {
             replication_enabled,
@@ -37,6 +40,7 @@ impl ReplicationConfig {
             replicate_fixed_delay: Duration::from_secs(1),
             backoff_min_wait,
             backoff_max_wait,
+            snapshot_cache_refresh_frequency,
         }
     }
 }
@@ -157,6 +161,11 @@ impl Config {
             .unwrap_or("false".to_owned())
             .parse()
             .expect("REPLICATION_ENABLED could not be parsed into a bool");
+        let replication_cache_refresh_min: i64 = env::var("REPLICATION_CACHE_REFRESH_MIN")
+            .unwrap_or("5".to_owned())
+            .parse()
+            .expect("REPLICATION_CACHE_REFRESH_MIN could not be parsed");
+
         let logging_threshold_seconds: i32 = env::var("LOGGING_THRESHOLD_SECONDS")
             .unwrap_or("3".to_owned())
             .parse()
@@ -177,6 +186,7 @@ impl Config {
             replication_batch_size,
             backoff_min_wait,
             backoff_max_wait,
+            chrono::Duration::minutes(replication_cache_refresh_min),
         );
 
         Arc::new(Self {

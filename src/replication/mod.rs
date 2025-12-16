@@ -460,7 +460,7 @@ pub async fn replicate_iteration(inner: &mut ReplicationState, client_cache: &mu
     let now = Utc::now();
     let delta = now.signed_duration_since(inner.snapshot_cache.0);
 
-    if delta > chrono::Duration::minutes(5) {
+    if delta > inner.config.snapshot_cache_refresh_frequency {
         log::trace!("Updating snapshot cache");
 
         let snapshot_cache = inner.cache.lock().unwrap().clone();
