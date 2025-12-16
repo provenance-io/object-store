@@ -1,38 +1,26 @@
 use std::{net::AddrParseError, time::Duration};
 
-use fastrace::collector::ConsoleReporter;
+use fastrace::collector::Config;
+use fastrace_datadog::DatadogReporter;
 
 use crate::config::DatadogConfig;
 
-// https://docs.datadoghq.com/standard-attributes/
-// service	string	The unified service name for the application or service that is generating the data, used to correlate user sessions.
-// db.instance/statement/user/sql.table/row_count/operation/system
-// error.type/message/stack
-// rpc.system/service/method
-
+/// See all standard attributes: https://docs.datadoghq.com/standard-attributes/
 pub fn start_trace_reporter(dd_config: &DatadogConfig) {
-    // TODO: header managment?
-    // headers.append("Datadog-Meta-Tracer-Version", "v1.27.0".parse().unwrap());
-    // headers.append("Content-Type", "application/msgpack".parse().unwrap());
-    // old way posted via reqwest client to http://{}/v0.4/traces
+    let socket = dd_config.agent_addr().unwrap();
 
-    // TODO: configure DD/Console by env
-    if false {
-        fastrace_datadog::DatadogReporter::new(
-            dd_config.agent_addr().unwrap(),
-            dd_config.service.clone(),
-            "all",
-            "select",
-        );
-    }
+    let reporter = DatadogReporter::new(
+        dd_config.agent_addr().unwrap(),
+        dd_config.service.clone(),
+        "all",
+        "select",
+    );
 
-    // TODO: add logging - moved from grpc
-    // log::info!("Starting Datadog reporting to agent at {}", socket);
+    log::info!("Starting Datadog reporting to agent at {}", socket);
 
-    // TODO: warn on errors?
-    let config = fastrace::collector::Config::default().report_interval(Duration::from_millis(0));
-    // fastrace::collector::Config::default().report_interval(Duration::from_millis(5000));
-    fastrace::set_reporter(ConsoleReporter, config);
+    let config = Config::default().report_interval(Duration::from_millis(5000));
+
+    fastrace::set_reporter(reporter, config);
 }
 
 impl DatadogConfig {
