@@ -93,7 +93,7 @@ impl AppContext {
 
     /// 1. Init health service, if enabled (default: true)
     /// 2. Init replication, if enabled (default: false)
-    pub async fn init(&self) -> Option<HealthServer<impl Health + use<>>> {
+    pub async fn init(&mut self) -> Option<HealthServer<impl Health + use<>>> {
         let health_service = init_health_service(self).await;
 
         if self.config.replication_config.replication_enabled {

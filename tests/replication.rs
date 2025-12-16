@@ -4,7 +4,7 @@ use object_store::config::Config;
 use object_store::datastore::{PublicKey, replication_object_uuids};
 use object_store::pb;
 use object_store::proto_helpers::AudienceUtil;
-use object_store::replication::{ClientCache, reap_unknown_keys_iteration, replicate_iteration};
+use object_store::replication::client_cache::ClientCache;
 use object_store::types::Result;
 
 use testcontainers::clients;
@@ -303,17 +303,11 @@ async fn end_to_end_replication() -> Result<()> {
         }
     }
 
-    let mut client_cache_one = ClientCache::new(
-        config_one.replication_config.backoff_min_wait,
-        config_one.replication_config.backoff_max_wait,
-    );
-
     // run replication iteration
     // Check source server for correct counts: batch size 2, cache seeded with remote key for party_2 => (0,1,3)
     // Verify remote server is all 0
+    state_one.replicate_iteration().await;
     {
-        replicate_iteration(&mut state_one, &mut client_cache_one).await;
-
         let objects1 = replication_object_uuids(&db_pool_one, &audience1.public_key(), 50).await?;
         let objects2 = replication_object_uuids(&db_pool_one, &audience2.public_key(), 50).await?;
         let objects3 = replication_object_uuids(&db_pool_one, &audience3.public_key(), 50).await?;
@@ -333,10 +327,8 @@ async fn end_to_end_replication() -> Result<()> {
 
     // Run again
     // Check source server for correct counts: batch size 2, cache seeded with remote key for party_2 => (0,0,3)
-
+    state_one.replicate_iteration().await;
     {
-        replicate_iteration(&mut state_one, &mut client_cache_one).await;
-
         let objects1 = replication_object_uuids(&db_pool_one, &audience1.public_key(), 50).await?;
         let objects2 = replication_object_uuids(&db_pool_one, &audience2.public_key(), 50).await?;
         let objects3 = replication_object_uuids(&db_pool_one, &audience3.public_key(), 50).await?;
@@ -399,7 +391,7 @@ async fn late_local_url_can_cleanup() -> Result<()> {
     let (db_port, _postgres) = start_containers(&docker).await;
     let config = test_config_replication(db_port);
 
-    let (db_pool, cache, _, config) = start_test_server(config, None).await;
+    let (db_pool, cache, replication_state, config) = start_test_server(config, None).await;
 
     let (audience1, signature1) = party_1();
     let (audience3, signature3) = party_3();
@@ -483,7 +475,7 @@ async fn late_local_url_can_cleanup() -> Result<()> {
         });
     }
 
-    reap_unknown_keys_iteration(&db_pool, &cache).await;
+    replication_state.reap_unknown_keys_iteration().await;
 
     let objects1 = replication_object_uuids(&db_pool, &audience1.public_key(), 50).await?;
     let objects3 = replication_object_uuids(&db_pool, &audience3.public_key(), 50).await?;

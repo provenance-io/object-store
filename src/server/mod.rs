@@ -22,7 +22,7 @@ fn base_server(config: Arc<Config>) -> Server<LoggingMiddlewareLayer> {
 
 /// 1. Run [AppContext::init]
 /// 2. Build and start server
-pub async fn configure_and_start_server(context: AppContext) -> Result<(), Error> {
+pub async fn configure_and_start_server(mut context: AppContext) -> Result<(), Error> {
     log::info!("Starting server on {:?}", context.config.url);
 
     let health_service = context.init().await;

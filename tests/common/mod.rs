@@ -236,7 +236,7 @@ pub async fn start_test_server(
         ..config
     });
 
-    let context = AppContext::new(updated_config.clone()).await.unwrap();
+    let mut context = AppContext::new(updated_config.clone()).await.unwrap();
     if let Some(remote_config) = remote_config {
         {
             let mut cache = context.cache.lock().unwrap();

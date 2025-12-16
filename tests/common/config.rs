@@ -43,7 +43,7 @@ pub fn test_config(db_port: u16) -> Config {
 
 pub fn test_config_replication(db_port: u16) -> Config {
     Config {
-        replication_config: ReplicationConfig::new(true, 2, 5, 5, Duration::minutes(5)),
+        replication_config: ReplicationConfig::new(true, 2, 0, 0, Duration::minutes(5)),
         dd_config: None,
         ..test_config(db_port)
     }
@@ -51,7 +51,7 @@ pub fn test_config_replication(db_port: u16) -> Config {
 
 pub fn test_config_no_replication(db_port: u16) -> Config {
     Config {
-        replication_config: ReplicationConfig::new(false, 2, 5, 5, Duration::minutes(5)),
+        replication_config: ReplicationConfig::new(false, 2, 0, 0, Duration::minutes(5)),
         dd_config: None,
         ..test_config(db_port)
     }
