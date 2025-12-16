@@ -84,6 +84,7 @@ where
         let mut inner = std::mem::replace(&mut self.inner, clone);
 
         let default_status_code: HeaderValue = self.default_status_code.clone();
+        let span_tags = self.span_tags.clone();
 
         let headers: HeaderMap = req.headers().clone();
 
@@ -115,14 +116,18 @@ where
                     SpanContext::new(parent_trace_id, parent_span_id)
                 };
 
-                Span::root("grpc.server", parent_span_context)
+                let span = Span::root("grpc.server", parent_span_context);
+
+                if parent_span_context.span_id == SpanId(0) {
+                    span.add_properties(|| span_tags);
+                }
+
+                span
             };
 
             let response = inner.call(req).in_span(root_span).await?;
 
-            let status_code = response.status_code(default_status_code);
-
-            match status_code {
+            match response.status_code(default_status_code) {
                 tonic::Code::Ok => {}
                 _ => {
                     log::warn!("rpc call failed");
