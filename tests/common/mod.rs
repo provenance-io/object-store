@@ -224,7 +224,7 @@ pub async fn start_test_server(
 ) -> (
     Arc<PgPool>,
     Arc<Mutex<Cache>>,
-    Option<ReplicationState>,
+    ReplicationState,
     Arc<Config>,
 ) {
     let listener = tokio::net::TcpListener::bind(config.url).await.unwrap();
@@ -237,14 +237,13 @@ pub async fn start_test_server(
     });
 
     let context = AppContext::new(updated_config.clone()).await.unwrap();
-    context.init().await;
-
     if let Some(remote_config) = remote_config {
         {
             let mut cache = context.cache.lock().unwrap();
             seed_cache(&mut cache, remote_config);
         };
     }
+    context.init().await;
 
     // TODO: call configure_and_start_server here once it supports using a listener
     tokio::spawn(async move {

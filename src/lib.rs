@@ -47,7 +47,7 @@ pub struct AppContext {
     pub public_key_service: PublicKeyGrpc,
     pub mailbox_service: MailboxGrpc,
     pub object_service: ObjectGrpc,
-    pub replication_state: Option<ReplicationState>,
+    pub replication_state: ReplicationState,
 }
 
 impl AppContext {
@@ -71,16 +71,12 @@ impl AppContext {
         let replication_state = {
             let replication_config = config.replication_config.clone();
 
-            if replication_config.replication_enabled {
-                Some(ReplicationState::new(
-                    cache.clone(),
-                    replication_config,
-                    db_pool.clone(),
-                    storage.clone(),
-                ))
-            } else {
-                None
-            }
+            ReplicationState::new(
+                cache.clone(),
+                replication_config,
+                db_pool.clone(),
+                storage.clone(),
+            )
         };
 
         Ok(Self {
@@ -100,7 +96,9 @@ impl AppContext {
     pub async fn init(&self) -> Option<HealthServer<impl Health + use<>>> {
         let health_service = init_health_service(self).await;
 
-        self.replication_state.clone().map(|r| r.init());
+        if self.config.replication_config.replication_enabled {
+            self.replication_state.init();
+        }
 
         health_service
     }

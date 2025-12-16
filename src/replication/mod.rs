@@ -314,7 +314,7 @@ impl<T> DerefMut for ID<T> {
 pub struct ReplicationState {
     cache: Arc<Mutex<Cache>>,
     config: ReplicationConfig,
-    snapshot_cache: (DateTime<Utc>, Cache),
+    pub snapshot_cache: (DateTime<Utc>, Cache), // TODO: remove
     db_pool: Arc<PgPool>,
     storage: Arc<Box<dyn Storage>>,
 }
@@ -327,7 +327,7 @@ impl ReplicationState {
         storage: Arc<Box<dyn Storage>>,
     ) -> Self {
         let snapshot_cache = cache.lock().unwrap().clone();
-        let snapshot_cache = (Utc::now(), snapshot_cache);
+        let snapshot_cache = (DateTime::UNIX_EPOCH, snapshot_cache);
 
         Self {
             cache,
@@ -458,8 +458,9 @@ async fn replicate_public_key(
 pub async fn replicate_iteration(inner: &mut ReplicationState, client_cache: &mut ClientCache) {
     // Update snapshot cache every 5 minutes
     let now = Utc::now();
-    let last_cache_update = &inner.snapshot_cache.0;
-    if last_cache_update.time() + chrono::Duration::minutes(5) < now.time() {
+    let delta = now.signed_duration_since(inner.snapshot_cache.0);
+
+    if delta > chrono::Duration::minutes(5) {
         log::trace!("Updating snapshot cache");
 
         let snapshot_cache = inner.cache.lock().unwrap().clone();

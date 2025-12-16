@@ -168,8 +168,6 @@ async fn replication_can_be_disabled() -> Result<()> {
 
 #[tokio::test]
 async fn end_to_end_replication() -> Result<()> {
-    env_logger::init();
-
     let docker = clients::Cli::default();
 
     let (db_port_one, _postgres_one) = start_containers(&docker).await;
@@ -181,9 +179,8 @@ async fn end_to_end_replication() -> Result<()> {
         ..test_config_replication(db_port_two)
     };
 
-    let (db_pool_one, _, state_one, config_one) =
+    let (db_pool_one, _, mut state_one, config_one) =
         start_test_server(config_one, Some(&config_two)).await;
-    let mut state_one = state_one.expect("Replication enabled");
 
     let (db_pool_two, _, _, config_two) = start_test_server(config_two, None).await;
 
@@ -192,6 +189,8 @@ async fn end_to_end_replication() -> Result<()> {
     let (audience1, signature1) = party_1();
     let (audience2, signature2) = party_2();
     let (audience3, signature3) = party_3();
+
+    let payload4 = "testing small payload 4".as_bytes();
 
     // put object for party_1 - requires no replication
     {
@@ -236,7 +235,7 @@ async fn end_to_end_replication() -> Result<()> {
         );
         let response = client_one.put(request).await;
 
-        // TODO remove theses matches - hard to read and coudl let undefined states fall through
+        // TODO remove theses matches - hard to read and could let undefined states fall through
         match response {
             Ok(_) => (),
             _ => assert_eq!(format!("{:?}", response), ""),
@@ -265,10 +264,10 @@ async fn end_to_end_replication() -> Result<()> {
             vec![audience1.clone(), audience2.clone(), audience3.clone()],
             vec![signature1.clone(), signature2.clone(), signature3.clone()],
         );
-        let payload4: bytes::Bytes = "testing small payload 4".as_bytes().into();
+
         let request = put_helper(
             dime,
-            payload4,
+            payload4.into(),
             chunk_size,
             HashMap::default(),
             Vec::default(),
@@ -310,7 +309,7 @@ async fn end_to_end_replication() -> Result<()> {
     );
 
     // run replication iteration
-    // Check source server for correct counts
+    // Check source server for correct counts: batch size 2, cache seeded with remote key for party_2 => (0,1,3)
     // Verify remote server is all 0
     {
         replicate_iteration(&mut state_one, &mut client_cache_one).await;
@@ -333,6 +332,8 @@ async fn end_to_end_replication() -> Result<()> {
     }
 
     // Run again
+    // Check source server for correct counts: batch size 2, cache seeded with remote key for party_2 => (0,0,3)
+
     {
         replicate_iteration(&mut state_one, &mut client_cache_one).await;
 
@@ -361,9 +362,8 @@ async fn end_to_end_replication() -> Result<()> {
         let mut client_two = get_object_client(config_two.url).await;
 
         let public_key = audience3.public_key_decoded();
-        let payload4: bytes::Bytes = "testing small payload 4".as_bytes().into();
         let request = pb::HashRequest {
-            hash: hash(payload4),
+            hash: hash(payload4.into()),
             public_key,
         };
         let response_one = client_one.get(tonic::Request::new(request.clone())).await;
