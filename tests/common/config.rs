@@ -29,7 +29,6 @@ pub fn test_config(db_port: u16) -> Config {
         db_database: "postgres".to_owned(),
         db_schema: "public".to_owned(),
         storage_type: "file_system".to_owned(),
-        storage_base_url: None,
         storage_base_path: std::env::temp_dir().to_string_lossy().to_string(),
         storage_threshold: 5000,
         replication_config: ReplicationConfig::new(true, 2, 1, 1, Duration::minutes(5)),

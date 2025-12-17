@@ -70,9 +70,12 @@ impl Storage for FileSystem {
 
     #[trace(name = "file_system::fetch")]
     async fn fetch(&self, path: &StoragePath, content_length: u64) -> Result<Vec<u8>> {
-        let data = tokio::fs::read(self.get_path(path))
-            .await
-            .map_err(|e| StorageError::IoError(format!("{:?}", e)))?;
+        let full_path = self.get_path(path);
+        let absolute_path = full_path.canonicalize().unwrap_or(full_path.clone());
+
+        let data = tokio::fs::read(full_path).await.map_err(|e| {
+            StorageError::IoError(format!("Unable to fetch file: {:?} {:?}", absolute_path, e))
+        })?;
 
         if let Err(e) = self.validate_content_length(path, content_length, &data) {
             log::warn!("{:?}", e);

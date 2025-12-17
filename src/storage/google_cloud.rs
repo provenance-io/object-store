@@ -1,30 +1,26 @@
-use cloud_storage::client::Client;
+use bytes::Bytes;
 use fastrace_macro::trace;
+use google_cloud_storage::client::Storage as GcsStorage;
 
 use crate::storage::{Result, Storage, StorageError, StoragePath};
 
 #[derive(Debug)]
 pub struct GoogleCloud {
-    client: Client,
-    base_url: Option<String>,
-    bucket: String,
+    client: GcsStorage,
+    bucket_id: String,
 }
 
 impl GoogleCloud {
-    pub fn new(base_url: Option<String>, bucket: String) -> Self {
-        GoogleCloud {
-            client: Client::default(),
-            base_url,
-            bucket,
-        }
+    pub async fn new(
+        bucket_id: String,
+    ) -> std::result::Result<Self, google_cloud_gax::client_builder::Error> {
+        let client: GcsStorage = GcsStorage::builder().build().await?;
+
+        Ok(GoogleCloud { client, bucket_id })
     }
 
-    fn base_url_ref(&self) -> Option<&str> {
-        if let Some(base_url) = &self.base_url {
-            Some(base_url.as_str())
-        } else {
-            None
-        }
+    fn bucket(&self) -> String {
+        format!("projects/_/buckets/{}", self.bucket_id)
     }
 }
 
@@ -36,14 +32,10 @@ impl Storage for GoogleCloud {
             log::warn!("{:?}", e);
         }
 
+        // TODO bucket format = projects/_/buckets/{bucket_id} format.
         self.client
-            .object(self.base_url_ref())
-            .create(
-                self.bucket.as_str(),
-                data.to_vec(),
-                &path.file,
-                "application/octet-stream",
-            )
+            .write_object(self.bucket(), &path.file, Bytes::copy_from_slice(data))
+            .send_buffered()
             .await
             .map_err(|e| StorageError::IoError(format!("{:?}", e)))?;
 
@@ -52,12 +44,26 @@ impl Storage for GoogleCloud {
 
     #[trace(name = "google_cloud::fetch")]
     async fn fetch(&self, path: &StoragePath, content_length: u64) -> Result<Vec<u8>> {
-        let data = self
+        // TODO move map error into an impl and add extra info
+        let mut reader = self
             .client
-            .object(self.base_url_ref())
-            .download(self.bucket.as_str(), &path.file)
+            .read_object(self.bucket(), &path.file)
+            .send()
             .await
             .map_err(|e| StorageError::IoError(format!("{:?}", e)))?;
+
+        let data = {
+            let mut data = Vec::new();
+            while let Some(chunk) = reader
+                .next()
+                .await
+                .transpose()
+                .map_err(|e| StorageError::IoError(format!("{:?}", e)))?
+            {
+                data.extend_from_slice(&chunk);
+            }
+            data
+        };
 
         if let Err(e) = self.validate_content_length(path, content_length, &data) {
             log::warn!("{:?}", e);

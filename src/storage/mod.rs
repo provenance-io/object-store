@@ -2,7 +2,10 @@ mod error;
 mod file_system;
 mod google_cloud;
 
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 // forwarding declarations
 pub use error::*;
@@ -32,27 +35,34 @@ pub trait Storage: Send + Sync + std::fmt::Debug {
     ) -> Result<()> {
         if data.len() as u64 != content_length {
             Err(StorageError::ContentLengthError(format!(
-                "expected content length of {} and fetched content length of {} for {}/{}",
+                "expected content length of {} and fetched content length of {} for {:?}",
                 content_length,
                 data.len(),
-                &path.dir,
-                &path.file,
+                self.get_path(path).as_os_str(),
             )))
         } else {
             Ok(())
         }
     }
+
+    fn get_path(&self, path: &StoragePath) -> PathBuf {
+        Path::new(&path.dir).join(&path.file)
+    }
 }
 
-pub fn new_storage(config: &Config) -> core::result::Result<Arc<Box<dyn Storage>>, OsError> {
+// TODO fix await unwrap
+pub async fn new_storage(config: &Config) -> core::result::Result<Arc<Box<dyn Storage>>, OsError> {
     let storage = match config.storage_type.as_str() {
         "file_system" => Ok(Box::new(FileSystem::new(PathBuf::from(
             config.storage_base_path.as_str(),
         ))) as Box<dyn Storage>),
-        "google_cloud" => Ok(Box::new(GoogleCloud::new(
-            config.storage_base_url.clone(),
-            config.storage_base_path.clone(),
-        )) as Box<dyn Storage>),
+        "google_cloud" => {
+            let google_cloud = GoogleCloud::new(config.storage_base_path.clone())
+                .await
+                .unwrap();
+
+            Ok(Box::new(google_cloud) as Box<dyn Storage>)
+        }
         _ => Err(OsError::InvalidApplicationState("".to_owned())),
     }?;
 

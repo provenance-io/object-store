@@ -58,8 +58,6 @@ pub struct Config {
     pub db_schema: String,
     /// One of: `file_system`, `google_cloud`
     pub storage_type: String,
-    /// Only applicable for `[Config::storage_type] == "google_cloud"`
-    pub storage_base_url: Option<String>,
     pub storage_base_path: String,
     /// Objects with size, in bytes, below this threshold will be stored in database.
     /// Larger objects will be in configured storage
@@ -104,7 +102,6 @@ impl Config {
         let db_database = env::var("DB_NAME").expect("DB_NAME not set");
         let db_schema = env::var("DB_SCHEMA").expect("DB_SCHEMA not set");
         let storage_type = env::var("STORAGE_TYPE").expect("STORAGE_TYPE not set");
-        let storage_base_url = env::var("STORAGE_BASE_URL").ok();
         let storage_base_path = env::var("STORAGE_BASE_PATH").expect("STORAGE_BASE_PATH not set");
         let storage_threshold = env::var("STORAGE_THRESHOLD")
             // default to ~ 5KB
@@ -200,7 +197,6 @@ impl Config {
             db_database,
             db_schema,
             storage_type,
-            storage_base_url,
             storage_base_path,
             storage_threshold,
             replication_config,
