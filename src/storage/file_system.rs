@@ -17,16 +17,12 @@ impl FileSystem {
     }
 
     fn get_path(&self, path: &StoragePath) -> PathBuf {
-        let mut path_buf = self.base_url.clone();
-        path_buf.push(&path.dir);
-        path_buf.push(&path.file);
-        path_buf
+        self.base_url.clone().join(&path.dir).join(&path.file)
     }
 
     #[trace(name = "file_system::create_dir")]
     async fn create_dir(&self, path: &StoragePath) -> Result<()> {
-        let mut path_buf = self.base_url.clone();
-        path_buf.push(&path.dir);
+        let path_buf = self.base_url.clone().join(&path.dir);
 
         match tokio::fs::create_dir(&path_buf).await {
             Ok(_) => Ok(()),

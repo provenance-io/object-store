@@ -2,10 +2,7 @@ mod error;
 mod file_system;
 mod google_cloud;
 
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{fmt::Display, path::PathBuf, sync::Arc};
 
 // forwarding declarations
 pub use error::*;
@@ -19,6 +16,12 @@ use crate::{config::Config, types::OsError};
 pub struct StoragePath {
     pub dir: String,
     pub file: String,
+}
+
+impl Display for StoragePath {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}/{}", self.dir, self.file)
+    }
 }
 
 #[async_trait::async_trait]
@@ -35,18 +38,14 @@ pub trait Storage: Send + Sync + std::fmt::Debug {
     ) -> Result<()> {
         if data.len() as u64 != content_length {
             Err(StorageError::ContentLengthError(format!(
-                "expected content length of {} and fetched content length of {} for {:?}",
+                "expected content length of {} and fetched content length of {} for {}",
                 content_length,
                 data.len(),
-                self.get_path(path).as_os_str(),
+                path,
             )))
         } else {
             Ok(())
         }
-    }
-
-    fn get_path(&self, path: &StoragePath) -> PathBuf {
-        Path::new(&path.dir).join(&path.file)
     }
 }
 
@@ -57,9 +56,12 @@ pub async fn new_storage(config: &Config) -> core::result::Result<Arc<Box<dyn St
             config.storage_base_path.as_str(),
         ))) as Box<dyn Storage>),
         "google_cloud" => {
-            let google_cloud = GoogleCloud::new(config.storage_base_path.clone())
-                .await
-                .unwrap();
+            let google_cloud = GoogleCloud::new(
+                config.storage_base_url.clone(),
+                config.storage_base_path.clone(),
+            )
+            .await
+            .unwrap();
 
             Ok(Box::new(google_cloud) as Box<dyn Storage>)
         }
