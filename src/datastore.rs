@@ -47,8 +47,8 @@ pub struct Object {
     pub dime_uuid: uuid::Uuid,
     pub hash: String,
     pub unique_hash: String,
-    pub content_length: i64,
-    pub dime_length: i64,
+    pub content_length: usize,
+    pub dime_length: usize,
     pub directory: String,
     pub name: String,
     pub payload: Option<Vec<u8>>,
@@ -63,8 +63,8 @@ impl FromRow<'_, sqlx::postgres::PgRow> for Object {
             dime_uuid: row.try_get::<uuid::Uuid, _>("dime_uuid")?,
             hash: row.try_get("hash")?,
             unique_hash: row.try_get("unique_hash")?,
-            content_length: row.try_get("content_length")?,
-            dime_length: row.try_get("dime_length")?,
+            content_length: row.try_get::<i64, _>("content_length")? as usize,
+            dime_length: row.try_get::<i64, _>("dime_length")? as usize,
             directory: row.try_get("directory")?,
             name: row.try_get("name")?,
             payload: row.try_get("payload")?,
@@ -581,8 +581,8 @@ ON CONFLICT DO NOTHING
         .bind(dime.uuid)
         .bind(&dime_properties.hash)
         .bind(&unique_hash)
-        .bind(dime_properties.content_length)
-        .bind(dime_properties.dime_length);
+        .bind(dime_properties.content_length as i64)
+        .bind(dime_properties.dime_length as i64);
     let query = if let Some(raw_dime) = raw_dime {
         query
             .bind(NOT_STORAGE_BACKED)

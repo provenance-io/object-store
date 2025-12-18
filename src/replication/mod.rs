@@ -161,11 +161,7 @@ impl ReplicationState {
                     file: object.name.clone(),
                 };
 
-                let payload = match self
-                    .storage
-                    .fetch(&storage_path, object.dime_length as u64)
-                    .await
-                {
+                let payload = match self.storage.fetch(&storage_path, object.dime_length).await {
                     Ok(data) => data,
                     Err(e) => {
                         return Err(ReplicationErr::new(

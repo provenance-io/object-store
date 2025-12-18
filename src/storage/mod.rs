@@ -27,18 +27,18 @@ impl Display for StoragePath {
 #[async_trait::async_trait]
 pub trait Storage: Send + Sync + std::fmt::Debug {
     // store should be idempotent
-    async fn store(&self, path: &StoragePath, content_length: u64, data: &[u8]) -> Result<()>;
-    async fn fetch(&self, path: &StoragePath, content_length: u64) -> Result<Vec<u8>>;
+    async fn store(&self, path: &StoragePath, content_length: usize, data: &[u8]) -> Result<()>;
+    async fn fetch(&self, path: &StoragePath, content_length: usize) -> Result<Vec<u8>>;
 
     fn validate_content_length(
         &self,
         path: &StoragePath,
-        content_length: u64,
+        content_length: usize,
         data: &[u8],
     ) -> Result<()> {
-        if data.len() as u64 != content_length {
+        if data.len() != content_length {
             Err(StorageError::ContentLengthError(format!(
-                "expected content length of {} and fetched content length of {} for {}",
+                "expected ({}) and actual ({}) content lengths do not match for {}",
                 content_length,
                 data.len(),
                 path,
@@ -56,12 +56,9 @@ pub async fn new_storage(config: &Config) -> core::result::Result<Arc<Box<dyn St
             config.storage_base_path.as_str(),
         ))) as Box<dyn Storage>),
         "google_cloud" => {
-            let google_cloud = GoogleCloud::new(
-                config.storage_base_url.clone(),
-                config.storage_base_path.clone(),
-            )
-            .await
-            .unwrap();
+            let google_cloud = GoogleCloud::new(config.storage_base_path.clone())
+                .await
+                .unwrap();
 
             Ok(Box::new(google_cloud) as Box<dyn Storage>)
         }

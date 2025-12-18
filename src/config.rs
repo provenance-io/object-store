@@ -62,7 +62,7 @@ pub struct Config {
     pub storage_base_path: String,
     /// Objects with size, in bytes, below this threshold will be stored in database.
     /// Larger objects will be in configured storage
-    pub storage_threshold: u32,
+    pub storage_threshold: usize,
     pub replication_config: ReplicationConfig,
     /// If None, trace middleware [MinitraceGrpcMiddlewareLayer][crate::middleware::MinitraceGrpcMiddlewareLayer] disabled
     pub dd_config: Option<DatadogConfig>,

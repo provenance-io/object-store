@@ -37,7 +37,7 @@ impl FileSystem {
 #[async_trait::async_trait]
 impl Storage for FileSystem {
     #[trace(name = "file_system::store")]
-    async fn store(&self, path: &StoragePath, content_length: u64, data: &[u8]) -> Result<()> {
+    async fn store(&self, path: &StoragePath, content_length: usize, data: &[u8]) -> Result<()> {
         if let Err(e) = self.validate_content_length(path, content_length, data) {
             log::warn!("{:?}", e);
         }
@@ -65,7 +65,7 @@ impl Storage for FileSystem {
     }
 
     #[trace(name = "file_system::fetch")]
-    async fn fetch(&self, path: &StoragePath, content_length: u64) -> Result<Vec<u8>> {
+    async fn fetch(&self, path: &StoragePath, content_length: usize) -> Result<Vec<u8>> {
         let full_path = self.get_path(path);
         let absolute_path = full_path.canonicalize().unwrap_or(full_path.clone());
 
@@ -105,7 +105,7 @@ mod tests {
         };
         let data = b"hello world";
 
-        assert!(storage.store(&path, 11_u64, data).await.is_ok());
+        assert!(storage.store(&path, 11, data).await.is_ok());
     }
 
     #[tokio::test]
@@ -125,9 +125,9 @@ mod tests {
         let data = b"hello world";
         let data_overwrite = b"world hello";
 
-        assert!(storage.store(&path, 11_u64, data).await.is_ok());
-        assert!(storage.store(&path, 11_u64, data_overwrite).await.is_ok());
-        assert_eq!(storage.fetch(&path, 11_u64).await, Ok(data.to_vec()));
+        assert!(storage.store(&path, 11, data).await.is_ok());
+        assert!(storage.store(&path, 11, data_overwrite).await.is_ok());
+        assert_eq!(storage.fetch(&path, 11).await, Ok(data.to_vec()));
     }
 
     // #[tokio::test]
@@ -190,9 +190,9 @@ mod tests {
             file: "nonexistent".to_owned(),
         };
 
-        assert!(storage.fetch(&path, 10_u64).await.is_err());
+        assert!(storage.fetch(&path, 10).await.is_err());
         assert!(storage.create_dir(&path).await.is_ok());
-        assert!(storage.fetch(&path, 10_u64).await.is_err());
+        assert!(storage.fetch(&path, 10).await.is_err());
     }
 
     #[tokio::test]
@@ -211,8 +211,8 @@ mod tests {
         };
         let data = b"hello world";
 
-        assert!(storage.store(&path, 11_u64, data).await.is_ok());
-        let result = storage.fetch(&path, 11_u64).await;
+        assert!(storage.store(&path, 11, data).await.is_ok());
+        let result = storage.fetch(&path, 11).await;
         assert_eq!(result, Ok(data.to_vec()));
     }
 

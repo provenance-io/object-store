@@ -4,7 +4,6 @@ use object_store::config::Config;
 use object_store::datastore::{PublicKey, replication_object_uuids};
 use object_store::pb;
 use object_store::proto_helpers::AudienceUtil;
-use object_store::replication::client_cache::ClientCache;
 use object_store::types::Result;
 
 use testcontainers::clients;
@@ -30,8 +29,6 @@ async fn get_object_count(db: &PgPool) -> i64 {
     row.0
 }
 
-// TODO some tests started logging debug and info
-
 #[tokio::test]
 async fn client_caching() -> Result<()> {
     let docker = clients::Cli::default();
@@ -42,29 +39,28 @@ async fn client_caching() -> Result<()> {
     let (db_port_two, _postgres_two) = start_containers(&docker).await;
     let config_two = test_config_replication(db_port_two);
 
-    let (_, _, _, config_one) = start_test_server(config_one, Some(&config_two)).await;
+    let (_, _, replication_state_one, config_one) =
+        start_test_server(config_one, Some(&config_two)).await;
 
     let url_one = format!("tcp://{}", config_one.url);
 
-    let mut client_cache = ClientCache::new(
-        config_one.replication_config.backoff_min_wait,
-        config_one.replication_config.backoff_max_wait,
-    );
+    let mut client_cache = replication_state_one.client_cache.lock().await;
 
     // Client 1:
-
     // Check that ReplicationState connection caching works when given the same URL:
-    // the result from calling again with the same URL should be empty since the client is in use
+
     let client_one = client_cache.request(&url_one).await.unwrap().unwrap();
+    let client_one_id_first = *client_one.id();
+
+    // the result from calling again with the same URL should be empty since the client is in use
     assert!(client_cache.request(&url_one).await.unwrap().is_none());
 
-    let client_one_id_first = *client_one.id();
+    // When restored, then request should get an instance again
     client_cache.restore(&url_one, client_one).await.unwrap();
-    // we should get an instance again:
     let client_one = client_cache.request(&url_one).await.unwrap().unwrap();
     let client_one_id_second = *client_one.id();
-    // The IDs of the the two clients should be the same, since they originated from the
-    // same URL:
+
+    // The IDs of both clients should be the same since the URL is the same
     assert_eq!(client_one_id_first, client_one_id_second);
 
     // Client 2:
@@ -73,7 +69,7 @@ async fn client_caching() -> Result<()> {
 
     let client_two = client_cache.request(&url_two).await.unwrap().unwrap();
 
-    // Clients should be distince
+    // Clients should be distinct
     assert_ne!(client_one_id_first, client_two.id().clone());
 
     Ok(())

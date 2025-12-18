@@ -14,8 +14,8 @@ use std::time::SystemTime;
 #[derive(Debug)]
 pub struct DimeProperties {
     pub hash: String,
-    pub content_length: i64,
-    pub dime_length: i64,
+    pub content_length: usize,
+    pub dime_length: usize,
 }
 
 pub trait ObjectApiResponse {
@@ -37,8 +37,8 @@ impl ObjectApiResponse for Object {
             name: self.name.clone(),
             metadata: Some(ObjectMetadata {
                 sha512: Vec::new(), // TODO get hash of whole dime?
-                length: self.dime_length,
-                content_length: self.content_length,
+                length: self.dime_length as i64,
+                content_length: self.content_length as i64,
             }),
             created: Some(Into::<SystemTime>::into(self.created_at).into()),
         })

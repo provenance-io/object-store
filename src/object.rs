@@ -222,8 +222,8 @@ impl ObjectService for ObjectGrpc {
         let dime: Dime = byte_buffer.try_into().map_err(Into::<OsError>::into)?;
         let dime_properties = DimeProperties {
             hash,
-            content_length: header_chunk_header.content_length,
-            dime_length: raw_dime.len() as i64,
+            content_length: header_chunk_header.content_length as usize,
+            dime_length: raw_dime.len(),
         };
 
         if self.config.user_auth_enabled {
@@ -273,8 +273,7 @@ impl ObjectService for ObjectGrpc {
         // mail items should be under any reasonable threshold set, but explicitly check for
         // mail and always used database storage
         let is_mail = dime.metadata.contains_key(consts::MAILBOX_KEY);
-        let above_storage_threshold =
-            dime_properties.dime_length > self.config.storage_threshold.into();
+        let above_storage_threshold = dime_properties.dime_length > self.config.storage_threshold;
 
         let response = if !is_mail && above_storage_threshold {
             let response = datastore::put_object(
@@ -294,7 +293,7 @@ impl ObjectService for ObjectGrpc {
             };
 
             self.storage
-                .store(&storage_path, response.dime_length as u64, &raw_dime)
+                .store(&storage_path, response.dime_length, &raw_dime)
                 .await
                 .map_err(Into::<OsError>::into)?;
             response.to_response(&self.config)?
@@ -365,7 +364,7 @@ impl ObjectService for ObjectGrpc {
 
             let payload = self
                 .storage
-                .fetch(&storage_path, object.dime_length as u64)
+                .fetch(&storage_path, object.dime_length)
                 .await
                 .map_err(Into::<OsError>::into)?;
 
@@ -400,7 +399,7 @@ impl ObjectService for ObjectGrpc {
                 let header = if idx == 0 {
                     Some(StreamHeader {
                         name: consts::DIME_FIELD_NAME.to_owned(),
-                        content_length: object.content_length,
+                        content_length: object.content_length as i64,
                     })
                 } else {
                     None

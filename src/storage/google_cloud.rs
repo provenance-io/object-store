@@ -9,22 +9,16 @@ use crate::storage::{Result, Storage, StorageError, StoragePath};
 #[derive(Debug)]
 pub struct GoogleCloud {
     client: GcsStorage,
-    base_url: Option<String>,
     bucket_id: String,
 }
 
 impl GoogleCloud {
     pub async fn new(
-        base_url: Option<String>,
         bucket_id: String,
     ) -> std::result::Result<Self, google_cloud_gax::client_builder::Error> {
         let client: GcsStorage = GcsStorage::builder().build().await?;
 
-        Ok(GoogleCloud {
-            client,
-            base_url,
-            bucket_id,
-        })
+        Ok(GoogleCloud { client, bucket_id })
     }
 
     fn bucket(&self) -> String {
@@ -39,7 +33,7 @@ impl GoogleCloud {
 #[async_trait::async_trait]
 impl Storage for GoogleCloud {
     #[trace(name = "google_cloud::store")]
-    async fn store(&self, path: &StoragePath, content_length: u64, data: &[u8]) -> Result<()> {
+    async fn store(&self, path: &StoragePath, content_length: usize, data: &[u8]) -> Result<()> {
         if let Err(e) = self.validate_content_length(path, content_length, data) {
             log::warn!("{:?}", e);
         }
@@ -66,11 +60,10 @@ impl Storage for GoogleCloud {
     }
 
     #[trace(name = "google_cloud::fetch")]
-    async fn fetch(&self, path: &StoragePath, content_length: u64) -> Result<Vec<u8>> {
+    async fn fetch(&self, path: &StoragePath, content_length: usize) -> Result<Vec<u8>> {
         let bucket_path = self.bucket();
         let full_path = self.get_path(path);
 
-        // TODO move map error into an impl and add extra info
         let mut reader = self
             .client
             .read_object(&bucket_path, full_path.to_str().unwrap())
