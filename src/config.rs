@@ -164,6 +164,16 @@ impl Config {
             .unwrap_or("5".to_owned())
             .parse()
             .expect("REPLICATION_CACHE_REFRESH_MIN could not be parsed");
+        let replication_reap_unknown_keys_fixed_delay_seconds: u64 =
+            env::var("REPLICATION_REAP_UNKNOWN_KEYS_FIXED_DELAY_SECONDS")
+                .unwrap_or("3600".to_owned())
+                .parse()
+                .expect("REPLICATION_REAP_UNKNOWN_KEYS_FIXED_DELAY_SECONDS could not be parsed");
+        let replication_replicate_fixed_delay_seconds: u64 =
+            env::var("REPLICATION_REPLICATE_FIXED_DELAY_SECONDS")
+                .unwrap_or("1".to_owned())
+                .parse()
+                .expect("REPLICATION_REPLICATE_FIXED_DELAY_SECONDS could not be parsed");
 
         let logging_threshold_seconds: i32 = env::var("LOGGING_THRESHOLD_SECONDS")
             .unwrap_or("3".to_owned())
@@ -180,13 +190,19 @@ impl Config {
             .parse()
             .expect("HEALTH_SERVICE_ENABLED could not be parsed into a bool");
 
-        let replication_config = ReplicationConfig::new(
+        let replication_config = ReplicationConfig {
             replication_enabled,
             replication_batch_size,
+            reap_unknown_keys_fixed_delay: Duration::from_secs(
+                replication_reap_unknown_keys_fixed_delay_seconds,
+            ),
+            replicate_fixed_delay: Duration::from_secs(replication_replicate_fixed_delay_seconds),
             backoff_min_wait,
             backoff_max_wait,
-            chrono::Duration::minutes(replication_cache_refresh_min),
-        );
+            snapshot_cache_refresh_frequency: chrono::Duration::minutes(
+                replication_cache_refresh_min,
+            ),
+        };
 
         Arc::new(Self {
             url,
