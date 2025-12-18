@@ -1,7 +1,9 @@
 use std::env;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
+use std::time::Duration;
 
+use chrono::TimeDelta;
 use percent_encoding::NON_ALPHANUMERIC;
 
 #[derive(Debug)]
@@ -10,6 +12,37 @@ pub struct DatadogConfig {
     pub agent_port: u16,
     pub service: String,
     pub span_tags: Vec<(&'static str, String)>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ReplicationConfig {
+    pub replication_enabled: bool,
+    pub replication_batch_size: i32,
+    pub reap_unknown_keys_fixed_delay: Duration,
+    pub replicate_fixed_delay: Duration,
+    pub backoff_min_wait: i64,
+    pub backoff_max_wait: i64,
+    pub snapshot_cache_refresh_frequency: TimeDelta,
+}
+
+impl ReplicationConfig {
+    pub fn new(
+        replication_enabled: bool,
+        replication_batch_size: i32,
+        backoff_min_wait: i64,
+        backoff_max_wait: i64,
+        snapshot_cache_refresh_frequency: TimeDelta,
+    ) -> Self {
+        Self {
+            replication_enabled,
+            replication_batch_size,
+            reap_unknown_keys_fixed_delay: Duration::from_secs(60 * 60),
+            replicate_fixed_delay: Duration::from_secs(1),
+            backoff_min_wait,
+            backoff_max_wait,
+            snapshot_cache_refresh_frequency,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -25,18 +58,14 @@ pub struct Config {
     pub db_schema: String,
     /// One of: `file_system`, `google_cloud`
     pub storage_type: String,
-    /// Only applicable for `[Config::storage_type] == "google_cloud"`
     pub storage_base_url: Option<String>,
     pub storage_base_path: String,
     /// Objects with size, in bytes, below this threshold will be stored in database.
     /// Larger objects will be in configured storage
-    pub storage_threshold: u32,
-    pub replication_enabled: bool,
-    pub replication_batch_size: i32,
+    pub storage_threshold: usize,
+    pub replication_config: ReplicationConfig,
     /// If None, trace middleware [MinitraceGrpcMiddlewareLayer][crate::middleware::MinitraceGrpcMiddlewareLayer] disabled
     pub dd_config: Option<DatadogConfig>,
-    pub backoff_min_wait: i64,
-    pub backoff_max_wait: i64,
     pub logging_threshold_seconds: f64,
     pub trace_header: String,
     pub user_auth_enabled: bool,
@@ -131,6 +160,21 @@ impl Config {
             .unwrap_or("false".to_owned())
             .parse()
             .expect("REPLICATION_ENABLED could not be parsed into a bool");
+        let replication_cache_refresh_min: i64 = env::var("REPLICATION_CACHE_REFRESH_MIN")
+            .unwrap_or("5".to_owned())
+            .parse()
+            .expect("REPLICATION_CACHE_REFRESH_MIN could not be parsed");
+        let replication_reap_unknown_keys_fixed_delay_seconds: u64 =
+            env::var("REPLICATION_REAP_UNKNOWN_KEYS_FIXED_DELAY_SECONDS")
+                .unwrap_or("3600".to_owned())
+                .parse()
+                .expect("REPLICATION_REAP_UNKNOWN_KEYS_FIXED_DELAY_SECONDS could not be parsed");
+        let replication_replicate_fixed_delay_seconds: u64 =
+            env::var("REPLICATION_REPLICATE_FIXED_DELAY_SECONDS")
+                .unwrap_or("1".to_owned())
+                .parse()
+                .expect("REPLICATION_REPLICATE_FIXED_DELAY_SECONDS could not be parsed");
+
         let logging_threshold_seconds: i32 = env::var("LOGGING_THRESHOLD_SECONDS")
             .unwrap_or("3".to_owned())
             .parse()
@@ -146,6 +190,20 @@ impl Config {
             .parse()
             .expect("HEALTH_SERVICE_ENABLED could not be parsed into a bool");
 
+        let replication_config = ReplicationConfig {
+            replication_enabled,
+            replication_batch_size,
+            reap_unknown_keys_fixed_delay: Duration::from_secs(
+                replication_reap_unknown_keys_fixed_delay_seconds,
+            ),
+            replicate_fixed_delay: Duration::from_secs(replication_replicate_fixed_delay_seconds),
+            backoff_min_wait,
+            backoff_max_wait,
+            snapshot_cache_refresh_frequency: chrono::Duration::minutes(
+                replication_cache_refresh_min,
+            ),
+        };
+
         Arc::new(Self {
             url,
             uri_host,
@@ -160,11 +218,8 @@ impl Config {
             storage_base_url,
             storage_base_path,
             storage_threshold,
-            replication_batch_size,
+            replication_config,
             dd_config,
-            backoff_min_wait,
-            backoff_max_wait,
-            replication_enabled,
             logging_threshold_seconds,
             trace_header,
             user_auth_enabled,

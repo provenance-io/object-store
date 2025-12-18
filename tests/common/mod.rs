@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex};
 use bytes::{BufMut, BytesMut};
 use futures::stream;
 use futures_util::TryStreamExt;
+use object_store::AppContext;
 use object_store::cache::Cache;
 use object_store::config::Config;
 use object_store::consts::{
@@ -25,11 +26,10 @@ use object_store::pb::chunk_bidi::Impl::{
 use object_store::pb::mailbox_service_server::MailboxServiceServer;
 use object_store::pb::object_service_server::ObjectServiceServer;
 use object_store::pb::{
-    chunk::Impl::{Data, End, Value},
     Chunk, ChunkBidi, ChunkEnd, MultiStreamHeader, StreamHeader,
+    chunk::Impl::{Data, End, Value},
 };
 use object_store::replication::ReplicationState;
-use object_store::AppContext;
 use prost::Message;
 use sqlx::{FromRow, PgPool};
 use std::hash::Hasher;
@@ -236,15 +236,14 @@ pub async fn start_test_server(
         ..config
     });
 
-    let context = AppContext::new(updated_config.clone()).await.unwrap();
-    context.init().await;
-
+    let mut context = AppContext::new(updated_config.clone()).await.unwrap();
     if let Some(remote_config) = remote_config {
         {
             let mut cache = context.cache.lock().unwrap();
             seed_cache(&mut cache, remote_config);
         };
     }
+    context.init().await;
 
     // TODO: call configure_and_start_server here once it supports using a listener
     tokio::spawn(async move {
@@ -258,17 +257,10 @@ pub async fn start_test_server(
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     println!("test server running on {:?}", local_addr);
 
-    let replication_state = ReplicationState::new(
-        context.cache.clone(),
-        context.config.clone(),
-        context.db_pool.clone(),
-        context.storage.clone(),
-    );
-
     (
         context.db_pool,
         context.cache,
-        replication_state,
+        context.replication_state,
         context.config,
     )
 }

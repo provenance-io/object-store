@@ -1,4 +1,4 @@
-use tonic::{metadata::MetadataMap, Status};
+use tonic::{Status, metadata::MetadataMap};
 
 pub trait Authorization {
     fn authorize(&self, metadata: &MetadataMap) -> Result<(), Status>;

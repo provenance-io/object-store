@@ -1,10 +1,9 @@
 mod common;
 
 use object_store::config::Config;
-use object_store::datastore::{replication_object_uuids, PublicKey};
+use object_store::datastore::{PublicKey, replication_object_uuids};
 use object_store::pb;
 use object_store::proto_helpers::AudienceUtil;
-use object_store::replication::{reap_unknown_keys_iteration, replicate_iteration, ClientCache};
 use object_store::types::Result;
 
 use testcontainers::clients;
@@ -40,27 +39,28 @@ async fn client_caching() -> Result<()> {
     let (db_port_two, _postgres_two) = start_containers(&docker).await;
     let config_two = test_config_replication(db_port_two);
 
-    let (_, _, _, config_one) = start_test_server(config_one, Some(&config_two)).await;
+    let (_, _, replication_state_one, config_one) =
+        start_test_server(config_one, Some(&config_two)).await;
 
     let url_one = format!("tcp://{}", config_one.url);
 
-    let mut client_cache =
-        ClientCache::new(config_one.backoff_min_wait, config_one.backoff_max_wait);
+    let mut client_cache = replication_state_one.client_cache.lock().await;
 
     // Client 1:
-
     // Check that ReplicationState connection caching works when given the same URL:
-    // the result from calling again with the same URL should be empty since the client is in use
+
     let client_one = client_cache.request(&url_one).await.unwrap().unwrap();
+    let client_one_id_first = *client_one.id();
+
+    // the result from calling again with the same URL should be empty since the client is in use
     assert!(client_cache.request(&url_one).await.unwrap().is_none());
 
-    let client_one_id_first = *client_one.id();
+    // When restored, then request should get an instance again
     client_cache.restore(&url_one, client_one).await.unwrap();
-    // we should get an instance again:
     let client_one = client_cache.request(&url_one).await.unwrap().unwrap();
     let client_one_id_second = *client_one.id();
-    // The IDs of the the two clients should be the same, since they originated from the
-    // same URL:
+
+    // The IDs of both clients should be the same since the URL is the same
     assert_eq!(client_one_id_first, client_one_id_second);
 
     // Client 2:
@@ -69,7 +69,7 @@ async fn client_caching() -> Result<()> {
 
     let client_two = client_cache.request(&url_two).await.unwrap().unwrap();
 
-    // Clients should be distince
+    // Clients should be distinct
     assert_ne!(client_one_id_first, client_two.id().clone());
 
     Ok(())
@@ -164,8 +164,6 @@ async fn replication_can_be_disabled() -> Result<()> {
 
 #[tokio::test]
 async fn end_to_end_replication() -> Result<()> {
-    env_logger::init();
-
     let docker = clients::Cli::default();
 
     let (db_port_one, _postgres_one) = start_containers(&docker).await;
@@ -179,6 +177,7 @@ async fn end_to_end_replication() -> Result<()> {
 
     let (db_pool_one, _, mut state_one, config_one) =
         start_test_server(config_one, Some(&config_two)).await;
+
     let (db_pool_two, _, _, config_two) = start_test_server(config_two, None).await;
 
     let mut client_one = get_object_client(config_one.url).await;
@@ -186,6 +185,8 @@ async fn end_to_end_replication() -> Result<()> {
     let (audience1, signature1) = party_1();
     let (audience2, signature2) = party_2();
     let (audience3, signature3) = party_3();
+
+    let payload4 = "testing small payload 4".as_bytes();
 
     // put object for party_1 - requires no replication
     {
@@ -230,7 +231,7 @@ async fn end_to_end_replication() -> Result<()> {
         );
         let response = client_one.put(request).await;
 
-        // TODO remove theses matches - hard to read and coudl let undefined states fall through
+        // TODO remove theses matches - hard to read and could let undefined states fall through
         match response {
             Ok(_) => (),
             _ => assert_eq!(format!("{:?}", response), ""),
@@ -259,10 +260,10 @@ async fn end_to_end_replication() -> Result<()> {
             vec![audience1.clone(), audience2.clone(), audience3.clone()],
             vec![signature1.clone(), signature2.clone(), signature3.clone()],
         );
-        let payload4: bytes::Bytes = "testing small payload 4".as_bytes().into();
+
         let request = put_helper(
             dime,
-            payload4,
+            payload4.into(),
             chunk_size,
             HashMap::default(),
             Vec::default(),
@@ -298,15 +299,11 @@ async fn end_to_end_replication() -> Result<()> {
         }
     }
 
-    let mut client_cache_one =
-        ClientCache::new(config_one.backoff_min_wait, config_one.backoff_max_wait);
-
     // run replication iteration
-    // Check source server for correct counts
+    // Check source server for correct counts: batch size 2, cache seeded with remote key for party_2 => (0,1,3)
     // Verify remote server is all 0
+    state_one.replicate_iteration().await;
     {
-        replicate_iteration(&mut state_one, &mut client_cache_one).await;
-
         let objects1 = replication_object_uuids(&db_pool_one, &audience1.public_key(), 50).await?;
         let objects2 = replication_object_uuids(&db_pool_one, &audience2.public_key(), 50).await?;
         let objects3 = replication_object_uuids(&db_pool_one, &audience3.public_key(), 50).await?;
@@ -325,9 +322,9 @@ async fn end_to_end_replication() -> Result<()> {
     }
 
     // Run again
+    // Check source server for correct counts: batch size 2, cache seeded with remote key for party_2 => (0,0,3)
+    state_one.replicate_iteration().await;
     {
-        replicate_iteration(&mut state_one, &mut client_cache_one).await;
-
         let objects1 = replication_object_uuids(&db_pool_one, &audience1.public_key(), 50).await?;
         let objects2 = replication_object_uuids(&db_pool_one, &audience2.public_key(), 50).await?;
         let objects3 = replication_object_uuids(&db_pool_one, &audience3.public_key(), 50).await?;
@@ -353,9 +350,8 @@ async fn end_to_end_replication() -> Result<()> {
         let mut client_two = get_object_client(config_two.url).await;
 
         let public_key = audience3.public_key_decoded();
-        let payload4: bytes::Bytes = "testing small payload 4".as_bytes().into();
         let request = pb::HashRequest {
-            hash: hash(payload4),
+            hash: hash(payload4.into()),
             public_key,
         };
         let response_one = client_one.get(tonic::Request::new(request.clone())).await;
@@ -391,7 +387,7 @@ async fn late_local_url_can_cleanup() -> Result<()> {
     let (db_port, _postgres) = start_containers(&docker).await;
     let config = test_config_replication(db_port);
 
-    let (db_pool, cache, _, config) = start_test_server(config, None).await;
+    let (db_pool, cache, replication_state, config) = start_test_server(config, None).await;
 
     let (audience1, signature1) = party_1();
     let (audience3, signature3) = party_3();
@@ -475,7 +471,7 @@ async fn late_local_url_can_cleanup() -> Result<()> {
         });
     }
 
-    reap_unknown_keys_iteration(&db_pool, &cache).await;
+    replication_state.reap_unknown_keys_iteration().await;
 
     let objects1 = replication_object_uuids(&db_pool, &audience1.public_key(), 50).await?;
     let objects3 = replication_object_uuids(&db_pool, &audience3.public_key(), 50).await?;

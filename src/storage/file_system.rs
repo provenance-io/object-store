@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use minitrace_macro::trace;
+use fastrace_macro::trace;
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt;
 
@@ -17,16 +17,12 @@ impl FileSystem {
     }
 
     fn get_path(&self, path: &StoragePath) -> PathBuf {
-        let mut path_buf = self.base_url.clone();
-        path_buf.push(&path.dir);
-        path_buf.push(&path.file);
-        path_buf
+        self.base_url.clone().join(&path.dir).join(&path.file)
     }
 
-    #[trace("file_system::create_dir")]
+    #[trace(name = "file_system::create_dir")]
     async fn create_dir(&self, path: &StoragePath) -> Result<()> {
-        let mut path_buf = self.base_url.clone();
-        path_buf.push(&path.dir);
+        let path_buf = self.base_url.clone().join(&path.dir);
 
         match tokio::fs::create_dir(&path_buf).await {
             Ok(_) => Ok(()),
@@ -40,8 +36,8 @@ impl FileSystem {
 
 #[async_trait::async_trait]
 impl Storage for FileSystem {
-    #[trace("file_system::store")]
-    async fn store(&self, path: &StoragePath, content_length: u64, data: &[u8]) -> Result<()> {
+    #[trace(name = "file_system::store")]
+    async fn store(&self, path: &StoragePath, content_length: usize, data: &[u8]) -> Result<()> {
         if let Err(e) = self.validate_content_length(path, content_length, data) {
             log::warn!("{:?}", e);
         }
@@ -68,11 +64,14 @@ impl Storage for FileSystem {
         }
     }
 
-    #[trace("file_system::fetch")]
-    async fn fetch(&self, path: &StoragePath, content_length: u64) -> Result<Vec<u8>> {
-        let data = tokio::fs::read(self.get_path(path))
-            .await
-            .map_err(|e| StorageError::IoError(format!("{:?}", e)))?;
+    #[trace(name = "file_system::fetch")]
+    async fn fetch(&self, path: &StoragePath, content_length: usize) -> Result<Vec<u8>> {
+        let full_path = self.get_path(path);
+        let absolute_path = full_path.canonicalize().unwrap_or(full_path.clone());
+
+        let data = tokio::fs::read(full_path).await.map_err(|e| {
+            StorageError::IoError(format!("Unable to fetch file: {:?} {:?}", absolute_path, e))
+        })?;
 
         if let Err(e) = self.validate_content_length(path, content_length, &data) {
             log::warn!("{:?}", e);
@@ -88,7 +87,7 @@ mod tests {
     use crate::storage::*;
 
     use rand::distr::Alphanumeric;
-    use rand::{rng, Rng};
+    use rand::{Rng, rng};
 
     #[tokio::test]
     async fn store_file() {
@@ -106,7 +105,7 @@ mod tests {
         };
         let data = b"hello world";
 
-        assert!(storage.store(&path, 11_u64, data).await.is_ok());
+        assert!(storage.store(&path, 11, data).await.is_ok());
     }
 
     #[tokio::test]
@@ -126,9 +125,9 @@ mod tests {
         let data = b"hello world";
         let data_overwrite = b"world hello";
 
-        assert!(storage.store(&path, 11_u64, data).await.is_ok());
-        assert!(storage.store(&path, 11_u64, data_overwrite).await.is_ok());
-        assert_eq!(storage.fetch(&path, 11_u64).await, Ok(data.to_vec()));
+        assert!(storage.store(&path, 11, data).await.is_ok());
+        assert!(storage.store(&path, 11, data_overwrite).await.is_ok());
+        assert_eq!(storage.fetch(&path, 11).await, Ok(data.to_vec()));
     }
 
     // #[tokio::test]
@@ -191,9 +190,9 @@ mod tests {
             file: "nonexistent".to_owned(),
         };
 
-        assert!(storage.fetch(&path, 10_u64).await.is_err());
+        assert!(storage.fetch(&path, 10).await.is_err());
         assert!(storage.create_dir(&path).await.is_ok());
-        assert!(storage.fetch(&path, 10_u64).await.is_err());
+        assert!(storage.fetch(&path, 10).await.is_err());
     }
 
     #[tokio::test]
@@ -212,8 +211,8 @@ mod tests {
         };
         let data = b"hello world";
 
-        assert!(storage.store(&path, 11_u64, data).await.is_ok());
-        let result = storage.fetch(&path, 11_u64).await;
+        assert!(storage.store(&path, 11, data).await.is_ok());
+        let result = storage.fetch(&path, 11).await;
         assert_eq!(result, Ok(data.to_vec()));
     }
 

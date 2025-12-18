@@ -8,8 +8,8 @@ use std::str::FromStr;
 
 use crate::pb::chunk::Impl::{Data, End, Value};
 use crate::pb::chunk_bidi::Impl::{Chunk as ChunkEnum, MultiStreamHeader as MultiStreamHeaderEnum};
-use crate::pb::{public_key::Key, MultiStreamHeader, PublicKey};
 use crate::pb::{Audience, Chunk, ChunkBidi, ChunkEnd, ObjectResponse, StreamHeader};
+use crate::pb::{MultiStreamHeader, PublicKey, public_key::Key};
 
 pub fn create_multi_stream_header(
     uuid: uuid::Uuid,
@@ -54,10 +54,10 @@ pub fn create_stream_header_field(key: String, value: Vec<u8>) -> ChunkBidi {
     }
 }
 
-pub fn create_data_chunk(content_length: Option<i64>, chunk: Vec<u8>) -> ChunkBidi {
+pub fn create_data_chunk(content_length: Option<usize>, chunk: Vec<u8>) -> ChunkBidi {
     let header = content_length.map(|len| StreamHeader {
         name: consts::DIME_FIELD_NAME.to_owned(),
-        content_length: len,
+        content_length: len as i64,
     });
 
     let data_chunk = Chunk {
@@ -149,7 +149,7 @@ impl From<Vec<u8>> for PublicKey {
 
 #[cfg(test)]
 mod tests {
-    use base64::{prelude::BASE64_STANDARD, Engine};
+    use base64::{Engine, prelude::BASE64_STANDARD};
 
     use crate::{
         pb::{GetRequest, PublicKey},

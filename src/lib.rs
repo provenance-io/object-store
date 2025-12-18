@@ -10,9 +10,9 @@ use crate::{
     mailbox::MailboxGrpc,
     object::ObjectGrpc,
     public_key::PublicKeyGrpc,
-    replication::init_replication,
+    replication::ReplicationState,
     server::health::init_health_service,
-    storage::{new_storage, Storage},
+    storage::{Storage, new_storage},
     types::OsError,
 };
 
@@ -47,6 +47,7 @@ pub struct AppContext {
     pub public_key_service: PublicKeyGrpc,
     pub mailbox_service: MailboxGrpc,
     pub object_service: ObjectGrpc,
+    pub replication_state: ReplicationState,
 }
 
 impl AppContext {
@@ -56,7 +57,7 @@ impl AppContext {
     pub async fn new(config: Arc<Config>) -> Result<Self, OsError> {
         let db_pool = connect_and_migrate(&config).await?;
         let cache = Cache::new(db_pool.clone()).await?;
-        let storage = new_storage(&config)?;
+        let storage = new_storage(&config).await?;
 
         let public_key_service = PublicKeyGrpc::new(cache.clone(), db_pool.clone());
         let mailbox_service = MailboxGrpc::new(cache.clone(), config.clone(), db_pool.clone());
@@ -67,6 +68,17 @@ impl AppContext {
             storage.clone(),
         );
 
+        let replication_state = {
+            let replication_config = config.replication_config.clone();
+
+            ReplicationState::new(
+                cache.clone(),
+                replication_config,
+                db_pool.clone(),
+                storage.clone(),
+            )
+        };
+
         Ok(Self {
             config,
             cache,
@@ -75,15 +87,18 @@ impl AppContext {
             public_key_service,
             mailbox_service,
             object_service,
+            replication_state,
         })
     }
 
     /// 1. Init health service, if enabled (default: true)
     /// 2. Init replication, if enabled (default: false)
-    pub async fn init(&self) -> Option<HealthServer<impl Health>> {
+    pub async fn init(&mut self) -> Option<HealthServer<impl Health + use<>>> {
         let health_service = init_health_service(self).await;
 
-        init_replication(self);
+        if self.config.replication_config.replication_enabled {
+            self.replication_state.init();
+        }
 
         health_service
     }

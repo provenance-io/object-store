@@ -1,7 +1,7 @@
+use object_store::AppContext;
 use object_store::config::Config;
 use object_store::server::configure_and_start_server;
 use object_store::types::Result;
-use object_store::AppContext;
 
 #[tokio::main]
 async fn main() -> Result<()> {

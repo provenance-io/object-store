@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
-use sqlx::{postgres::PgPoolOptions, Error, Executor, PgPool};
+use fastrace::{Span, future::FutureExt, prelude::SpanContext};
+use sqlx::{Error, Executor, PgPool, postgres::PgPoolOptions};
 
 use crate::config::Config;
 
@@ -26,7 +27,10 @@ pub async fn connect_and_migrate(config: &Config) -> Result<Arc<PgPool>, Error> 
 
     log::debug!("Running migrations");
 
-    sqlx::migrate!().run(&pool).await?;
+    sqlx::migrate!()
+        .run(&pool)
+        .in_span(Span::root("database::migrate", SpanContext::random()))
+        .await?;
 
     Ok(Arc::new(pool))
 }

@@ -3,25 +3,25 @@ use crate::datastore;
 use crate::datastore::get_object_by_uuid;
 use crate::datastore::get_public_key_object_uuid;
 use crate::domain::{DimeProperties, ObjectApiResponse};
+use crate::pb::MultiStreamHeader;
 use crate::pb::chunk::Impl::{Data, End, Value};
 use crate::pb::chunk_bidi::Impl::{Chunk as ChunkEnum, MultiStreamHeader as MultiStreamHeaderEnum};
 use crate::pb::object_service_server::ObjectService;
-use crate::pb::MultiStreamHeader;
 use crate::pb::{Chunk, ChunkBidi, HashRequest, ObjectResponse, StreamHeader};
-use crate::proto_helpers::create_stream_end;
 use crate::proto_helpers::VecUtil;
+use crate::proto_helpers::create_stream_end;
 use crate::types::{GrpcResult, OsError};
 use crate::{
     cache::{Cache, PublicKeyState},
     config::Config,
-    dime::{format_dime_bytes, Dime, Signature},
+    dime::{Dime, Signature, format_dime_bytes},
     storage::{Storage, StoragePath},
 };
 
 use bytes::{BufMut, Bytes, BytesMut};
+use fastrace_macro::trace;
 use futures_util::StreamExt;
 use linked_hash_map::LinkedHashMap;
-use minitrace_macro::trace;
 use prost::Message;
 use sqlx::postgres::PgPool;
 use std::{
@@ -62,7 +62,7 @@ impl ObjectGrpc {
 
 #[tonic::async_trait]
 impl ObjectService for ObjectGrpc {
-    #[trace("object::put")]
+    #[trace(name = "object::put")]
     async fn put(
         &self,
         request: Request<Streaming<ChunkBidi>>,
@@ -110,7 +110,7 @@ impl ObjectService for ObjectGrpc {
             _ => {
                 return Err(Status::invalid_argument(
                     "Multipart upload must start with a multi stream header",
-                ))
+                ));
             }
         };
 
@@ -128,7 +128,7 @@ impl ObjectService for ObjectGrpc {
                     None => {
                         return Err(Status::invalid_argument(
                             "Multi stream must start with a header",
-                        ))
+                        ));
                     }
                 };
 
@@ -137,17 +137,17 @@ impl ObjectService for ObjectGrpc {
                     Some(Value(_)) => {
                         return Err(Status::invalid_argument(
                             "Chunk header must have data and not a value",
-                        ))
+                        ));
                     }
                     Some(End(_)) => {
                         return Err(Status::invalid_argument(
                             "Chunk header must have data and not an end of chunk",
-                        ))
+                        ));
                     }
                     None => {
                         return Err(Status::invalid_argument(
                             "Chunk header must have data and not an empty impl",
-                        ))
+                        ));
                     }
                 }
             }
@@ -186,7 +186,7 @@ impl ObjectService for ObjectGrpc {
                     None => {
                         return Err(Status::invalid_argument(
                             "Chunk header must have data and not an empty impl",
-                        ))
+                        ));
                     }
                 },
                 _ => return Err(Status::invalid_argument("Non chunk detected in stream")),
@@ -222,8 +222,8 @@ impl ObjectService for ObjectGrpc {
         let dime: Dime = byte_buffer.try_into().map_err(Into::<OsError>::into)?;
         let dime_properties = DimeProperties {
             hash,
-            content_length: header_chunk_header.content_length,
-            dime_length: raw_dime.len() as i64,
+            content_length: header_chunk_header.content_length as usize,
+            dime_length: raw_dime.len(),
         };
 
         if self.config.user_auth_enabled {
@@ -237,7 +237,9 @@ impl ObjectService for ObjectGrpc {
                     if let Some(cached_key) = cache.public_keys.get(&owner_public_key) {
                         cached_key.auth()?.authorize(&metadata)
                     } else {
-                        Err(Status::internal("this should not happen - key was resolved to Local state and then could not be fetched"))
+                        Err(Status::internal(
+                            "this should not happen - key was resolved to Local state and then could not be fetched",
+                        ))
                     }
                 }
                 PublicKeyState::Remote => Err(Status::permission_denied(format!(
@@ -254,7 +256,7 @@ impl ObjectService for ObjectGrpc {
         let replication_key_states = {
             let mut replication_key_states = Vec::new();
 
-            if self.config.replication_enabled {
+            if self.config.replication_config.replication_enabled {
                 let audience = dime
                     .unique_audience_without_owner_base64()
                     .map_err(|_| Status::invalid_argument("Invalid Dime proto - audience list"))?;
@@ -271,8 +273,7 @@ impl ObjectService for ObjectGrpc {
         // mail items should be under any reasonable threshold set, but explicitly check for
         // mail and always used database storage
         let is_mail = dime.metadata.contains_key(consts::MAILBOX_KEY);
-        let above_storage_threshold =
-            dime_properties.dime_length > self.config.storage_threshold.into();
+        let above_storage_threshold = dime_properties.dime_length > self.config.storage_threshold;
 
         let response = if !is_mail && above_storage_threshold {
             let response = datastore::put_object(
@@ -282,7 +283,7 @@ impl ObjectService for ObjectGrpc {
                 &properties,
                 replication_key_states,
                 None,
-                self.config.replication_enabled,
+                self.config.replication_config.replication_enabled,
             )
             .await?;
 
@@ -292,7 +293,7 @@ impl ObjectService for ObjectGrpc {
             };
 
             self.storage
-                .store(&storage_path, response.dime_length as u64, &raw_dime)
+                .store(&storage_path, response.dime_length, &raw_dime)
                 .await
                 .map_err(Into::<OsError>::into)?;
             response.to_response(&self.config)?
@@ -304,7 +305,7 @@ impl ObjectService for ObjectGrpc {
                 &properties,
                 replication_key_states,
                 Some(&raw_dime),
-                self.config.replication_enabled,
+                self.config.replication_config.replication_enabled,
             )
             .await?
             .to_response(&self.config)?
@@ -315,7 +316,7 @@ impl ObjectService for ObjectGrpc {
 
     type GetStream = ReceiverStream<GrpcResult<ChunkBidi>>;
 
-    #[trace("object::get")]
+    #[trace(name = "object::get")]
     async fn get(&self, request: Request<HashRequest>) -> GrpcResult<Response<Self::GetStream>> {
         let metadata = request.metadata().clone();
         let request = request.into_inner();
@@ -331,7 +332,9 @@ impl ObjectService for ObjectGrpc {
                     if let Some(cached_key) = cache.public_keys.get(&public_key) {
                         cached_key.auth()?.authorize(&metadata)
                     } else {
-                        Err(Status::internal("this should not happen - key was resolved to Local state and then could not be fetched"))
+                        Err(Status::internal(
+                            "this should not happen - key was resolved to Local state and then could not be fetched",
+                        ))
                     }
                 }
                 PublicKeyState::Remote => Err(Status::permission_denied(format!(
@@ -361,7 +364,7 @@ impl ObjectService for ObjectGrpc {
 
             let payload = self
                 .storage
-                .fetch(&storage_path, object.dime_length as u64)
+                .fetch(&storage_path, object.dime_length)
                 .await
                 .map_err(Into::<OsError>::into)?;
 
@@ -396,7 +399,7 @@ impl ObjectService for ObjectGrpc {
                 let header = if idx == 0 {
                     Some(StreamHeader {
                         name: consts::DIME_FIELD_NAME.to_owned(),
-                        content_length: object.content_length,
+                        content_length: object.content_length as i64,
                     })
                 } else {
                     None

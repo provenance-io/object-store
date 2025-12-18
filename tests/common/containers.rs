@@ -1,4 +1,4 @@
-use testcontainers::{clients::Cli, images, Container, RunnableImage};
+use testcontainers::{Container, RunnableImage, clients::Cli, images};
 
 /// Start all containers needed for integration tests:
 /// 1. postgres

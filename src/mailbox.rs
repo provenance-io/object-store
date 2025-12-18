@@ -8,7 +8,7 @@ use crate::{
     config::Config,
 };
 
-use minitrace_macro::trace;
+use fastrace_macro::trace;
 use sqlx::postgres::PgPool;
 use std::{
     str::FromStr,
@@ -40,7 +40,7 @@ impl MailboxGrpc {
 impl MailboxService for MailboxGrpc {
     type GetStream = tokio_stream::wrappers::ReceiverStream<GrpcResult<MailPayload>>;
 
-    #[trace("mailbox::get")]
+    #[trace(name = "mailbox::get")]
     async fn get(&self, request: Request<GetRequest>) -> GrpcResult<Response<Self::GetStream>> {
         let metadata = request.metadata().clone();
         let request = request.into_inner();
@@ -54,7 +54,9 @@ impl MailboxService for MailboxGrpc {
                     if let Some(cached_key) = cache.public_keys.get(&public_key) {
                         cached_key.auth()?.authorize(&metadata)
                     } else {
-                        Err(Status::internal("this should not happen - key was resolved to Local state and then could not be fetched"))
+                        Err(Status::internal(
+                            "this should not happen - key was resolved to Local state and then could not be fetched",
+                        ))
                     }
                 }
                 PublicKeyState::Remote => Err(Status::permission_denied(format!(
@@ -85,7 +87,7 @@ impl MailboxService for MailboxGrpc {
                     None => {
                         log::error!(
                             "mailbox object without a payload {}",
-                            object.uuid.as_hyphenated().to_string()
+                            object.uuid.as_hyphenated(),
                         );
 
                         if tx
@@ -114,7 +116,7 @@ impl MailboxService for MailboxGrpc {
         )))
     }
 
-    #[trace("mailbox::ack")]
+    #[trace(name = "mailbox::ack")]
     async fn ack(&self, request: Request<AckRequest>) -> GrpcResult<Response<()>> {
         let metadata = request.metadata().clone();
         let request = request.into_inner();
@@ -145,7 +147,9 @@ impl MailboxService for MailboxGrpc {
                     if let Some(cached_key) = cache.public_keys.get(&public_key) {
                         cached_key.auth()?.authorize(&metadata)
                     } else {
-                        Err(Status::internal("this should not happen - key was resolved to Local state and then could not be fetched"))
+                        Err(Status::internal(
+                            "this should not happen - key was resolved to Local state and then could not be fetched",
+                        ))
                     }
                 }
                 PublicKeyState::Remote => Err(Status::permission_denied(format!(

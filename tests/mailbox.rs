@@ -5,14 +5,14 @@ use object_store::config::Config;
 use object_store::consts::*;
 use object_store::datastore::PublicKey;
 use object_store::pb::{
-    mailbox_service_client::MailboxServiceClient, AckRequest, Audience, GetRequest,
+    AckRequest, Audience, GetRequest, mailbox_service_client::MailboxServiceClient,
 };
 use object_store::proto_helpers::{AudienceUtil, ObjectResponseUtil};
 
 use sqlx::postgres::PgPool;
 use testcontainers::clients;
-use tonic::transport::Channel;
 use tonic::Request;
+use tonic::transport::Channel;
 
 mod common;
 

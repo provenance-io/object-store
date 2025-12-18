@@ -1,38 +1,22 @@
+use fastrace::prelude::*;
+use reqwest::header::HeaderMap;
 use std::{
     fmt::Debug,
-    net::{IpAddr, SocketAddr},
-    sync::Arc,
     task::{Context, Poll},
 };
-
-use crate::config::Config;
-
-use minitrace::prelude::*;
-use reqwest::header::HeaderMap;
-use tokio::sync::mpsc::{Receiver, Sender};
-use tonic::{body::BoxBody, codegen::http::HeaderValue, transport::Body};
+use tonic::{Code, body::BoxBody, codegen::http::HeaderValue, transport::Body};
 use tower::{Layer, Service};
 
 // TODO add logging in Trace middleware
 
 #[derive(Debug, Clone)]
 pub struct MinitraceGrpcMiddlewareLayer {
-    config: Arc<Config>,
     span_tags: Vec<(&'static str, String)>,
-    sender: Sender<MinitraceSpans>,
 }
 
 impl MinitraceGrpcMiddlewareLayer {
-    pub fn new(
-        config: Arc<Config>,
-        span_tags: Vec<(&'static str, String)>,
-        sender: Sender<MinitraceSpans>,
-    ) -> Self {
-        Self {
-            config,
-            span_tags,
-            sender,
-        }
+    pub fn new(span_tags: Vec<(&'static str, String)>) -> Self {
+        Self { span_tags }
     }
 }
 
@@ -42,9 +26,7 @@ impl<S> Layer<S> for MinitraceGrpcMiddlewareLayer {
     fn layer(&self, service: S) -> Self::Service {
         MinitraceGrpcMiddleware {
             inner: service,
-            config: self.config.clone(),
             span_tags: self.span_tags.clone(),
-            sender: self.sender.clone(),
             default_status_code: HeaderValue::from_str("0").unwrap(),
         }
     }
@@ -53,10 +35,25 @@ impl<S> Layer<S> for MinitraceGrpcMiddlewareLayer {
 #[derive(Debug, Clone)]
 pub struct MinitraceGrpcMiddleware<S> {
     inner: S,
-    config: Arc<Config>,
     span_tags: Vec<(&'static str, String)>,
-    sender: Sender<MinitraceSpans>,
     default_status_code: HeaderValue,
+}
+
+pub trait ResponseUtil {
+    fn status_code(&self, default_status_code: HeaderValue) -> Code;
+}
+
+impl<T> ResponseUtil for tonic::codegen::http::Response<T> {
+    fn status_code(&self, default_status_code: HeaderValue) -> Code {
+        let status_code = self
+            .headers()
+            .get("grpc-status")
+            .unwrap_or(&default_status_code)
+            .to_str()
+            .unwrap();
+
+        tonic::Code::from_bytes(status_code.as_bytes())
+    }
 }
 
 impl<S> Service<tonic::codegen::http::Request<Body>> for MinitraceGrpcMiddleware<S>
@@ -78,6 +75,7 @@ where
         self.inner.poll_ready(cx)
     }
 
+    /// https://docs.datadoghq.com/tracing/trace_collection/trace_context_propagation/#custom-header-formats
     fn call(&mut self, req: tonic::codegen::http::Request<Body>) -> Self::Future {
         // This is necessary because tonic internally uses `tower::buffer::Buffer`.
         // See https://github.com/tower-rs/tower/issues/547#issuecomment-767629149
@@ -85,150 +83,58 @@ where
         let clone = self.inner.clone();
         let mut inner = std::mem::replace(&mut self.inner, clone);
 
-        let config = self.config.clone();
-        let mut span_tags = self.span_tags.clone();
-        let default_status_code = self.default_status_code.clone();
-        let sender = self.sender.clone();
+        let default_status_code: HeaderValue = self.default_status_code.clone();
+        let span_tags = self.span_tags.clone();
 
-        let headers = req.headers().clone();
-        let mut resource = req.uri().path().chars();
-        resource.next();
-        let resource = String::from(resource.as_str());
+        let headers: HeaderMap = req.headers().clone();
 
         Box::pin(async move {
-            let (root_span, collector) = Span::root("grpc.server");
+            let root_span = {
+                let parent_span_context = {
+                    let parent_span_id: SpanId =
+                        if let Some(parent_span_id_header) = headers.get("x-datadog-parent-id") {
+                            parent_span_id_header
+                                .to_str()
+                                .map(|h| h.parse())
+                                .map(|n| n.map(SpanId).unwrap_or(SpanId(0)))
+                                .unwrap_or(SpanId(0))
+                        } else {
+                            SpanId(0)
+                        };
+
+                    let parent_trace_id: TraceId =
+                        if let Some(parent_trace_id_header) = headers.get("x-datadog-trace-id") {
+                            parent_trace_id_header
+                                .to_str()
+                                .map(|h| h.parse())
+                                .map(|n| n.map(TraceId).unwrap_or(TraceId::random()))
+                                .unwrap_or(TraceId::random())
+                        } else {
+                            TraceId::random()
+                        };
+
+                    SpanContext::new(parent_trace_id, parent_span_id)
+                };
+
+                let span = Span::root("grpc.server", parent_span_context);
+
+                if parent_span_context.span_id == SpanId(0) {
+                    span.add_properties(|| span_tags);
+                }
+
+                span
+            };
+
             let response = inner.call(req).in_span(root_span).await?;
 
-            let status_code = response
-                .headers()
-                .get("grpc-status")
-                .unwrap_or(&default_status_code)
-                .to_str()
-                .unwrap();
-            let status_code = tonic::Code::from_bytes(status_code.as_bytes());
-            span_tags.push(("status.code", format!("{:?}", &status_code)));
-            let error_code = match status_code {
-                tonic::Code::Ok => 0i32,
+            match response.status_code(default_status_code) {
+                tonic::Code::Ok => {}
                 _ => {
-                    span_tags.push((
-                        "status.description",
-                        String::from(status_code.description()),
-                    ));
-                    1i32
+                    log::warn!("rpc call failed");
                 }
             };
-            let spans: Vec<SpanRecord> = collector
-                .collect()
-                .into_iter()
-                .map(|mut span| {
-                    if span.parent_id == 0 {
-                        span.properties.extend(span_tags.clone());
-                    }
-
-                    span
-                })
-                .collect();
-
-            let rand: u32 = rand::random(); // todo: what is an appropriate default span id if not present in headers, uuid? something other than random number?
-            let default_trace_id_header_value = HeaderValue::from_str(&rand.to_string()).unwrap();
-            let trace_id_header = headers
-                .get(&config.trace_header)
-                .unwrap_or(&default_trace_id_header_value)
-                .to_str();
-            let trace_id: u64 = trace_id_header.unwrap().parse::<u64>().unwrap();
-            let span_id_prefix: u32 = 0;
-            let default_parent_span_id_header_value =
-                HeaderValue::from_str(&rand.to_string()).unwrap();
-            let parent_span_id_header = headers
-                .get("x-datadog-parent-id")
-                .unwrap_or(&default_parent_span_id_header_value)
-                .to_str();
-            let parent_span_id: u64 = parent_span_id_header.unwrap().parse::<u64>().unwrap();
-
-            sender
-                .send(MinitraceSpans {
-                    r#type: String::from("rpc"),
-                    resource,
-                    error_code,
-                    trace_id,
-                    parent_span_id,
-                    span_id_prefix,
-                    spans,
-                })
-                .await
-                .unwrap_or(());
 
             Ok(response)
         })
     }
-}
-
-pub struct MinitraceSpans {
-    r#type: String,
-    resource: String,
-    error_code: i32,
-    trace_id: u64,
-    parent_span_id: u64,
-    span_id_prefix: u32,
-    spans: Vec<SpanRecord>,
-}
-
-pub async fn report_datadog_traces(
-    mut receiver: Receiver<MinitraceSpans>,
-    host: IpAddr,
-    port: u16,
-    service_name: String,
-) {
-    let socket = SocketAddr::new(host, port);
-
-    log::info!("Starting Datadog reporting to agent at {}", socket);
-
-    let headers = {
-        let mut headers = HeaderMap::new();
-        headers.append("Datadog-Meta-Tracer-Version", "v1.27.0".parse().unwrap());
-        headers.append("Content-Type", "application/msgpack".parse().unwrap());
-
-        headers
-    };
-
-    let client = reqwest::Client::builder().default_headers(headers).build();
-
-    match client {
-        Ok(client) => {
-            while let Some(spans) = receiver.recv().await {
-                let bytes = minitrace_datadog::encode(
-                    &service_name,
-                    &spans.r#type,
-                    &spans.resource,
-                    spans.error_code,
-                    spans.trace_id,
-                    spans.parent_span_id,
-                    spans.span_id_prefix,
-                    &spans.spans,
-                );
-
-                match bytes {
-                    Ok(bytes) => {
-                        let url = format!("http://{}/v0.4/traces", socket);
-                        let response = client.post(&url).body(bytes).send().await;
-
-                        if let Err(error) = response {
-                            log::warn!("error sending dd trace {:#?}", error);
-                        }
-                    }
-                    Err(error) => {
-                        log::warn!("Error encoding spans {:#?}", error);
-                    }
-                }
-            }
-        }
-        Err(error) => {
-            log::warn!(
-                "Error creating client for sending datadog traces {:#?}",
-                error
-            );
-        }
-    }
-
-    log::info!("Datadog reporting loop is shutting down");
 }

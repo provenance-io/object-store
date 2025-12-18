@@ -1,63 +1,95 @@
-use cloud_storage::client::Client;
-use minitrace_macro::trace;
+use std::path::{Path, PathBuf};
+
+use bytes::Bytes;
+use fastrace_macro::trace;
+use google_cloud_storage::client::Storage as GcsStorage;
 
 use crate::storage::{Result, Storage, StorageError, StoragePath};
 
 #[derive(Debug)]
 pub struct GoogleCloud {
-    client: Client,
-    base_url: Option<String>,
-    bucket: String,
+    client: GcsStorage,
+    bucket_id: String,
 }
 
 impl GoogleCloud {
-    pub fn new(base_url: Option<String>, bucket: String) -> Self {
-        GoogleCloud {
-            client: Client::default(),
-            base_url,
-            bucket,
-        }
+    pub async fn new(
+        bucket_id: String,
+    ) -> std::result::Result<Self, google_cloud_gax::client_builder::Error> {
+        let client: GcsStorage = GcsStorage::builder().build().await?;
+
+        Ok(GoogleCloud { client, bucket_id })
     }
 
-    fn base_url_ref(&self) -> Option<&str> {
-        if let Some(base_url) = &self.base_url {
-            Some(base_url.as_str())
-        } else {
-            None
-        }
+    fn bucket(&self) -> String {
+        format!("projects/_/buckets/{}", self.bucket_id)
+    }
+
+    fn get_path(&self, path: &StoragePath) -> PathBuf {
+        Path::new(&path.dir).join(&path.file)
     }
 }
 
 #[async_trait::async_trait]
 impl Storage for GoogleCloud {
-    #[trace("google_cloud::store")]
-    async fn store(&self, path: &StoragePath, content_length: u64, data: &[u8]) -> Result<()> {
+    #[trace(name = "google_cloud::store")]
+    async fn store(&self, path: &StoragePath, content_length: usize, data: &[u8]) -> Result<()> {
         if let Err(e) = self.validate_content_length(path, content_length, data) {
             log::warn!("{:?}", e);
         }
 
+        let bucket_path = self.bucket();
+        let full_path = self.get_path(path);
+
         self.client
-            .object(self.base_url_ref())
-            .create(
-                self.bucket.as_str(),
-                data.to_vec(),
-                &path.file,
-                "application/octet-stream",
+            .write_object(
+                &bucket_path,
+                full_path.to_str().unwrap(),
+                Bytes::copy_from_slice(data),
             )
+            .send_buffered()
             .await
-            .map_err(|e| StorageError::IoError(format!("{:?}", e)))?;
+            .map_err(|e| {
+                StorageError::IoError(format!(
+                    "Unable to store file: {:?} in bucket {}, {:?}",
+                    full_path, bucket_path, e
+                ))
+            })?;
 
         Ok(())
     }
 
-    #[trace("google_cloud::fetch")]
-    async fn fetch(&self, path: &StoragePath, content_length: u64) -> Result<Vec<u8>> {
-        let data = self
+    #[trace(name = "google_cloud::fetch")]
+    async fn fetch(&self, path: &StoragePath, content_length: usize) -> Result<Vec<u8>> {
+        let bucket_path = self.bucket();
+        let full_path = self.get_path(path);
+
+        let mut reader = self
             .client
-            .object(self.base_url_ref())
-            .download(self.bucket.as_str(), &path.file)
+            .read_object(&bucket_path, full_path.to_str().unwrap())
+            .send()
             .await
-            .map_err(|e| StorageError::IoError(format!("{:?}", e)))?;
+            .map_err(|e| {
+                StorageError::IoError(format!(
+                    "Unable to fetch file: {:?} from bucket {}, {:?}",
+                    full_path, bucket_path, e
+                ))
+            })?;
+
+        let data = {
+            let mut data = Vec::new();
+
+            while let Some(chunk) = reader.next().await.transpose().map_err(|e| {
+                StorageError::IoError(format!(
+                    "Unable to read file: {:?} from bucket {}, {:?}",
+                    full_path, bucket_path, e
+                ))
+            })? {
+                data.extend_from_slice(&chunk);
+            }
+
+            data
+        };
 
         if let Err(e) = self.validate_content_length(path, content_length, &data) {
             log::warn!("{:?}", e);
