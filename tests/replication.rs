@@ -6,8 +6,6 @@ use object_store::pb;
 use object_store::proto_helpers::AudienceUtil;
 use object_store::types::Result;
 
-use testcontainers_modules::testcontainers::clients;
-
 use std::collections::HashMap;
 
 use futures::StreamExt;
@@ -31,12 +29,10 @@ async fn get_object_count(db: &PgPool) -> i64 {
 
 #[tokio::test]
 async fn client_caching() -> Result<()> {
-    let docker = clients::Cli::default();
-
-    let (db_port_one, _postgres_one) = start_containers(&docker).await;
+    let (db_port_one, _postgres_one) = start_containers().await;
     let config_one = test_config_replication(db_port_one);
 
-    let (db_port_two, _postgres_two) = start_containers(&docker).await;
+    let (db_port_two, _postgres_two) = start_containers().await;
     let config_two = test_config_replication(db_port_two);
 
     let (_, _, replication_state_one, config_one) =
@@ -77,9 +73,7 @@ async fn client_caching() -> Result<()> {
 
 #[tokio::test]
 async fn replication_can_be_disabled() -> Result<()> {
-    let docker = clients::Cli::default();
-
-    let (db_port, _postgres) = start_containers(&docker).await;
+    let (db_port, _postgres) = start_containers().await;
 
     let config = test_config_no_replication(db_port);
     let (db_pool, _, _, config_one) = start_test_server(config, None).await;
@@ -164,12 +158,10 @@ async fn replication_can_be_disabled() -> Result<()> {
 
 #[tokio::test]
 async fn end_to_end_replication() -> Result<()> {
-    let docker = clients::Cli::default();
-
-    let (db_port_one, _postgres_one) = start_containers(&docker).await;
+    let (db_port_one, _postgres_one) = start_containers().await;
     let config_one = test_config_replication(db_port_one);
 
-    let (db_port_two, _postgres_two) = start_containers(&docker).await;
+    let (db_port_two, _postgres_two) = start_containers().await;
     let config_two = Config {
         url: "0.0.0.0:6790".parse().unwrap(), // hardcoded - make sure it's different in other tests with replication
         ..test_config_replication(db_port_two)
@@ -382,9 +374,7 @@ async fn late_remote_url_can_replicate() {}
 
 #[tokio::test]
 async fn late_local_url_can_cleanup() -> Result<()> {
-    let docker = clients::Cli::default();
-
-    let (db_port, _postgres) = start_containers(&docker).await;
+    let (db_port, _postgres) = start_containers().await;
     let config = test_config_replication(db_port);
 
     let (db_pool, cache, replication_state, config) = start_test_server(config, None).await;

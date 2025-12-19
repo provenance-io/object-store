@@ -4,7 +4,7 @@ use std::{
     fmt::Debug,
     task::{Context, Poll},
 };
-use tonic::{Code, body::BoxBody, codegen::http::HeaderValue, transport::Body};
+use tonic::{Code, body::BoxBody, codegen::http::HeaderValue};
 use tower::{Layer, Service};
 
 // TODO add logging in Trace middleware
@@ -56,10 +56,10 @@ impl<T> ResponseUtil for tonic::codegen::http::Response<T> {
     }
 }
 
-impl<S> Service<tonic::codegen::http::Request<Body>> for MinitraceGrpcMiddleware<S>
+impl<S> Service<tonic::codegen::http::Request<BoxBody>> for MinitraceGrpcMiddleware<S>
 where
     S: Service<
-            tonic::codegen::http::Request<Body>,
+            tonic::codegen::http::Request<BoxBody>,
             Response = tonic::codegen::http::Response<BoxBody>,
         > + Clone
         + Send
@@ -76,7 +76,7 @@ where
     }
 
     /// https://docs.datadoghq.com/tracing/trace_collection/trace_context_propagation/#custom-header-formats
-    fn call(&mut self, req: tonic::codegen::http::Request<Body>) -> Self::Future {
+    fn call(&mut self, req: tonic::codegen::http::Request<BoxBody>) -> Self::Future {
         // This is necessary because tonic internally uses `tower::buffer::Buffer`.
         // See https://github.com/tower-rs/tower/issues/547#issuecomment-767629149
         // for details on why this is necessary

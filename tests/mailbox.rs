@@ -10,7 +10,6 @@ use object_store::pb::{
 use object_store::proto_helpers::{AudienceUtil, ObjectResponseUtil};
 
 use sqlx::postgres::PgPool;
-use testcontainers_modules::testcontainers::clients;
 use tonic::Request;
 use tonic::transport::Channel;
 
@@ -140,8 +139,7 @@ async fn authed_get_and_ack_helper(
 
 #[tokio::test]
 async fn get_and_ack_flow() {
-    let docker = clients::Cli::default();
-    let (db_port, _postgres) = start_containers(&docker).await;
+    let (db_port, _postgres) = start_containers().await;
 
     let (db, config) = start_server(test_config(db_port)).await;
     let mut client = get_mailbox_client(config.url).await;
@@ -276,8 +274,7 @@ async fn get_and_ack_flow() {
 
 #[tokio::test]
 async fn duplicate_objects_does_not_dup_mail() {
-    let docker = clients::Cli::default();
-    let (db_port, _postgres) = start_containers(&docker).await;
+    let (db_port, _postgres) = start_containers().await;
 
     let (_, config) = start_server(test_config(db_port)).await;
     let mut client = get_mailbox_client(config.url).await;
@@ -341,8 +338,7 @@ async fn duplicate_objects_does_not_dup_mail() {
 
 #[tokio::test]
 async fn get_and_ack_many() {
-    let docker = clients::Cli::default();
-    let (db_port, _postgres) = start_containers(&docker).await;
+    let (db_port, _postgres) = start_containers().await;
 
     let (_, config) = start_server(test_config(db_port)).await;
     let mut client = get_mailbox_client(config.url).await;
@@ -416,8 +412,7 @@ async fn get_and_ack_many() {
 
 #[tokio::test]
 async fn auth_get_and_ack_success() {
-    let docker = clients::Cli::default();
-    let (db_port, _postgres) = start_containers(&docker).await;
+    let (db_port, _postgres) = start_containers().await;
 
     let config = Config {
         user_auth_enabled: true,
@@ -476,8 +471,7 @@ async fn auth_get_and_ack_success() {
 
 #[tokio::test]
 async fn auth_get_invalid_key() {
-    let docker = clients::Cli::default();
-    let (db_port, _postgres) = start_containers(&docker).await;
+    let (db_port, _postgres) = start_containers().await;
 
     let config = Config {
         user_auth_enabled: true,
@@ -539,8 +533,7 @@ async fn auth_get_invalid_key() {
 
 #[tokio::test]
 async fn auth_ack_invalid_key() {
-    let docker = clients::Cli::default();
-    let (db_port, _postgres) = start_containers(&docker).await;
+    let (db_port, _postgres) = start_containers().await;
 
     let config = Config {
         user_auth_enabled: true,
@@ -602,8 +595,7 @@ async fn auth_ack_invalid_key() {
 
 #[tokio::test]
 async fn auth_get_no_key() {
-    let docker = clients::Cli::default();
-    let (db_port, _postgres) = start_containers(&docker).await;
+    let (db_port, _postgres) = start_containers().await;
 
     let config = Config {
         user_auth_enabled: true,
@@ -663,8 +655,7 @@ async fn auth_get_no_key() {
 
 #[tokio::test]
 async fn auth_ack_no_key() {
-    let docker = clients::Cli::default();
-    let (db_port, _postgres) = start_containers(&docker).await;
+    let (db_port, _postgres) = start_containers().await;
 
     let config = Config {
         user_auth_enabled: true,

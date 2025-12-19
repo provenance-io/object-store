@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use reqwest::header::HeaderValue;
-use tonic::{body::BoxBody, transport::Body};
+use tonic::body::BoxBody;
 use tower::{Layer, Service};
 
 #[derive(Debug, Clone)]
@@ -39,10 +39,10 @@ pub struct LoggingGrpcMiddleware<S> {
     upper_logging_bounds: f64,
 }
 
-impl<S> Service<tonic::codegen::http::Request<Body>> for LoggingGrpcMiddleware<S>
+impl<S> Service<tonic::codegen::http::Request<BoxBody>> for LoggingGrpcMiddleware<S>
 where
     S: Service<
-            tonic::codegen::http::Request<Body>,
+            tonic::codegen::http::Request<BoxBody>,
             Response = tonic::codegen::http::Response<BoxBody>,
         > + Clone
         + Send
@@ -57,7 +57,7 @@ where
         self.inner.poll_ready(cx)
     }
 
-    fn call(&mut self, req: tonic::codegen::http::Request<Body>) -> Self::Future {
+    fn call(&mut self, req: tonic::codegen::http::Request<BoxBody>) -> Self::Future {
         // This is necessary because tonic internally uses `tower::buffer::Buffer`.
         // See https://github.com/tower-rs/tower/issues/547#issuecomment-767629149
         // for details on why this is necessary
