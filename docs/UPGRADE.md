@@ -46,28 +46,3 @@ tonic-build v0.6.2
 ```
 testcontainers v0.14.0
 ```
-
-## Updates Available
-`cargo outdated -R`
-```
-Name               Project  Compat   Latest   Kind
-----               -------  ------   ------   ----
-prost              0.9.0    ---      0.14.1   Normal
-prost-types        0.9.0    ---      0.14.1   Normal
-tonic              0.6.2    ---      0.14.2   Normal
-tonic-build        0.6.2    ---      0.14.2   Build
-tonic-health       0.5.0    ---      0.14.2   Normal
-tower              0.4.13   ---      0.5.2    Normal
-```
-### Sorted
-#### Minor
-```
-Name               Project  Compat   Latest   Kind
-----               -------  ------   ------   ----
-prost              0.9.0    ---      0.14.1   Normal
-prost-types        0.9.0    ---      0.14.1   Normal
-tonic              0.6.2    ---      0.14.2   Normal
-tonic-build        0.6.2    ---      0.14.2   Build
-tonic-health       0.5.0    ---      0.14.2   Normal
-tower              0.4.13   ---      0.5.2    Normal
-```
