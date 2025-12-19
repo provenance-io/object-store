@@ -9,7 +9,6 @@ use object_store::pb::public_key_response::Impl::HeaderAuth as HeaderAuthEnumRes
 use object_store::pb::public_key_service_server::PublicKeyService;
 use object_store::pb::{HeaderAuth, PublicKey, public_key::Key};
 use object_store::proto_helpers::VecUtil;
-use testcontainers::clients;
 use tonic::Request;
 
 use crate::common::config::test_config;
@@ -17,9 +16,7 @@ use crate::common::containers::start_containers;
 
 #[tokio::test]
 async fn invalid_url() {
-    let docker = clients::Cli::default();
-
-    let (db_port, _postgres) = start_containers(&docker).await;
+    let (db_port, _postgres) = start_containers().await;
     let context = AppContext::new(Arc::new(test_config(db_port)))
         .await
         .unwrap();
@@ -49,9 +46,7 @@ async fn invalid_url() {
 
 #[tokio::test]
 async fn empty_url() {
-    let docker = clients::Cli::default();
-
-    let (db_port, _postgres) = start_containers(&docker).await;
+    let (db_port, _postgres) = start_containers().await;
     let context = AppContext::new(Arc::new(test_config(db_port)))
         .await
         .unwrap();
@@ -86,9 +81,7 @@ async fn empty_url() {
 
 #[tokio::test]
 async fn empty_auth_header_header() {
-    let docker = clients::Cli::default();
-
-    let (db_port, _postgres) = start_containers(&docker).await;
+    let (db_port, _postgres) = start_containers().await;
     let context = AppContext::new(Arc::new(test_config(db_port)))
         .await
         .unwrap();
@@ -119,9 +112,7 @@ async fn empty_auth_header_header() {
 
 #[tokio::test]
 async fn empty_auth_header_value() {
-    let docker = clients::Cli::default();
-
-    let (db_port, _postgres) = start_containers(&docker).await;
+    let (db_port, _postgres) = start_containers().await;
     let context = AppContext::new(Arc::new(test_config(db_port)))
         .await
         .unwrap();
@@ -151,9 +142,7 @@ async fn empty_auth_header_value() {
 
 #[tokio::test]
 async fn missing_public_key() {
-    let docker = clients::Cli::default();
-
-    let (db_port, _postgres) = start_containers(&docker).await;
+    let (db_port, _postgres) = start_containers().await;
     let context = AppContext::new(Arc::new(test_config(db_port)))
         .await
         .unwrap();
@@ -177,9 +166,7 @@ async fn missing_public_key() {
 
 #[tokio::test]
 async fn missing_key() {
-    let docker = clients::Cli::default();
-
-    let (db_port, _postgres) = start_containers(&docker).await;
+    let (db_port, _postgres) = start_containers().await;
     let context = AppContext::new(Arc::new(test_config(db_port)))
         .await
         .unwrap();
@@ -203,9 +190,7 @@ async fn missing_key() {
 
 #[tokio::test]
 async fn duplicate_key() {
-    let docker = clients::Cli::default();
-
-    let (db_port, _postgres) = start_containers(&docker).await;
+    let (db_port, _postgres) = start_containers().await;
     let context = AppContext::new(Arc::new(test_config(db_port)))
         .await
         .unwrap();
@@ -253,9 +238,7 @@ async fn duplicate_key() {
 
 #[tokio::test]
 async fn returns_full_proto() {
-    let docker = clients::Cli::default();
-
-    let (db_port, _postgres) = start_containers(&docker).await;
+    let (db_port, _postgres) = start_containers().await;
     let context = AppContext::new(Arc::new(test_config(db_port)))
         .await
         .unwrap();
@@ -298,9 +281,7 @@ async fn returns_full_proto() {
 
 #[tokio::test]
 async fn adds_empty_urls_to_local_cache() {
-    let docker = clients::Cli::default();
-
-    let (db_port, _postgres) = start_containers(&docker).await;
+    let (db_port, _postgres) = start_containers().await;
     let context = AppContext::new(Arc::new(test_config(db_port)))
         .await
         .unwrap();
@@ -337,9 +318,7 @@ async fn adds_empty_urls_to_local_cache() {
 
 #[tokio::test]
 async fn adds_nonempty_urls_to_remote_cache() {
-    let docker = clients::Cli::default();
-
-    let (db_port, _postgres) = start_containers(&docker).await;
+    let (db_port, _postgres) = start_containers().await;
     let context = AppContext::new(Arc::new(test_config(db_port)))
         .await
         .unwrap();

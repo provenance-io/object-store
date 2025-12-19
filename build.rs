@@ -1,8 +1,8 @@
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    tonic_build::configure()
+    tonic_prost_build::configure()
         .build_client(true)
         .build_server(true)
-        .compile(
+        .compile_protos(
             &[
                 "proto/public_key.proto",
                 "proto/object.proto",

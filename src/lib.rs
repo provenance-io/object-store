@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use sqlx::PgPool;
-use tonic_health::proto::health_server::{Health, HealthServer};
+use tonic_health::pb::health_server::{Health, HealthServer};
 
 use crate::{
     cache::Cache,
@@ -93,13 +93,11 @@ impl AppContext {
 
     /// 1. Init health service, if enabled (default: true)
     /// 2. Init replication, if enabled (default: false)
-    pub async fn init(&mut self) -> Option<HealthServer<impl Health + use<>>> {
-        let health_service = init_health_service(self).await;
-
+    pub async fn init(&mut self) -> Option<HealthServer<impl Health>> {
         if self.config.replication_config.replication_enabled {
             self.replication_state.init();
         }
 
-        health_service
+        init_health_service(self).await
     }
 }

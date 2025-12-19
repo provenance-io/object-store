@@ -21,6 +21,9 @@ jobs:
         id: setup-rust
         run: rustup show
 
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v3
+
       - name: Build
         id: build
         run: cargo build --verbose

@@ -3,8 +3,8 @@ use crate::config::Config;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
-use reqwest::header::HeaderValue;
-use tonic::{body::BoxBody, transport::Body};
+use http::{Request, Response};
+use http_body::Body;
 use tower::{Layer, Service};
 
 #[derive(Debug, Clone)]
@@ -39,15 +39,15 @@ pub struct LoggingGrpcMiddleware<S> {
     upper_logging_bounds: f64,
 }
 
-impl<S> Service<tonic::codegen::http::Request<Body>> for LoggingGrpcMiddleware<S>
+impl<S, ReqBody, ResBody> Service<Request<ReqBody>> for LoggingGrpcMiddleware<S>
 where
-    S: Service<
-            tonic::codegen::http::Request<Body>,
-            Response = tonic::codegen::http::Response<BoxBody>,
-        > + Clone
-        + Send
-        + 'static,
+    S: Service<Request<ReqBody>, Response = Response<ResBody>>,
     S::Future: Send + 'static,
+    S::Error: Send + 'static,
+    ReqBody: Body + Send + 'static,
+    ReqBody::Data: Send,
+    ReqBody::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+    ResBody: Body + Send + 'static,
 {
     type Response = S::Response;
     type Error = S::Error;
@@ -57,27 +57,24 @@ where
         self.inner.poll_ready(cx)
     }
 
-    fn call(&mut self, req: tonic::codegen::http::Request<Body>) -> Self::Future {
-        // This is necessary because tonic internally uses `tower::buffer::Buffer`.
-        // See https://github.com/tower-rs/tower/issues/547#issuecomment-767629149
-        // for details on why this is necessary
-        let clone = self.inner.clone();
-        let mut inner = std::mem::replace(&mut self.inner, clone);
+    fn call(&mut self, req: Request<ReqBody>) -> Self::Future {
         let headers = req.headers().clone();
         let trace_header = self.trace_header.clone();
         let lower_logging_bounds = self.lower_logging_bounds;
         let upper_logging_bounds = self.upper_logging_bounds;
 
+        let trace_id = headers
+            .get(trace_header)
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| uuid::Uuid::new_v4().as_hyphenated().to_string());
+
+        let start = minstant::Instant::now();
+        let future = self.inner.call(req);
+
         Box::pin(async move {
-            let default_trace_id =
-                HeaderValue::from_str(&uuid::Uuid::new_v4().as_hyphenated().to_string()).unwrap();
-            let trace_id = headers
-                .get(trace_header)
-                .unwrap_or(&default_trace_id)
-                .to_str()
-                .unwrap();
-            let start = minstant::Instant::now();
-            let response = inner.call(req).await?;
+            let response = future.await?;
+
             let elapsed_seconds = start.elapsed().as_secs_f64();
 
             if elapsed_seconds > upper_logging_bounds {
