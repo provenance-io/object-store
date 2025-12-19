@@ -9,11 +9,17 @@ use testcontainers_modules::testcontainers::runners::AsyncRunner;
 /// - data to help configure components in tests
 /// - all containers so they don't get dropped until the docker runtime get dropped
 pub async fn start_containers() -> (u16, ContainerAsync<postgres::Postgres>) {
-    let x = postgres::Postgres::default().start().await;
-    // let image = RunnableImage::from(postgres::Postgres::default()).with_tag("14-alpine");
-    // let postgres = docker.run(image);
-    let db_port = x.get_host_port_ipv4(5432).await;
+    let postgres = postgres::Postgres::default()
+        .start()
+        .await
+        .expect("Postgres container didn't start");
+
+    let db_port = postgres
+        .get_host_port_ipv4(5432)
+        .await
+        .expect("Could not map host port 5432");
+
     println!("Postgres container started on {}", db_port);
 
-    (db_port, x)
+    (db_port, postgres)
 }

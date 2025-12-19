@@ -43,6 +43,5 @@ uuid = { version = "1", features = ["serde", "v4"] }
 tonic-build = "0.12"
 
 [dev-dependencies]
-# testcontainers = "0.15" 0.3.7
-testcontainers-modules = { version = "~0.4", features = ["postgres"] }
+testcontainers-modules = { version = "~0.14", features = ["postgres"] }
 tokio-stream = { version = "0.1", features=["net"] }
