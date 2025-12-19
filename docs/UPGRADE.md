@@ -54,8 +54,6 @@ Name               Project  Compat   Latest   Kind
 ----               -------  ------   ------   ----
 prost              0.9.0    ---      0.14.1   Normal
 prost-types        0.9.0    ---      0.14.1   Normal
-reqwest            0.11.8   0.11.27  0.12.24  Normal
-testcontainers     0.14.0   ---      0.25.2   Development
 tonic              0.6.2    ---      0.14.2   Normal
 tonic-build        0.6.2    ---      0.14.2   Build
 tonic-health       0.5.0    ---      0.14.2   Normal
@@ -68,8 +66,6 @@ Name               Project  Compat   Latest   Kind
 ----               -------  ------   ------   ----
 prost              0.9.0    ---      0.14.1   Normal
 prost-types        0.9.0    ---      0.14.1   Normal
-reqwest            0.11.8   0.11.27  0.12.24  Normal
-testcontainers     0.14.0   ---      0.25.2   Development
 tonic              0.6.2    ---      0.14.2   Normal
 tonic-build        0.6.2    ---      0.14.2   Build
 tonic-health       0.5.0    ---      0.14.2   Normal

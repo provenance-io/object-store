@@ -15,7 +15,7 @@ pub async fn init_health_service(context: &AppContext) -> Option<HealthServer<im
     if context.config.health_service_enabled {
         log::info!("Starting health service...");
 
-        let (mut health_reporter, health_service) = health_reporter();
+        let (health_reporter, health_service) = health_reporter();
 
         health_reporter
             .set_service_status("", ServingStatus::NotServing)

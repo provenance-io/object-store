@@ -1,10 +1,12 @@
 use fastrace::prelude::*;
+use http::{Request, Response};
+use http_body::Body;
 use reqwest::header::HeaderMap;
 use std::{
     fmt::Debug,
     task::{Context, Poll},
 };
-use tonic::{Code, body::BoxBody, codegen::http::HeaderValue};
+use tonic::{Code, codegen::http::HeaderValue};
 use tower::{Layer, Service};
 
 // TODO add logging in Trace middleware
@@ -56,16 +58,14 @@ impl<T> ResponseUtil for tonic::codegen::http::Response<T> {
     }
 }
 
-impl<S> Service<tonic::codegen::http::Request<BoxBody>> for MinitraceGrpcMiddleware<S>
+impl<S, ReqBody, ResBody> Service<Request<ReqBody>> for MinitraceGrpcMiddleware<S>
 where
-    S: Service<
-            tonic::codegen::http::Request<BoxBody>,
-            Response = tonic::codegen::http::Response<BoxBody>,
-        > + Clone
-        + Send
-        + 'static,
+    S: Service<Request<ReqBody>, Response = Response<ResBody>>,
     S::Future: Send + 'static,
-    S::Error: Send + Debug,
+    S::Error: Send + 'static,
+    ReqBody: Body + Send + 'static,
+    ReqBody::Data: Send,
+    ReqBody::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
 {
     type Response = S::Response;
     type Error = S::Error;
@@ -76,56 +76,52 @@ where
     }
 
     /// https://docs.datadoghq.com/tracing/trace_collection/trace_context_propagation/#custom-header-formats
-    fn call(&mut self, req: tonic::codegen::http::Request<BoxBody>) -> Self::Future {
-        // This is necessary because tonic internally uses `tower::buffer::Buffer`.
-        // See https://github.com/tower-rs/tower/issues/547#issuecomment-767629149
-        // for details on why this is necessary
-        let clone = self.inner.clone();
-        let mut inner = std::mem::replace(&mut self.inner, clone);
-
+    fn call(&mut self, req: tonic::codegen::http::Request<ReqBody>) -> Self::Future {
         let default_status_code: HeaderValue = self.default_status_code.clone();
         let span_tags = self.span_tags.clone();
 
         let headers: HeaderMap = req.headers().clone();
 
-        Box::pin(async move {
-            let root_span = {
-                let parent_span_context = {
-                    let parent_span_id: SpanId =
-                        if let Some(parent_span_id_header) = headers.get("x-datadog-parent-id") {
-                            parent_span_id_header
-                                .to_str()
-                                .map(|h| h.parse())
-                                .map(|n| n.map(SpanId).unwrap_or(SpanId(0)))
-                                .unwrap_or(SpanId(0))
-                        } else {
-                            SpanId(0)
-                        };
+        let root_span = {
+            let parent_span_context = {
+                let parent_span_id: SpanId =
+                    if let Some(parent_span_id_header) = headers.get("x-datadog-parent-id") {
+                        parent_span_id_header
+                            .to_str()
+                            .map(|h| h.parse())
+                            .map(|n| n.map(SpanId).unwrap_or(SpanId(0)))
+                            .unwrap_or(SpanId(0))
+                    } else {
+                        SpanId(0)
+                    };
 
-                    let parent_trace_id: TraceId =
-                        if let Some(parent_trace_id_header) = headers.get("x-datadog-trace-id") {
-                            parent_trace_id_header
-                                .to_str()
-                                .map(|h| h.parse())
-                                .map(|n| n.map(TraceId).unwrap_or(TraceId::random()))
-                                .unwrap_or(TraceId::random())
-                        } else {
-                            TraceId::random()
-                        };
+                let parent_trace_id: TraceId =
+                    if let Some(parent_trace_id_header) = headers.get("x-datadog-trace-id") {
+                        parent_trace_id_header
+                            .to_str()
+                            .map(|h| h.parse())
+                            .map(|n| n.map(TraceId).unwrap_or(TraceId::random()))
+                            .unwrap_or(TraceId::random())
+                    } else {
+                        TraceId::random()
+                    };
 
-                    SpanContext::new(parent_trace_id, parent_span_id)
-                };
-
-                let span = Span::root("grpc.server", parent_span_context);
-
-                if parent_span_context.span_id == SpanId(0) {
-                    span.add_properties(|| span_tags);
-                }
-
-                span
+                SpanContext::new(parent_trace_id, parent_span_id)
             };
 
-            let response = inner.call(req).in_span(root_span).await?;
+            let span = Span::root("grpc.server", parent_span_context);
+
+            if parent_span_context.span_id == SpanId(0) {
+                span.add_properties(|| span_tags);
+            }
+
+            span
+        };
+
+        let future = self.inner.call(req).in_span(root_span);
+
+        Box::pin(async move {
+            let response = future.await?;
 
             match response.status_code(default_status_code) {
                 tonic::Code::Ok => {}
