@@ -16,7 +16,7 @@ use object_store::proto_helpers::{AudienceUtil, ObjectResponseUtil, StringUtil, 
 use object_store::{consts::*, pb::HashRequest};
 
 use sqlx::PgPool;
-use testcontainers::clients;
+use testcontainers_modules::testcontainers::clients;
 use tonic::Request;
 
 use crate::common::client::get_object_client;

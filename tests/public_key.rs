@@ -9,7 +9,7 @@ use object_store::pb::public_key_response::Impl::HeaderAuth as HeaderAuthEnumRes
 use object_store::pb::public_key_service_server::PublicKeyService;
 use object_store::pb::{HeaderAuth, PublicKey, public_key::Key};
 use object_store::proto_helpers::VecUtil;
-use testcontainers::clients;
+use testcontainers_modules::testcontainers::clients;
 use tonic::Request;
 
 use crate::common::config::test_config;

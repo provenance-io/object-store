@@ -10,7 +10,7 @@ use object_store::pb::{
 use object_store::proto_helpers::{AudienceUtil, ObjectResponseUtil};
 
 use sqlx::postgres::PgPool;
-use testcontainers::clients;
+use testcontainers_modules::testcontainers::clients;
 use tonic::Request;
 use tonic::transport::Channel;
 

@@ -6,7 +6,7 @@ use object_store::pb;
 use object_store::proto_helpers::AudienceUtil;
 use object_store::types::Result;
 
-use testcontainers::clients;
+use testcontainers_modules::testcontainers::clients;
 
 use std::collections::HashMap;
 
