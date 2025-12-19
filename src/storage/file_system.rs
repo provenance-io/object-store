@@ -212,6 +212,7 @@ mod tests {
         let data = b"hello world";
 
         assert!(storage.store(&path, 11, data).await.is_ok());
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
         let result = storage.fetch(&path, 11).await;
         assert_eq!(result, Ok(data.to_vec()));
     }
