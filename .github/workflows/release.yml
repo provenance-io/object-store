@@ -10,6 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+
       - name: Version
         run: |
           # strip git ref prefix from version
@@ -19,13 +20,16 @@ jobs:
           [[ "${{ github.ref }}" == "refs/tags/"* ]] && VERSION=$(echo $VERSION | sed -e 's/^v//')
 
           echo "VERSION=$VERSION" >> $GITHUB_ENV
+
       - name: Zip Protos
         run: zip -r protos-${VERSION}.zip proto
+
       - name: Get release
         id: get_release
         uses: bruceadams/get-release@v1.2.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Upload release protos
         uses: actions/upload-release-asset@v1
         env:
@@ -35,28 +39,35 @@ jobs:
           asset_path: ./protos-${{ env.VERSION }}.zip
           asset_name: protos-${{ env.VERSION }}.zip
           asset_content_type: application/octet-stream
-      - name: Docker Build
-        run: docker build . --tag object-store:$VERSION
-      - name: Push Image
-        run: |
-          # log into registry
-          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set image name
+        id: image
+        run: |
           IMAGE_ID=ghcr.io/${{ github.repository_owner }}/object-store
           # change all uppercase to lowercase
           IMAGE_ID=$(echo $IMAGE_ID | tr '[A-Z]' '[a-z]')
+          # set output
+          echo "id=$IMAGE_ID" >> $GITHUB_OUTPUT
 
           echo IMAGE_ID=$IMAGE_ID
           echo VERSION=$VERSION
+          echo PRERELEASE=${{ github.event.release.prerelease }}
 
-          docker tag object-store:$VERSION $IMAGE_ID:$VERSION
-          docker push $IMAGE_ID:$VERSION
-
-          PRERELEASE=${{ github.event.release.prerelease }}
-          echo PRERELEASE=$PRERELEASE
-
-          # update latest tag if this isn't a prerelease
-          if [ "$PRERELEASE" == "false" ]; then
-              docker tag object-store:$VERSION $IMAGE_ID:latest
-              docker push $IMAGE_ID:latest
-          fi
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ steps.image.outputs.id }}:${{ env.VERSION }}
+            ${{ github.event.release.prerelease == false && format('{0}:latest', steps.image.outputs.id) || '' }}
