@@ -1,0 +1,29 @@
+# Build outputs
+target/
+**/target/
+
+# OS files
+.DS_Store
+**/.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+
+# Documentation
+docs/
+**/*.md
+!README.md
+
+# CI/CD files
+.github/
+
+# Logs and temporary files
+*.log
+tmp/
+.cache/
+
+# Docker files
+Dockerfile*
+.dockerignore
