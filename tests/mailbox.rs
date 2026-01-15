@@ -712,3 +712,55 @@ async fn auth_ack_no_key() {
         _ => assert_eq!(format!("{:?}", response), ""),
     }
 }
+
+#[tokio::test]
+async fn ack_rejected_in_maintenance_mode() {
+    let (db_port, _postgres) = start_containers().await;
+
+    // First start without maintenance mode to create some mail
+    let (_, config) = start_server(test_config(db_port)).await;
+
+    let (audience1, signature1) = party_1();
+    let (audience2, signature2) = party_2();
+    let dime = {
+        let mut dime = generate_dime(
+            vec![audience1, audience2.clone()],
+            vec![signature1, signature2],
+        );
+        dime.metadata
+            .insert(MAILBOX_KEY.to_owned(), MAILBOX_FRAGMENT_REQUEST.to_owned());
+        dime
+    };
+    let payload: bytes::Bytes = "testing small payload".as_bytes().into();
+    let chunk_size = 500;
+    let request = put_helper(
+        dime,
+        payload.clone(),
+        chunk_size,
+        HashMap::default(),
+        Vec::default(),
+    );
+
+    let mut os_client = get_object_client(config.url).await;
+    let response = os_client.put(request).await.unwrap();
+
+    // Enable maintenance mode
+    config.set_maintenance_state(true);
+
+    // Try to ack - should fail
+    let mut client = get_mailbox_client(config.url).await;
+    let public_key = audience2.public_key_decoded();
+    let request = Request::new(AckRequest {
+        uuid: response.into_inner().uuid,
+        public_key,
+    });
+    let response = client.ack(request).await;
+
+    match response {
+        Err(err) => {
+            assert_eq!(err.code(), tonic::Code::Unavailable);
+            assert_eq!(err.message(), "Service is in maintenance mode");
+        }
+        _ => panic!("Expected Unavailable error, got: {:?}", response),
+    }
+}

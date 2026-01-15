@@ -67,6 +67,10 @@ impl ObjectService for ObjectGrpc {
         &self,
         request: Request<Streaming<ChunkBidi>>,
     ) -> GrpcResult<Response<ObjectResponse>> {
+        if self.config.is_maintenance_state() {
+            return Err(Status::unavailable("Service is in maintenance mode"));
+        }
+
         let metadata = request.metadata().clone();
         let mut stream = request.into_inner();
 

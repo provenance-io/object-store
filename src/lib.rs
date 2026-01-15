@@ -63,7 +63,7 @@ impl AppContext {
         let storage = new_storage(&config).await?;
 
         let admin_service = AdminGrpc::new(config.clone());
-        let public_key_service = PublicKeyGrpc::new(cache.clone(), db_pool.clone());
+        let public_key_service = PublicKeyGrpc::new(cache.clone(), config.clone(), db_pool.clone());
         let mailbox_service = MailboxGrpc::new(cache.clone(), config.clone(), db_pool.clone());
         let object_service = ObjectGrpc::new(
             cache.clone(),
