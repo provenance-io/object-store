@@ -1931,7 +1931,7 @@ dependencies = [
 
 [[package]]
 name = "object-store"
-version = "1.0.0-alpha.2"
+version = "1.0.0-alpha.4"
 dependencies = [
  "async-recursion",
  "async-trait",

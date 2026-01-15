@@ -7,15 +7,15 @@ Useful if 1) a migration to another instance is needed or 2) you need a read-onl
 ### Usage
 Enable maintenance mode
 ```bash
-grpcurl -plaintext -d '{"maintenance_state": true}' localhost:5000 objectstore.AdminService/SetConfig
+grpcurl -proto ./proto/admin.proto -plaintext -d '{"maintenance_state": true}' localhost:5000 objectstore.AdminService/SetConfig
 ```
 
 Disable maintenance mode
 ```bash
-grpcurl -plaintext -d '{"maintenance_state": false}' localhost:5000 objectstore.AdminService/SetConfig
+grpcurl -proto ./proto/admin.proto -plaintext -d '{"maintenance_state": false}' localhost:5000 objectstore.AdminService/SetConfig
 ```
 
 Get current config
 ```bash
-grpcurl -plaintext localhost:5000 objectstore.AdminService/GetConfig
+grpcurl -proto ./proto/admin.proto -plaintext localhost:5000 objectstore.AdminService/GetConfig
 ```
