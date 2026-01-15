@@ -4,6 +4,7 @@ use sqlx::PgPool;
 use tonic_health::pb::health_server::{Health, HealthServer};
 
 use crate::{
+    admin::AdminGrpc,
     cache::Cache,
     config::Config,
     db::connect_and_migrate,
@@ -16,6 +17,7 @@ use crate::{
     types::OsError,
 };
 
+pub mod admin;
 pub mod authorization;
 pub mod cache;
 pub mod config;
@@ -44,6 +46,7 @@ pub struct AppContext {
     pub cache: Arc<Mutex<Cache>>,
     pub db_pool: Arc<PgPool>,
     pub storage: Arc<Box<dyn Storage>>,
+    pub admin_service: AdminGrpc,
     pub public_key_service: PublicKeyGrpc,
     pub mailbox_service: MailboxGrpc,
     pub object_service: ObjectGrpc,
@@ -59,6 +62,7 @@ impl AppContext {
         let cache = Cache::new(db_pool.clone()).await?;
         let storage = new_storage(&config).await?;
 
+        let admin_service = AdminGrpc::new(config.clone());
         let public_key_service = PublicKeyGrpc::new(cache.clone(), db_pool.clone());
         let mailbox_service = MailboxGrpc::new(cache.clone(), config.clone(), db_pool.clone());
         let object_service = ObjectGrpc::new(
@@ -84,6 +88,7 @@ impl AppContext {
             cache,
             db_pool,
             storage,
+            admin_service,
             public_key_service,
             mailbox_service,
             object_service,

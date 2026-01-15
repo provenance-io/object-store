@@ -1,6 +1,7 @@
 use std::env;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use chrono::TimeDelta;
@@ -70,6 +71,8 @@ pub struct Config {
     pub trace_header: String,
     pub user_auth_enabled: bool,
     pub health_service_enabled: bool,
+    /// Runtime maintenance mode state. When true, write operations are rejected.
+    pub maintenance_state: AtomicBool,
 }
 
 const BASE_SPAN_TAGS: [(&str, &str); 3] = [
@@ -189,6 +192,10 @@ impl Config {
             .unwrap_or("true".to_owned())
             .parse()
             .expect("HEALTH_SERVICE_ENABLED could not be parsed into a bool");
+        let maintenance_state: bool = env::var("MAINTENANCE_STATE")
+            .unwrap_or("false".to_owned())
+            .parse()
+            .expect("MAINTENANCE_STATE could not be parsed into a bool");
 
         let replication_config = ReplicationConfig {
             replication_enabled,
@@ -224,6 +231,7 @@ impl Config {
             trace_header,
             user_auth_enabled,
             health_service_enabled,
+            maintenance_state: AtomicBool::new(maintenance_state),
         })
     }
 
@@ -235,5 +243,13 @@ impl Config {
             "postgres://{}:{}@{}:{}/{}",
             self.db_user, password, self.db_host, self.db_port, self.db_database,
         )
+    }
+
+    pub fn is_maintenance_state(&self) -> bool {
+        self.maintenance_state.load(Ordering::Relaxed)
+    }
+
+    pub fn set_maintenance_state(&self, enabled: bool) {
+        self.maintenance_state.store(enabled, Ordering::Relaxed);
     }
 }

@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+package objectstore;
+
+option java_package = "io.provenance.objectstore.proto";
+option java_outer_classname = "Admin";
+
+service AdminService {
+    rpc SetConfig(SetConfigRequest) returns (ConfigResponse);
+    rpc GetConfig(GetConfigRequest) returns (ConfigResponse);
+}
+
+message SetConfigRequest {
+    optional bool maintenance_state = 1;
+}
+
+message GetConfigRequest {}
+
+message ConfigResponse {
+    bool maintenance_state = 1;
+}

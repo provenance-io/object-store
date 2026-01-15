@@ -4,10 +4,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build_server(true)
         .compile_protos(
             &[
-                "proto/public_key.proto",
-                "proto/object.proto",
+                "proto/admin.proto",
                 "proto/dime.proto",
                 "proto/mailbox.proto",
+                "proto/object.proto",
+                "proto/public_key.proto",
             ],
             &["proto"],
         )?;
