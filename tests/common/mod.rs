@@ -20,6 +20,7 @@ use object_store::consts::{
 };
 use object_store::datastore::{MailboxPublicKey, ObjectPublicKey};
 use object_store::dime::Dime;
+use object_store::pb::admin_service_server::AdminServiceServer;
 use object_store::pb::chunk_bidi::Impl::{
     Chunk as ChunkEnum, MultiStreamHeader as MultiStreamHeaderEnum,
 };
@@ -248,6 +249,7 @@ pub async fn start_test_server(
     // TODO: call configure_and_start_server here once it supports using a listener
     tokio::spawn(async move {
         tonic::transport::Server::builder()
+            .add_service(AdminServiceServer::new(context.admin_service))
             .add_service(MailboxServiceServer::new(context.mailbox_service))
             .add_service(ObjectServiceServer::new(context.object_service))
             .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener))

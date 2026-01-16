@@ -1122,3 +1122,35 @@ async fn get_object_no_properties() {
 // TODO add test that has storage backed payload but the file wasn't written due to failure
 // verify that fetch returns an accurate error and also a subsequent PUT can write the file
 // TODO add test to verify owner signature is added to dime
+
+#[tokio::test]
+async fn put_rejected_in_maintenance_mode() {
+    let (db_port, _postgres) = start_containers().await;
+
+    let test_cfg = test_config(db_port);
+    test_cfg.set_maintenance_state(true);
+    let (_, _, _, config) = start_test_server(test_cfg, None).await;
+
+    let (audience, signature) = party_1();
+    let dime = generate_dime(vec![audience], vec![signature]);
+    let payload: bytes::Bytes = "testing small payload".as_bytes().into();
+    let chunk_size = 500;
+    let request = put_helper(
+        dime,
+        payload,
+        chunk_size,
+        HashMap::default(),
+        Vec::default(),
+    );
+
+    let mut os_client = get_object_client(config.url).await;
+    let response = os_client.put(request).await;
+
+    match response {
+        Err(err) => {
+            assert_eq!(err.code(), tonic::Code::Unavailable);
+            assert_eq!(err.message(), "Service is in maintenance mode");
+        }
+        _ => panic!("Expected Unavailable error, got: {:?}", response),
+    }
+}

@@ -118,6 +118,10 @@ impl MailboxService for MailboxGrpc {
 
     #[trace(name = "mailbox::ack")]
     async fn ack(&self, request: Request<AckRequest>) -> GrpcResult<Response<()>> {
+        if self.config.is_maintenance_state() {
+            return Err(Status::unavailable("Service is in maintenance mode"));
+        }
+
         let metadata = request.metadata().clone();
         let request = request.into_inner();
 

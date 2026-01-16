@@ -1,4 +1,5 @@
 use crate::cache::Cache;
+use crate::config::Config;
 use crate::datastore;
 use crate::domain::PublicKeyApiResponse;
 use crate::pb::public_key_request::Impl::HeaderAuth as HeaderAuthEnumRequest;
@@ -16,16 +17,21 @@ use url::Url;
 
 #[derive(Debug)]
 pub struct PublicKeyGrpc {
-    // This cache is using a std::sync::Mutex because the tokio docs mention that this is often
-    // preferrable to the tokio Mutex when you are strictly locking data. In cases where you
-    // are locking over a database connection, or io resource, the tokio Mutex is required.
+    /// This cache is using a std::sync::Mutex because the tokio docs mention that this is often
+    /// preferrable to the tokio Mutex when you are strictly locking data. In cases where you
+    /// are locking over a database connection, or io resource, the tokio Mutex is required.
     cache: Arc<Mutex<Cache>>,
+    config: Arc<Config>,
     db_pool: Arc<PgPool>,
 }
 
 impl PublicKeyGrpc {
-    pub fn new(cache: Arc<Mutex<Cache>>, db_pool: Arc<PgPool>) -> Self {
-        Self { cache, db_pool }
+    pub fn new(cache: Arc<Mutex<Cache>>, config: Arc<Config>, db_pool: Arc<PgPool>) -> Self {
+        Self {
+            cache,
+            config,
+            db_pool,
+        }
     }
 }
 
@@ -35,6 +41,10 @@ impl PublicKeyService for PublicKeyGrpc {
         &self,
         request: Request<PublicKeyRequest>,
     ) -> GrpcResult<Response<PublicKeyResponse>> {
+        if self.config.is_maintenance_state() {
+            return Err(Status::unavailable("Service is in maintenance mode"));
+        }
+
         let request = request.into_inner();
 
         // validate public_key

@@ -352,3 +352,28 @@ async fn adds_nonempty_urls_to_remote_cache() {
         String::from("")
     );
 }
+
+#[tokio::test]
+async fn add_rejected_in_maintenance_mode() {
+    let (db_port, _postgres) = start_containers().await;
+    let config = test_config(db_port);
+    config.set_maintenance_state(true);
+    let context = AppContext::new(Arc::new(config)).await.unwrap();
+
+    let request = PublicKeyRequest {
+        public_key: Some(vec![1u8, 2u8, 3u8].into()),
+        r#impl: None,
+        url: String::default(),
+        metadata: None,
+    };
+
+    let response = context.public_key_service.add(Request::new(request)).await;
+
+    match response {
+        Err(err) => {
+            assert_eq!(err.code(), tonic::Code::Unavailable);
+            assert_eq!(err.message(), "Service is in maintenance mode");
+        }
+        _ => panic!("Expected Unavailable error, got: {:?}", response),
+    }
+}

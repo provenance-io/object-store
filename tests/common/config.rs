@@ -38,6 +38,7 @@ pub fn test_config(db_port: u16) -> Config {
         trace_header: String::default(),
         user_auth_enabled: false,
         health_service_enabled: false,
+        maintenance_state: false.into(),
     }
 }
 

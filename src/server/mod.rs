@@ -8,7 +8,8 @@ use crate::{
     AppContext,
     middleware::{LoggingMiddlewareLayer, MinitraceGrpcMiddlewareLayer},
     pb::{
-        mailbox_service_server::MailboxServiceServer, object_service_server::ObjectServiceServer,
+        admin_service_server::AdminServiceServer, mailbox_service_server::MailboxServiceServer,
+        object_service_server::ObjectServiceServer,
         public_key_service_server::PublicKeyServiceServer,
     },
     server::trace::start_trace_reporter,
@@ -39,6 +40,7 @@ pub async fn configure_and_start_server(mut context: AppContext) -> Result<(), E
                 .into_inner(),
         )
         .add_optional_service(health_service)
+        .add_service(AdminServiceServer::new(context.admin_service))
         .add_service(PublicKeyServiceServer::new(context.public_key_service))
         .add_service(MailboxServiceServer::new(context.mailbox_service))
         .add_service(ObjectServiceServer::new(context.object_service))
