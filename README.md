@@ -24,6 +24,7 @@ in order to process Provenance scopes and memorialize them on chain.
 - Strong end-to-end encryption.
 - Peer-to-peer replication to parties (third party `object-store`s) you want to share data with.
 - Capable of publishing traces to Datadog.
+- [Additional features](./docs/FEATURES.md)
 
 ## Authentication
 
@@ -55,9 +56,9 @@ so that items smaller than the threshold specified can have thier bytes stored d
 
 ### Running Locally
 
- A postgres connection and data directory is required to run locally. A base set of environment variables can be edited and sourced from `./bin/env`.
+A postgres connection and data directory is required to run locally. A base set of environment variables can be edited and sourced from `./bin/env`.
 
-The most common use case for `object-store` is to run it alongside `p8e` in order to write to the [Provenance  lockchain](https://provenance.io). The simplest way to get this
+The most common use case for `object-store` is to run it alongside `p8e` in order to write to the [Provenance blockchain](https://provenance.io). The simplest way to get this
 up and running is [here](https://github.com/provenance-io/p8e-scope-sdk/tree/main/dev-tools/compose).
 
 ### Contributing
