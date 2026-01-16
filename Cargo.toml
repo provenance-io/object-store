@@ -1,11 +1,10 @@
 [package]
 name = "object-store"
-version = "1.0.0-alpha.4"
+version = "1.0.0-alpha.5"
 authors = ["Stephen Cirner <scirner@figure.com>"]
 edition = "2024"
 
 [dependencies]
-async-recursion = "1.0"
 async-trait = "0.1"
 base64 = "0.22.1"
 bytes = "1.0"
@@ -18,7 +17,6 @@ futures = "0.3"
 futures-util = "0.3"
 google-cloud-gax = "1.4.0"
 google-cloud-storage = "1.5.0"
-hex = "0.4"
 http = "1.0"
 http-body = "1.0"
 linked-hash-map = { version = "0.5", features = ["serde_impl"] }
