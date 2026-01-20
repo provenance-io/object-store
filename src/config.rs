@@ -1,5 +1,6 @@
 use std::env;
 use std::net::{IpAddr, SocketAddr};
+use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -26,10 +27,27 @@ pub struct ReplicationConfig {
     pub snapshot_cache_refresh_frequency: TimeDelta,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum StorageType {
+    FileSystem = 0,
+    GoogleCloud = 1,
+}
+
+impl FromStr for StorageType {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "file_system" => Ok(StorageType::FileSystem),
+            "google_cloud" => Ok(StorageType::GoogleCloud),
+            _ => Err(format!("Invalid storage: {}", s)),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct StorageConfig {
-    /// One of: `file_system`, `google_cloud`
-    pub storage_type: String,
+    pub storage_type: StorageType,
     pub storage_base_url: Option<String>,
     pub storage_base_path: String,
     /// Objects with size, in bytes, below this threshold will be stored in database.
@@ -41,6 +59,8 @@ pub struct StorageConfig {
 impl StorageConfig {
     pub fn from_env() -> Self {
         let storage_type = env::var("STORAGE_TYPE").expect("STORAGE_TYPE not set");
+        let storage_type = StorageType::from_str(&storage_type).expect("STORAGE_TYPE invalid");
+
         let storage_base_url = env::var("STORAGE_BASE_URL").ok();
         let storage_base_path = env::var("STORAGE_BASE_PATH").expect("STORAGE_BASE_PATH not set");
         let storage_threshold = env::var("STORAGE_THRESHOLD")

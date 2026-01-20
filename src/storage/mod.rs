@@ -9,7 +9,10 @@ pub use error::*;
 pub use file_system::FileSystem;
 pub use google_cloud::GoogleCloud;
 
-use crate::{config::StorageConfig, types::OsError};
+use crate::{
+    config::{StorageConfig, StorageType},
+    types::OsError,
+};
 
 // TODO implement checksum in filestore
 
@@ -56,19 +59,20 @@ pub trait Storage: Send + Sync + std::fmt::Debug {
 pub async fn new_storage(
     config: &StorageConfig,
 ) -> core::result::Result<Arc<Box<dyn Storage>>, OsError> {
-    let storage = match config.storage_type.as_str() {
-        "file_system" => Ok(Box::new(FileSystem::new(PathBuf::from(
-            config.storage_base_path.as_str(),
-        ))) as Box<dyn Storage>),
-        "google_cloud" => {
+    let storage = match config.storage_type {
+        StorageType::FileSystem => {
+            let file_system = FileSystem::new(PathBuf::from(config.storage_base_path.as_str()));
+
+            Box::new(file_system) as Box<dyn Storage>
+        }
+        StorageType::GoogleCloud => {
             let google_cloud = GoogleCloud::new(config.storage_base_path.clone())
                 .await
                 .unwrap();
 
-            Ok(Box::new(google_cloud) as Box<dyn Storage>)
+            Box::new(google_cloud) as Box<dyn Storage>
         }
-        _ => Err(OsError::InvalidApplicationState("".to_owned())),
-    }?;
+    };
 
     if config.health_check {
         storage.health_check().await?;
