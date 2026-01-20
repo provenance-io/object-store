@@ -9,7 +9,7 @@ pub use error::*;
 pub use file_system::FileSystem;
 pub use google_cloud::GoogleCloud;
 
-use crate::{config::Config, types::OsError};
+use crate::{config::StorageConfig, types::OsError};
 
 // TODO implement checksum in filestore
 
@@ -26,9 +26,12 @@ impl Display for StoragePath {
 
 #[async_trait::async_trait]
 pub trait Storage: Send + Sync + std::fmt::Debug {
+    async fn health_check(&self) -> Result<()>;
+
     // store should be idempotent
     async fn store(&self, path: &StoragePath, content_length: usize, data: &[u8]) -> Result<()>;
     async fn fetch(&self, path: &StoragePath, content_length: usize) -> Result<Vec<u8>>;
+    async fn delete(&self, path: &StoragePath) -> Result<()>;
 
     fn validate_content_length(
         &self,
@@ -50,7 +53,9 @@ pub trait Storage: Send + Sync + std::fmt::Debug {
 }
 
 // TODO fix await unwrap
-pub async fn new_storage(config: &Config) -> core::result::Result<Arc<Box<dyn Storage>>, OsError> {
+pub async fn new_storage(
+    config: &StorageConfig,
+) -> core::result::Result<Arc<Box<dyn Storage>>, OsError> {
     let storage = match config.storage_type.as_str() {
         "file_system" => Ok(Box::new(FileSystem::new(PathBuf::from(
             config.storage_base_path.as_str(),
@@ -64,6 +69,10 @@ pub async fn new_storage(config: &Config) -> core::result::Result<Arc<Box<dyn St
         }
         _ => Err(OsError::InvalidApplicationState("".to_owned())),
     }?;
+
+    if config.health_check {
+        storage.health_check().await?;
+    }
 
     Ok(Arc::new(storage))
 }

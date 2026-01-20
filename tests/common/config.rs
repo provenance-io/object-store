@@ -1,5 +1,5 @@
 use chrono::Duration;
-use object_store::config::{Config, DatadogConfig, ReplicationConfig};
+use object_store::config::{Config, DatadogConfig, ReplicationConfig, StorageConfig};
 
 /// Builds a default config suitable for most tests.
 ///
@@ -28,10 +28,13 @@ pub fn test_config(db_port: u16) -> Config {
         db_password: "postgres".to_owned(),
         db_database: "postgres".to_owned(),
         db_schema: "public".to_owned(),
-        storage_type: "file_system".to_owned(),
-        storage_base_url: None,
-        storage_base_path: std::env::temp_dir().to_string_lossy().to_string(),
-        storage_threshold: 5000,
+        storage_config: StorageConfig {
+            storage_type: "file_system".to_owned(),
+            storage_base_url: None,
+            storage_base_path: std::env::temp_dir().to_string_lossy().to_string(),
+            storage_threshold: 5000,
+            health_check: false,
+        },
         replication_config: ReplicationConfig::new(true, 2, 1, 1, Duration::minutes(5)),
         dd_config: Some(dd_config),
         logging_threshold_seconds: 1f64,

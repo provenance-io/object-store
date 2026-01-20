@@ -60,7 +60,7 @@ impl AppContext {
     pub async fn new(config: Arc<Config>) -> Result<Self, OsError> {
         let db_pool = connect_and_migrate(&config).await?;
         let cache = Cache::new(db_pool.clone()).await?;
-        let storage = new_storage(&config).await?;
+        let storage = new_storage(&config.storage_config).await?;
 
         let admin_service = AdminGrpc::new(config.clone());
         let public_key_service = PublicKeyGrpc::new(cache.clone(), config.clone(), db_pool.clone());

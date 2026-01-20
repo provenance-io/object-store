@@ -26,6 +26,43 @@ pub struct ReplicationConfig {
     pub snapshot_cache_refresh_frequency: TimeDelta,
 }
 
+#[derive(Clone, Debug)]
+pub struct StorageConfig {
+    /// One of: `file_system`, `google_cloud`
+    pub storage_type: String,
+    pub storage_base_url: Option<String>,
+    pub storage_base_path: String,
+    /// Objects with size, in bytes, below this threshold will be stored in database.
+    /// Larger objects will be in configured storage
+    pub storage_threshold: usize,
+    pub health_check: bool,
+}
+
+impl StorageConfig {
+    pub fn from_env() -> Self {
+        let storage_type = env::var("STORAGE_TYPE").expect("STORAGE_TYPE not set");
+        let storage_base_url = env::var("STORAGE_BASE_URL").ok();
+        let storage_base_path = env::var("STORAGE_BASE_PATH").expect("STORAGE_BASE_PATH not set");
+        let storage_threshold = env::var("STORAGE_THRESHOLD")
+            // default to ~ 5KB
+            .unwrap_or("5000".to_owned())
+            .parse()
+            .expect("STORAGE_THRESHOLD could not be parsed into a u32");
+        let health_check = env::var("STORAGE_HEALTH_CHECK")
+            .unwrap_or("false".to_owned())
+            .parse()
+            .expect("STORAGE_HEALTH_CHECK could not be parsed into a bool");
+
+        Self {
+            storage_type,
+            storage_base_url,
+            storage_base_path,
+            storage_threshold,
+            health_check,
+        }
+    }
+}
+
 impl ReplicationConfig {
     pub fn new(
         replication_enabled: bool,
@@ -57,13 +94,7 @@ pub struct Config {
     pub db_password: String,
     pub db_database: String,
     pub db_schema: String,
-    /// One of: `file_system`, `google_cloud`
-    pub storage_type: String,
-    pub storage_base_url: Option<String>,
-    pub storage_base_path: String,
-    /// Objects with size, in bytes, below this threshold will be stored in database.
-    /// Larger objects will be in configured storage
-    pub storage_threshold: usize,
+    pub storage_config: StorageConfig,
     pub replication_config: ReplicationConfig,
     /// If None, trace middleware [MinitraceGrpcMiddlewareLayer][crate::middleware::MinitraceGrpcMiddlewareLayer] disabled
     pub dd_config: Option<DatadogConfig>,
@@ -105,14 +136,7 @@ impl Config {
         let db_password = env::var("DB_PASS").expect("DB_PASS not set");
         let db_database = env::var("DB_NAME").expect("DB_NAME not set");
         let db_schema = env::var("DB_SCHEMA").expect("DB_SCHEMA not set");
-        let storage_type = env::var("STORAGE_TYPE").expect("STORAGE_TYPE not set");
-        let storage_base_url = env::var("STORAGE_BASE_URL").ok();
-        let storage_base_path = env::var("STORAGE_BASE_PATH").expect("STORAGE_BASE_PATH not set");
-        let storage_threshold = env::var("STORAGE_THRESHOLD")
-            // default to ~ 5KB
-            .unwrap_or("5000".to_owned())
-            .parse()
-            .expect("STORAGE_THRESHOLD could not be parsed into a u32");
+
         let replication_batch_size = env::var("REPLICATION_BATCH_SIZE")
             .unwrap_or("10".to_owned())
             .parse()
@@ -221,10 +245,7 @@ impl Config {
             db_password,
             db_database,
             db_schema,
-            storage_type,
-            storage_base_url,
-            storage_base_path,
-            storage_threshold,
+            storage_config: StorageConfig::from_env(),
             replication_config,
             dd_config,
             logging_threshold_seconds,

@@ -277,7 +277,8 @@ impl ObjectService for ObjectGrpc {
         // mail items should be under any reasonable threshold set, but explicitly check for
         // mail and always used database storage
         let is_mail = dime.metadata.contains_key(consts::MAILBOX_KEY);
-        let above_storage_threshold = dime_properties.dime_length > self.config.storage_threshold;
+        let above_storage_threshold =
+            dime_properties.dime_length > self.config.storage_config.storage_threshold;
 
         let response = if !is_mail && above_storage_threshold {
             let response = datastore::put_object(
