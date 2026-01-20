@@ -1,5 +1,6 @@
 # Object Store
 An object storage system with strong encryption properties and peer-to-peer replication
+
 [![stability-release-candidate](https://img.shields.io/badge/stability-pre--release-48c9b0.svg)](https://github.com/mkenney/software-guides/blob/master/STABILITY-BADGES.md#release-candidate)
 [![Latest Release][release-badge]][release-latest]
 [![License][license-badge]][license-url]
