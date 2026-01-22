@@ -5,7 +5,7 @@ use fastrace_datadog::DatadogReporter;
 
 use crate::config::DatadogConfig;
 
-/// See all standard attributes: https://docs.datadoghq.com/standard-attributes/
+/// See all standard attributes: <https://docs.datadoghq.com/standard-attributes/>
 pub fn start_trace_reporter(dd_config: &DatadogConfig) {
     let socket = dd_config.agent_addr().unwrap();
 

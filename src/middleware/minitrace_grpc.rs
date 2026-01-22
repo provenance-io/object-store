@@ -75,7 +75,7 @@ where
         self.inner.poll_ready(cx)
     }
 
-    /// https://docs.datadoghq.com/tracing/trace_collection/trace_context_propagation/#custom-header-formats
+    /// <https://docs.datadoghq.com/tracing/trace_collection/trace_context_propagation/#custom-header-formats>
     fn call(&mut self, req: tonic::codegen::http::Request<ReqBody>) -> Self::Future {
         let default_status_code: HeaderValue = self.default_status_code.clone();
         let span_tags = self.span_tags.clone();

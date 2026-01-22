@@ -109,8 +109,8 @@ impl ReplicationState {
         }
     }
 
-    /// 1. Start [replicate] job
-    /// 2. Start [reap_unknown_keys] job
+    /// 1. Start [ReplicationState::replicate] job
+    /// 2. Start [ReplicationState::reap_unknown_keys] job
     pub fn init(&mut self) {
         self.update_snapshot_cache();
 
@@ -310,7 +310,7 @@ impl ReplicationState {
         }
     }
 
-    /// Run [reap_unknown_keys_iteration] with a one hours delay between runs
+    /// Run [ReplicationState::reap_unknown_keys_iteration] with a one hours delay between runs
     async fn reap_unknown_keys(self) {
         log::info!("Starting reap unknown keys");
 
@@ -325,7 +325,7 @@ impl ReplicationState {
         }
     }
 
-    /// Run [replicate_iteration] with a one second delay between runs
+    /// Run [ReplicationState::replicate_iteration] with a one second delay between runs
     async fn replicate(mut self) {
         log::info!("Starting replication");
 

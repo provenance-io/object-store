@@ -21,16 +21,13 @@ jobs:
         id: setup-rust
         run: rustup show
 
+      - uses: Swatinem/rust-cache@v2
+
       - name: Install Protoc
         uses: arduino/setup-protoc@v3
 
-      - name: Build
-        id: build
-        run: cargo build --verbose
-
       - name: Test
-        id: test
-        run: cargo test --verbose
+        run: cargo test --verbose --locked
 
       - name: Check formatting
         id: check-formatting

@@ -10,7 +10,7 @@ use tonic_health::{
 
 use crate::{AppContext, datastore};
 
-/// If [crate::Config::health_service_enabled] is true, initializes [tonic_health::server::HealthReporter] and starts periodic health check [health_status]
+/// If [crate::Config::health_service_enabled] is true, initializes [tonic_health::server::HealthReporter] and starts periodic health check [start_database_health_check]
 pub async fn init_health_service(context: &AppContext) -> Option<HealthServer<impl Health>> {
     if context.config.health_service_enabled {
         log::info!("Starting health service...");
