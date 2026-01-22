@@ -86,8 +86,10 @@ impl MailboxService for MailboxGrpc {
                     },
                     None => {
                         log::error!(
-                            "mailbox object without a payload {}",
+                            "mailbox object without a payload: uuid={} hash={} dime_length={}",
                             object.uuid.as_hyphenated(),
+                            object.hash,
+                            object.dime_length,
                         );
 
                         if tx
