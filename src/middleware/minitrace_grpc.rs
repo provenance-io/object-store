@@ -118,15 +118,17 @@ where
             span
         };
 
+        let uri = req.uri().clone();
         let future = self.inner.call(req).in_span(root_span);
 
         Box::pin(async move {
             let response = future.await?;
 
-            match response.status_code(default_status_code) {
+            let status_code = response.status_code(default_status_code);
+            match status_code {
                 tonic::Code::Ok => {}
                 _ => {
-                    log::warn!("rpc call failed");
+                    log::warn!("rpc call failed: uri={} status={:?}", uri, status_code);
                 }
             };
 
