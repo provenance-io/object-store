@@ -5,6 +5,9 @@ quick_error! {
     pub enum StorageError {
         IoError(message: String) { }
         ContentLengthError(message: String) { }
+        Utf8Error(err: std::string::FromUtf8Error) {
+            from()
+        }
     }
 }
 

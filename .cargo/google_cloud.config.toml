@@ -1,0 +1,4 @@
+[env]
+STORAGE_TYPE="google_cloud"
+# Required - replace/run with actual bucket name
+# STORAGE_BASE_PATH="bucket-test"

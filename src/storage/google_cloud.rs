@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use bytes::Bytes;
 use fastrace_macro::trace;
-use google_cloud_storage::client::Storage as GcsStorage;
+use google_cloud_storage::client::{Storage as GcsStorage, StorageControl};
 
 use crate::storage::{Result, Storage, StorageError, StoragePath};
 
@@ -32,6 +32,27 @@ impl GoogleCloud {
 
 #[async_trait::async_trait]
 impl Storage for GoogleCloud {
+    #[trace(name = "google_cloud::health_check")]
+    async fn health_check(&self) -> Result<()> {
+        let test_file = StoragePath {
+            dir: "test".to_owned(),
+            file: "test.txt".to_owned(),
+        };
+
+        self.store(&test_file, 15, b"cloud connected").await?;
+
+        let response = self.fetch(&test_file, 15).await?;
+
+        let contents = String::from_utf8(response)?;
+
+        log::debug!("health check - test/test.txt contents: {}", contents);
+
+        // Ignore delete errors
+        let _ = self.delete(&test_file).await;
+
+        Ok(())
+    }
+
     #[trace(name = "google_cloud::store")]
     async fn store(&self, path: &StoragePath, content_length: usize, data: &[u8]) -> Result<()> {
         if let Err(e) = self.validate_content_length(path, content_length, data) {
@@ -96,5 +117,23 @@ impl Storage for GoogleCloud {
         }
 
         Ok(data)
+    }
+
+    #[trace(name = "google_cloud::delete")]
+    async fn delete(&self, path: &StoragePath) -> Result<()> {
+        let bucket_path = self.bucket();
+        let full_path = self.get_path(path);
+
+        let control_client = StorageControl::builder().build().await.unwrap();
+
+        // Ignore delete errors
+        let _response = control_client
+            .delete_object()
+            .set_bucket(bucket_path)
+            .set_object(full_path.to_str().unwrap())
+            .send()
+            .await;
+
+        Ok(())
     }
 }

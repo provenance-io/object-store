@@ -18,14 +18,18 @@ FROM debian:bookworm-slim
 
 LABEL org.opencontainers.image.source=https://github.com/provenance-io/object-store
 
-RUN  apt-get update && apt-get install -y \
-    libssl-dev
+RUN apt-get update && \
+    apt-get install -y ca-certificates libssl3 && \
+    rm -rf /var/lib/apt/lists/*
 
 EXPOSE 8080
 
-COPY --from=builder /usr/local/cargo/bin/object-store /usr/local/bin/object-store
+COPY --from=builder \
+    /usr/local/cargo/bin/object-store /usr/local/bin/object-store
 
-COPY --from=builder /bin/grpc_health_probe /bin/grpc_health_probe
+COPY --from=builder \
+    /bin/grpc_health_probe /bin/grpc_health_probe
+
 RUN chmod +x /bin/grpc_health_probe
 
 CMD ["object-store"]

@@ -2,3 +2,27 @@
 rustflags = [
     "-Dclippy::suspicious",
 ]
+
+[env]
+OS_URL="0.0.0.0"
+OS_PORT="5000"
+DB_CONNECTION_POOL_SIZE="3"
+DB_HOST="localhost"
+DB_PORT="5432"
+DB_USER="postgres"
+DB_PASS="password1"
+DB_NAME="object-store"
+DB_SCHEMA="public"
+URI_HOST="example.com"
+TRACE_HEADER="x-trace-header"
+LOGGING_THRESHOLD_SECONDS="1"
+RUST_LOG="warn,object_store=debug"
+DD_AGENT_ENABLED="false"
+DD_VERSION="undefined"
+DD_SERVICE="object-store"
+DD_ENV="local"
+HEALTH_SERVICE_ENABLED="true"
+
+# STORAGE
+# Check connectivity to storage on startup
+STORAGE_HEALTH_CHECK="false"

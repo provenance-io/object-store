@@ -28,7 +28,7 @@ impl FileSystem {
             Ok(_) => Ok(()),
             Err(e) => match e.kind() {
                 std::io::ErrorKind::AlreadyExists => Ok(()),
-                _ => Err(StorageError::IoError(format!("{:?}", e))),
+                _ => Err(StorageError::IoError(format!("{:?} - {:?}", e, path_buf))),
             },
         }
     }
@@ -36,30 +36,53 @@ impl FileSystem {
 
 #[async_trait::async_trait]
 impl Storage for FileSystem {
+    #[trace(name = "file_system::health_check")]
+    async fn health_check(&self) -> Result<()> {
+        let test_file = StoragePath {
+            dir: "test".to_owned(),
+            file: "test.txt".to_owned(),
+        };
+
+        self.store(&test_file, 12, b"fs connected").await?;
+
+        let response = self.fetch(&test_file, 12).await?;
+
+        let contents = String::from_utf8(response)?;
+
+        log::debug!("health check - {} contents: {}", test_file, contents);
+
+        // Ignore delete errors
+        let _ = self.delete(&test_file).await;
+
+        Ok(())
+    }
+
     #[trace(name = "file_system::store")]
     async fn store(&self, path: &StoragePath, content_length: usize, data: &[u8]) -> Result<()> {
         if let Err(e) = self.validate_content_length(path, content_length, data) {
             log::warn!("{:?}", e);
         }
 
+        let file_path = self.get_path(path);
+
         let file = OpenOptions::new()
             .write(true)
             .create_new(true)
-            .open(self.get_path(path))
+            .open(&file_path)
             .await;
 
         match file {
             Ok(mut file) => file
                 .write_all(data)
                 .await
-                .map_err(|e| StorageError::IoError(format!("{:?}", e))),
+                .map_err(|e| StorageError::IoError(format!("{:?}: {:?}", e, file_path))),
             Err(e) => match e.kind() {
                 std::io::ErrorKind::AlreadyExists => Ok(()),
                 std::io::ErrorKind::NotFound => {
                     self.create_dir(path).await?;
                     self.store(path, content_length, data).await
                 }
-                _ => Err(StorageError::IoError(format!("{:?}", e))),
+                _ => Err(StorageError::IoError(format!("{:?}: {:?}", e, file_path))),
             },
         }
     }
@@ -78,6 +101,21 @@ impl Storage for FileSystem {
         }
 
         Ok(data)
+    }
+
+    #[trace(name = "file_system::delete")]
+    async fn delete(&self, path: &StoragePath) -> Result<()> {
+        let full_path = self.get_path(path);
+        let absolute_path = full_path.canonicalize().unwrap_or(full_path.clone());
+
+        tokio::fs::remove_file(full_path).await.map_err(|e| {
+            StorageError::IoError(format!(
+                "Unable to delete file: {:?} {:?}",
+                absolute_path, e
+            ))
+        })?;
+
+        Ok(())
     }
 }
 

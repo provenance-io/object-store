@@ -33,7 +33,7 @@ impl ObjectApiResponse for Object {
             }),
             hash: self.hash.decoded()?,
             uri: format!("object://{}/{}", &config.uri_host, &self.hash),
-            bucket: config.storage_base_path.clone(),
+            bucket: config.storage_config.storage_base_path.clone(),
             name: self.name.clone(),
             metadata: Some(ObjectMetadata {
                 sha512: Vec::new(), // TODO get hash of whole dime?
