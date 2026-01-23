@@ -79,11 +79,26 @@ where
             let elapsed_seconds = start.elapsed().as_secs_f64();
 
             if elapsed_seconds > upper_logging_bounds {
-                log::warn!("Trace ID: {} uri={} took {:.3}s", trace_id, uri, elapsed_seconds);
+                log::warn!(
+                    "Trace ID: {} uri={} took {:.3}s",
+                    trace_id,
+                    uri,
+                    elapsed_seconds
+                );
             } else if elapsed_seconds > lower_logging_bounds {
-                log::info!("Trace ID: {} uri={} took {:.3}s", trace_id, uri, elapsed_seconds);
+                log::info!(
+                    "Trace ID: {} uri={} took {:.3}s",
+                    trace_id,
+                    uri,
+                    elapsed_seconds
+                );
             } else {
-                log::trace!("Trace ID: {} uri={} took {:.3}s", trace_id, uri, elapsed_seconds);
+                log::trace!(
+                    "Trace ID: {} uri={} took {:.3}s",
+                    trace_id,
+                    uri,
+                    elapsed_seconds
+                );
             }
 
             Ok(response)

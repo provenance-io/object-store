@@ -288,16 +288,36 @@ impl ReplicationState {
                 }) => {
                     match error {
                         ReplicationError::ClientCacheError(_) => {
-                            log::error!("Failed replication for {} to {} - {:?}", public_key, url, error)
+                            log::error!(
+                                "Failed replication for {} to {} - {:?}",
+                                public_key,
+                                url,
+                                error
+                            )
                         }
                         ReplicationError::CrateError(_) => {
-                            log::error!("Failed replication for {} to {} - {:?}", public_key, url, error)
+                            log::error!(
+                                "Failed replication for {} to {} - {:?}",
+                                public_key,
+                                url,
+                                error
+                            )
                         }
                         ReplicationError::TonicStatusError(_) => {
-                            log::error!("Failed replication for {} to {} - {:?}", public_key, url, error)
+                            log::error!(
+                                "Failed replication for {} to {} - {:?}",
+                                public_key,
+                                url,
+                                error
+                            )
                         }
                         ReplicationError::TonicTransportError(e) => {
-                            log::trace!("Failed replication for {} to {} - {:?}", public_key, url, e)
+                            log::trace!(
+                                "Failed replication for {} to {} - {:?}",
+                                public_key,
+                                url,
+                                e
+                            )
                         }
                     }
                     (client, url)
