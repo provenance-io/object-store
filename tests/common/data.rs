@@ -102,7 +102,7 @@ pub fn seed_cache(cache: &mut Cache, remote_config: &Config) {
         ..test_public_key(party_1().0.public_key)
     });
     cache.add_public_key(PublicKey {
-        url: String::from(format!("tcp://{}", remote_config.url)),
+        url: String::from(format!("http://{}", remote_config.url)),
         auth_data: Some(String::from("X-Test-Header:test_value")),
         ..test_public_key(party_2().0.public_key)
     });

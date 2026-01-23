@@ -7,19 +7,19 @@ use object_store::pb::{
 use tonic::transport::Channel;
 
 pub async fn get_admin_client(addr: SocketAddr) -> AdminServiceClient<Channel> {
-    AdminServiceClient::connect(format!("tcp://{}", addr))
+    AdminServiceClient::connect(format!("http://{}", addr))
         .await
         .unwrap()
 }
 
 pub async fn get_mailbox_client(addr: SocketAddr) -> MailboxServiceClient<Channel> {
-    MailboxServiceClient::connect(format!("tcp://{}", addr))
+    MailboxServiceClient::connect(format!("http://{}", addr))
         .await
         .unwrap()
 }
 
 pub async fn get_object_client(addr: SocketAddr) -> ObjectServiceClient<Channel> {
-    ObjectServiceClient::connect(format!("tcp://{}", addr))
+    ObjectServiceClient::connect(format!("http://{}", addr))
         .await
         .unwrap()
 }

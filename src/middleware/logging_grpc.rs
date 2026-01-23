@@ -59,6 +59,7 @@ where
 
     fn call(&mut self, req: Request<ReqBody>) -> Self::Future {
         let headers = req.headers().clone();
+        let uri = req.uri().clone();
         let trace_header = self.trace_header.clone();
         let lower_logging_bounds = self.lower_logging_bounds;
         let upper_logging_bounds = self.upper_logging_bounds;
@@ -78,11 +79,26 @@ where
             let elapsed_seconds = start.elapsed().as_secs_f64();
 
             if elapsed_seconds > upper_logging_bounds {
-                log::warn!("Trace ID: {} took {} second(s)", trace_id, elapsed_seconds);
+                log::warn!(
+                    "Trace ID: {} uri={} took {:.3}s",
+                    trace_id,
+                    uri,
+                    elapsed_seconds
+                );
             } else if elapsed_seconds > lower_logging_bounds {
-                log::info!("Trace ID: {} took {} second(s)", trace_id, elapsed_seconds);
+                log::info!(
+                    "Trace ID: {} uri={} took {:.3}s",
+                    trace_id,
+                    uri,
+                    elapsed_seconds
+                );
             } else {
-                log::trace!("Trace ID: {} took {} second(s)", trace_id, elapsed_seconds);
+                log::trace!(
+                    "Trace ID: {} uri={} took {:.3}s",
+                    trace_id,
+                    uri,
+                    elapsed_seconds
+                );
             }
 
             Ok(response)

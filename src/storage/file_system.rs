@@ -60,7 +60,7 @@ impl Storage for FileSystem {
     #[trace(name = "file_system::store")]
     async fn store(&self, path: &StoragePath, content_length: usize, data: &[u8]) -> Result<()> {
         if let Err(e) = self.validate_content_length(path, content_length, data) {
-            log::warn!("{:?}", e);
+            log::warn!("store: {:?}", e);
         }
 
         let file_path = self.get_path(path);
@@ -97,7 +97,7 @@ impl Storage for FileSystem {
         })?;
 
         if let Err(e) = self.validate_content_length(path, content_length, &data) {
-            log::warn!("{:?}", e);
+            log::warn!("fetch: {:?}", e);
         }
 
         Ok(data)
