@@ -1,9 +1,7 @@
 use crate::config::Config;
 use crate::datastore::{AuthType, KeyType, Object, PublicKey};
 use crate::pb::public_key_response::Impl::HeaderAuth as HeaderAuthEnumResponse;
-use crate::pb::{
-    HeaderAuth, ObjectMetadata, ObjectResponse, PublicKeyResponse, Uuid, public_key::Key,
-};
+use crate::pb::{HeaderAuth, ObjectMetadata, ObjectResponse, PublicKeyResponse, public_key::Key};
 use crate::proto_helpers::StringUtil;
 use crate::types::{OsError, Result};
 
@@ -25,12 +23,8 @@ pub trait ObjectApiResponse {
 impl ObjectApiResponse for Object {
     fn to_response(&self, config: &Config) -> Result<ObjectResponse> {
         Ok(ObjectResponse {
-            uuid: Some(Uuid {
-                value: self.uuid.as_hyphenated().to_string(),
-            }),
-            dime_uuid: Some(Uuid {
-                value: self.dime_uuid.as_hyphenated().to_string(),
-            }),
+            uuid: Some(self.uuid.into()),
+            dime_uuid: Some(self.dime_uuid.into()),
             hash: self.hash.decoded()?,
             uri: format!("object://{}/{}", &config.uri_host, &self.hash),
             bucket: config.storage_config.storage_base_path.clone(),
@@ -91,9 +85,7 @@ impl PublicKeyApiResponse for PublicKey {
             None => None,
         };
         let response = PublicKeyResponse {
-            uuid: Some(Uuid {
-                value: self.uuid.as_hyphenated().to_string(),
-            }),
+            uuid: Some(self.uuid.into()),
             public_key: Some(public_key.into()),
             url: self.url,
             r#impl,
