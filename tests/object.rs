@@ -35,7 +35,7 @@ fn add_keys_cache(cache: Arc<Mutex<Cache>>) {
         ..test_public_key(party_1().0.public_key)
     });
     guard.add_public_key(PublicKey {
-        url: String::from("tcp://party2:8080"),
+        url: String::from("http://party2:8080"),
         auth_data: Some(String::from("x-test-header:test_value_2")),
         ..test_public_key(party_2().0.public_key)
     });

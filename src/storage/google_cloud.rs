@@ -56,7 +56,7 @@ impl Storage for GoogleCloud {
     #[trace(name = "google_cloud::store")]
     async fn store(&self, path: &StoragePath, content_length: usize, data: &[u8]) -> Result<()> {
         if let Err(e) = self.validate_content_length(path, content_length, data) {
-            log::warn!("{:?}", e);
+            log::warn!("store: {:?}", e);
         }
 
         let bucket_path = self.bucket();
@@ -113,7 +113,7 @@ impl Storage for GoogleCloud {
         };
 
         if let Err(e) = self.validate_content_length(path, content_length, &data) {
-            log::warn!("{:?}", e);
+            log::warn!("fetch: {:?}", e);
         }
 
         Ok(data)

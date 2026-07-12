@@ -38,7 +38,7 @@ async fn client_caching() -> Result<()> {
     let (_, _, replication_state_one, config_one) =
         start_test_server(config_one, Some(&config_two)).await;
 
-    let url_one = format!("tcp://{}", config_one.url);
+    let url_one = format!("http://{}", config_one.url);
 
     let mut client_cache = replication_state_one.client_cache.lock().await;
 
@@ -61,7 +61,7 @@ async fn client_caching() -> Result<()> {
 
     // Client 2:
     let (_, _, _, config_two) = start_test_server(config_two, None).await;
-    let url_two = format!("tcp://{}", config_two.url);
+    let url_two = format!("http://{}", config_two.url);
 
     let client_two = client_cache.request(&url_two).await.unwrap().unwrap();
 

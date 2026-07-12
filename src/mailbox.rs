@@ -1,6 +1,6 @@
 use crate::datastore;
 use crate::pb::mailbox_service_server::MailboxService;
-use crate::pb::{AckRequest, GetRequest, MailPayload, Uuid};
+use crate::pb::{AckRequest, GetRequest, MailPayload};
 use crate::proto_helpers::VecUtil;
 use crate::types::{GrpcResult, OsError};
 use crate::{
@@ -79,15 +79,15 @@ impl MailboxService for MailboxGrpc {
             for (mailbox_uuid, object) in results {
                 let payload = match object.payload {
                     Some(payload) => MailPayload {
-                        uuid: Some(Uuid {
-                            value: mailbox_uuid.as_hyphenated().to_string(),
-                        }),
+                        uuid: Some(mailbox_uuid.into()),
                         data: payload,
                     },
                     None => {
                         log::error!(
-                            "mailbox object without a payload {}",
+                            "mailbox object without a payload: uuid={} hash={} dime_length={}",
                             object.uuid.as_hyphenated(),
+                            object.hash,
+                            object.dime_length,
                         );
 
                         if tx
