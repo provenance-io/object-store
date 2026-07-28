@@ -15,7 +15,7 @@ jobs:
     steps:
       - name: Checkout Repository
         id: checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
       - name: Setup Rust
         id: setup-rust

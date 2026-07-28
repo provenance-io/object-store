@@ -1,4 +1,4 @@
-FROM rust:1.92-bookworm AS builder
+FROM rust:1.97-bookworm AS builder
 
 # Install protobuf compiler
 RUN apt-get update && \
