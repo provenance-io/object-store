@@ -256,14 +256,10 @@ impl ReplicationState {
                     futures.push(self.replicate_public_key(client, public_key.clone(), &value.url));
                 }
                 Ok(None) => {
-                    log::trace!("Waiting to retry for client for {}", &value.url);
+                    log::trace!("Waiting to retry for client for {}", value.url);
                 }
                 Err(e) => {
-                    log::error!(
-                        "Failed to cache service connection {} - {:?}",
-                        &value.url,
-                        e
-                    )
+                    log::error!("Failed to cache service connection {} - {:?}", value.url, e)
                 }
             }
         }
@@ -287,16 +283,16 @@ impl ReplicationState {
                     url,
                 }) => {
                     match error {
-                        ReplicationError::ClientCacheError(_) => {
+                        ReplicationError::ClientCache(_) => {
                             log::error!("Failed replication for {} - {:?}", public_key, error)
                         }
-                        ReplicationError::CrateError(_) => {
+                        ReplicationError::Crate(_) => {
                             log::error!("Failed replication for {} - {:?}", public_key, error)
                         }
-                        ReplicationError::TonicStatusError(_) => {
+                        ReplicationError::TonicStatus(_) => {
                             log::error!("Failed replication for {} - {:?}", public_key, error)
                         }
-                        ReplicationError::TonicTransportError(e) => {
+                        ReplicationError::TonicTransport(e) => {
                             log::trace!("Failed replication for {} - {:?}", public_key, e)
                         }
                     }
@@ -305,7 +301,7 @@ impl ReplicationState {
             };
 
             if let Err(e) = self.client_cache.lock().await.restore(&url, client).await {
-                log::error!("Failed to return client for {} - {:?}", &url, e);
+                log::error!("Failed to return client for {} - {:?}", url, e);
             }
         }
     }
@@ -352,21 +348,21 @@ impl ReplicationState {
                         match datastore::reap_object_replication(&self.db_pool, public_key).await {
                             Ok(rows_affected) => log::info!(
                                 "Reaping public_key {} - rows_affected {}",
-                                &public_key,
+                                public_key,
                                 rows_affected
                             ),
                             Err(e) => log::error!(
                                 "Reaper - reap_object_replication for {} - {:?}",
-                                &public_key,
-                                &e
+                                public_key,
+                                e
                             ),
                         }
                     }
                 }
                 Err(e) => log::error!(
                     "Reaper - replication_object_uuids for {} - {:?}",
-                    &public_key,
-                    &e
+                    public_key,
+                    e
                 ),
             }
         }

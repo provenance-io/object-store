@@ -75,7 +75,7 @@ impl PublicKeyService for PublicKeyGrpc {
         // validate url if it is not empty
         if !request.url.is_empty() {
             Url::parse(&request.url).map_err(|e| {
-                Status::invalid_argument(format!("Unable to parse url {} - {:?}", &request.url, e))
+                Status::invalid_argument(format!("Unable to parse url {} - {:?}", request.url, e))
             })?;
         }
 

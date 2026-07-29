@@ -5,16 +5,16 @@ use crate::types::OsError;
 quick_error! {
     #[derive(Debug)]
     pub enum ReplicationError {
-        CrateError(err: OsError) {
+        Crate(err: OsError) {
             from()
         }
-        TonicTransportError(err: tonic::transport::Error) {
+        TonicTransport(err: tonic::transport::Error) {
             from()
         }
-        TonicStatusError(err: tonic::Status) {
+        TonicStatus(err: tonic::Status) {
             from()
         }
-        ClientCacheError(url: String) {
+        ClientCache(url: String) {
             display("no cached client found for {}", url)
         }
     }

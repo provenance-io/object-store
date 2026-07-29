@@ -30,8 +30,8 @@ impl Cache {
         for key in datastore::get_all_public_keys(&pool).await? {
             log::debug!(
                 "Adding public key {} with url {}",
-                &key.public_key,
-                &key.url
+                key.public_key,
+                key.url
             );
 
             cache.add_public_key(key);

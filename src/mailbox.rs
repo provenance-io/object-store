@@ -61,11 +61,11 @@ impl MailboxService for MailboxGrpc {
                 }
                 PublicKeyState::Remote => Err(Status::permission_denied(format!(
                     "remote public key {} - fetch on its own instance",
-                    &public_key
+                    public_key
                 ))),
                 PublicKeyState::Unknown => Err(Status::permission_denied(format!(
                     "unknown public key {}",
-                    &public_key
+                    public_key
                 ))),
             }?;
         }
@@ -160,11 +160,11 @@ impl MailboxService for MailboxGrpc {
                 }
                 PublicKeyState::Remote => Err(Status::permission_denied(format!(
                     "remote public key {} - ack on its own instance",
-                    &public_key
+                    public_key
                 ))),
                 PublicKeyState::Unknown => Err(Status::permission_denied(format!(
                     "unknown public key {}",
-                    &public_key
+                    public_key
                 ))),
             }?;
         }

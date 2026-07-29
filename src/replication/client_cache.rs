@@ -112,7 +112,7 @@ impl ClientCache {
             }
             // Attempting to place a client into the map without having gone through
             // `request` is an error:
-            Entry::Vacant(_) => Err(ReplicationError::ClientCacheError(url.to_owned())),
+            Entry::Vacant(_) => Err(ReplicationError::ClientCache(url.to_owned())),
         }
     }
 }

@@ -250,11 +250,11 @@ impl ObjectService for ObjectGrpc {
                 }
                 PublicKeyState::Remote => Err(Status::permission_denied(format!(
                     "remote public key {} - use the replicate route",
-                    &owner_public_key
+                    owner_public_key
                 ))),
                 PublicKeyState::Unknown => Err(Status::permission_denied(format!(
                     "unknown public key {}",
-                    &owner_public_key
+                    owner_public_key
                 ))),
             }?;
         }
@@ -346,11 +346,11 @@ impl ObjectService for ObjectGrpc {
                 }
                 PublicKeyState::Remote => Err(Status::permission_denied(format!(
                     "remote public key {} - fetch on its own instance",
-                    &public_key
+                    public_key
                 ))),
                 PublicKeyState::Unknown => Err(Status::permission_denied(format!(
                     "unknown public key {}",
-                    &public_key
+                    public_key
                 ))),
             }?;
         }

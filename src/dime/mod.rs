@@ -58,7 +58,7 @@ impl Dime {
         } else {
             Err(DimeError::InternalInvalidState(format!(
                 "dime uuid: {} is missing an owner",
-                &self.proto.uuid.as_ref().map_or("", |v| &v.value)
+                self.proto.uuid.as_ref().map_or("", |v| &v.value)
             )))
         }
     }
