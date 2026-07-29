@@ -1,7 +1,7 @@
 use fastrace::prelude::*;
+use http::HeaderMap;
 use http::{Request, Response};
 use http_body::Body;
-use reqwest::header::HeaderMap;
 use std::{
     fmt::Debug,
     task::{Context, Poll},
