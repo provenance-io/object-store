@@ -28,11 +28,7 @@ impl Cache {
     pub async fn new(pool: Arc<PgPool>) -> Result<Arc<Mutex<Cache>>, OsError> {
         let mut cache = Cache::default();
         for key in datastore::get_all_public_keys(&pool).await? {
-            log::debug!(
-                "Adding public key {} with url {}",
-                key.public_key,
-                key.url
-            );
+            log::debug!("Adding public key {} with url {}", key.public_key, key.url);
 
             cache.add_public_key(key);
         }
