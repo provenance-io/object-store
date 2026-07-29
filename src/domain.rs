@@ -32,7 +32,7 @@ impl ObjectApiResponse for Object {
                 value: self.dime_uuid.as_hyphenated().to_string(),
             }),
             hash: self.hash.decoded()?,
-            uri: format!("object://{}/{}", &config.uri_host, &self.hash),
+            uri: format!("object://{}/{}", config.uri_host, self.hash),
             bucket: config.storage_config.storage_base_path.clone(),
             name: self.name.clone(),
             metadata: Some(ObjectMetadata {

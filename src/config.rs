@@ -140,7 +140,7 @@ impl Config {
             .expect("OS_PORT not set")
             .parse()
             .expect("OS_PORT could not be parsed into a u16");
-        let url = format!("{}:{}", &url, &port)
+        let url = format!("{}:{}", url, port)
             .parse()
             .expect("url could not be parsed");
         let db_connection_pool_size = env::var("DB_CONNECTION_POOL_SIZE")

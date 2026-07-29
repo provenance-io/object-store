@@ -125,7 +125,7 @@ mod tests {
     use crate::storage::*;
 
     use rand::distr::Alphanumeric;
-    use rand::{Rng, rng};
+    use rand::{RngExt, rng};
 
     #[tokio::test]
     async fn store_file() {

@@ -68,7 +68,9 @@ impl ObjectService for ObjectGrpc {
         request: Request<Streaming<ChunkBidi>>,
     ) -> GrpcResult<Response<ObjectResponse>> {
         if self.config.is_maintenance_state() {
-            return Err(Status::unavailable("Service is in maintenance mode"));
+            let err_message = "Service is in maintenance mode";
+            log::error!("{}", err_message);
+            return Err(Status::unavailable(err_message));
         }
 
         let metadata = request.metadata().clone();
@@ -248,11 +250,11 @@ impl ObjectService for ObjectGrpc {
                 }
                 PublicKeyState::Remote => Err(Status::permission_denied(format!(
                     "remote public key {} - use the replicate route",
-                    &owner_public_key
+                    owner_public_key
                 ))),
                 PublicKeyState::Unknown => Err(Status::permission_denied(format!(
                     "unknown public key {}",
-                    &owner_public_key
+                    owner_public_key
                 ))),
             }?;
         }
@@ -344,11 +346,11 @@ impl ObjectService for ObjectGrpc {
                 }
                 PublicKeyState::Remote => Err(Status::permission_denied(format!(
                     "remote public key {} - fetch on its own instance",
-                    &public_key
+                    public_key
                 ))),
                 PublicKeyState::Unknown => Err(Status::permission_denied(format!(
                     "unknown public key {}",
-                    &public_key
+                    public_key
                 ))),
             }?;
         }

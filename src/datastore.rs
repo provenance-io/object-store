@@ -176,7 +176,7 @@ impl TryFrom<PublicKeyRequest> for PublicKey {
         let (auth_type, auth_data) = match request.r#impl {
             Some(HeaderAuthEnumRequest(ref auth)) => (
                 Some(AuthType::Header),
-                Some(format!("{}:{}", &auth.header.to_lowercase(), &auth.value)),
+                Some(format!("{}:{}", auth.header.to_lowercase(), auth.value)),
             ),
             None => (None, None),
         };

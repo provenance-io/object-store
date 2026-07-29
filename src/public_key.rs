@@ -42,7 +42,9 @@ impl PublicKeyService for PublicKeyGrpc {
         request: Request<PublicKeyRequest>,
     ) -> GrpcResult<Response<PublicKeyResponse>> {
         if self.config.is_maintenance_state() {
-            return Err(Status::unavailable("Service is in maintenance mode"));
+            let err_message = "Service is in maintenance mode";
+            log::error!("{}", err_message);
+            return Err(Status::unavailable(err_message));
         }
 
         let request = request.into_inner();
@@ -73,7 +75,7 @@ impl PublicKeyService for PublicKeyGrpc {
         // validate url if it is not empty
         if !request.url.is_empty() {
             Url::parse(&request.url).map_err(|e| {
-                Status::invalid_argument(format!("Unable to parse url {} - {:?}", &request.url, e))
+                Status::invalid_argument(format!("Unable to parse url {} - {:?}", request.url, e))
             })?;
         }
 
