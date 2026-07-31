@@ -3,10 +3,11 @@ use std::collections::HashMap;
 use base64::{Engine, prelude::BASE64_STANDARD};
 use chrono::Utc;
 use object_store::config::Config;
-use object_store::datastore::{AuthType, KeyType, PublicKey};
+use object_store::datastore::{AuthType, KeyType};
 use object_store::dime::Dime;
 use object_store::pb::Dime as DimeProto;
 use object_store::public_key::Cache;
+use object_store::public_key::PublicKey;
 use object_store::{dime::Signature, pb::Audience};
 
 pub fn party_1() -> (Audience, Signature) {

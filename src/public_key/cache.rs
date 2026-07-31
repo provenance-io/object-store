@@ -3,7 +3,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use crate::{datastore::PublicKey, domain::OsError};
+use crate::{domain::OsError, public_key::PublicKey};
 
 #[derive(Debug)]
 pub enum PublicKeyState {

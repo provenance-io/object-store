@@ -1,10 +1,11 @@
 mod common;
 
 use object_store::config::Config;
-use object_store::datastore::{PublicKey, replication_object_uuids};
+use object_store::datastore::replication_object_uuids;
 use object_store::domain::Result;
 use object_store::pb;
 use object_store::proto::AudienceUtil;
+use object_store::public_key::PublicKey;
 
 use std::collections::HashMap;
 
