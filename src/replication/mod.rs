@@ -156,10 +156,7 @@ impl ReplicationState {
             let payload = if let Some(payload) = &object.payload {
                 Bytes::copy_from_slice(payload.as_slice())
             } else {
-                let storage_path = StoragePath {
-                    dir: object.directory.clone(),
-                    file: object.name.clone(),
-                };
+                let storage_path = object.storage_path();
 
                 let payload = match self.storage.fetch(&storage_path, object.dime_length).await {
                     Ok(data) => data,

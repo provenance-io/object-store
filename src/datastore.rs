@@ -6,6 +6,7 @@ use crate::domain::DimeProperties;
 use crate::pb::public_key_request::Impl::HeaderAuth as HeaderAuthEnumRequest;
 use crate::pb::{PublicKeyRequest, public_key::Key};
 use crate::proto_helpers::VecUtil;
+use crate::storage::StoragePath;
 use crate::types::{OsError, Result};
 use prost::Message;
 use std::convert::TryFrom;
@@ -54,6 +55,15 @@ pub struct Object {
     pub payload: Option<Vec<u8>>,
     pub properties: LinkedHashMap<String, Vec<u8>>,
     pub created_at: DateTime<Utc>,
+}
+
+impl Object {
+    pub fn storage_path(&self) -> StoragePath {
+        StoragePath {
+            dir: self.directory.clone(),
+            file: self.name.clone(),
+        }
+    }
 }
 
 impl FromRow<'_, sqlx::postgres::PgRow> for Object {

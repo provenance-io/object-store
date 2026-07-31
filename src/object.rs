@@ -294,10 +294,7 @@ impl ObjectService for ObjectGrpc {
             )
             .await?;
 
-            let storage_path = StoragePath {
-                dir: response.directory.clone(),
-                file: response.name.clone(),
-            };
+            let storage_path = response.storage_path();
 
             self.storage
                 .store(&storage_path, response.dime_length, &raw_dime)
@@ -364,10 +361,7 @@ impl ObjectService for ObjectGrpc {
         let payload = if let Some(payload) = &object.payload {
             Bytes::copy_from_slice(payload.as_slice())
         } else {
-            let storage_path = StoragePath {
-                dir: object.directory.clone(),
-                file: object.name.clone(),
-            };
+            let storage_path = object.storage_path();
 
             let payload = self
                 .storage
