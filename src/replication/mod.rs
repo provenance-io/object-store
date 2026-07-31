@@ -15,7 +15,7 @@ use crate::proto_helpers::{
 };
 use crate::replication::client_cache::{ClientCache, ID};
 use crate::replication::public_key::PublicKey;
-use crate::storage::{Storage, StoragePath};
+use crate::storage::Storage;
 use crate::{cache::Cache, consts, types::OsError};
 
 use bytes::Bytes;

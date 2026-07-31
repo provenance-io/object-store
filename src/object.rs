@@ -15,7 +15,7 @@ use crate::{
     cache::{Cache, PublicKeyState},
     config::Config,
     dime::{Dime, Signature, format_dime_bytes},
-    storage::{Storage, StoragePath},
+    storage::Storage,
 };
 
 use bytes::{BufMut, Bytes, BytesMut};
