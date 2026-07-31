@@ -1,12 +1,12 @@
-use crate::authorization::{Authorization, HeaderAuth, NoAuthorization};
-use crate::cache::PublicKeyState;
 use crate::consts::*;
 use crate::dime::Dime;
 use crate::domain::{DimeProperties, VecUtil};
+use crate::domain::{OsError, Result};
+use crate::object::Object;
 use crate::pb::public_key_request::Impl::HeaderAuth as HeaderAuthEnumRequest;
 use crate::pb::{PublicKeyRequest, public_key::Key};
-use crate::storage::StoragePath;
-use crate::types::{OsError, Result};
+use crate::public_key::PublicKeyState;
+use crate::public_key::{Authorization, HeaderAuth, NoAuthorization};
 use prost::Message;
 use std::convert::TryFrom;
 
@@ -33,34 +33,6 @@ impl From<PgQueryResult> for UpsertOutcome {
             Self::Created
         } else {
             Self::Noop
-        }
-    }
-}
-
-#[allow(
-    dead_code,
-    reason = "https://github.com/provenance-io/object-store/issues/47"
-)]
-#[derive(Debug)]
-pub struct Object {
-    pub uuid: uuid::Uuid,
-    pub dime_uuid: uuid::Uuid,
-    pub hash: String,
-    pub unique_hash: String,
-    pub content_length: usize,
-    pub dime_length: usize,
-    pub directory: String,
-    pub name: String,
-    pub payload: Option<Vec<u8>>,
-    pub properties: LinkedHashMap<String, Vec<u8>>,
-    pub created_at: DateTime<Utc>,
-}
-
-impl Object {
-    pub fn storage_path(&self) -> StoragePath {
-        StoragePath {
-            dir: self.directory.clone(),
-            file: self.name.clone(),
         }
     }
 }
@@ -92,10 +64,6 @@ impl FromRow<'_, sqlx::postgres::PgRow> for Object {
     }
 }
 
-#[allow(
-    dead_code,
-    reason = "https://github.com/provenance-io/object-store/issues/47"
-)]
 #[derive(FromRow, Debug)]
 pub struct ObjectPublicKey {
     pub object_uuid: uuid::Uuid,
@@ -104,10 +72,6 @@ pub struct ObjectPublicKey {
     pub created_at: DateTime<Utc>,
 }
 
-#[allow(
-    dead_code,
-    reason = "https://github.com/provenance-io/object-store/issues/47"
-)]
 #[derive(FromRow, Debug)]
 pub struct MailboxPublicKey {
     pub uuid: uuid::Uuid,

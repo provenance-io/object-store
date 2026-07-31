@@ -4,8 +4,8 @@ use tonic::{Request, Response};
 
 use crate::{
     config::Config,
+    domain::GrpcResult,
     pb::{ConfigResponse, GetConfigRequest, SetConfigRequest, admin_service_server::AdminService},
-    types::GrpcResult,
 };
 
 #[derive(Debug)]

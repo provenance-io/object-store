@@ -11,7 +11,7 @@ pub use google_cloud::GoogleCloud;
 
 use crate::{
     config::{StorageConfig, StorageType},
-    types::OsError,
+    domain::OsError,
 };
 
 // TODO implement checksum in filestore

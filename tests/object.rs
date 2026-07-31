@@ -4,7 +4,6 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use linked_hash_map::LinkedHashMap;
-use object_store::cache::Cache;
 use object_store::config::Config;
 use object_store::datastore::{self, PublicKey, replication_object_uuids};
 use object_store::domain::{StringUtil, VecUtil};
@@ -12,6 +11,7 @@ use object_store::pb::chunk::Impl::{Data, End};
 use object_store::pb::chunk_bidi::Impl::{
     Chunk as ChunkEnum, MultiStreamHeader as MultiStreamHeaderEnum,
 };
+use object_store::public_key::Cache;
 
 use object_store::proto::{AudienceUtil, ObjectResponseUtil};
 use object_store::{consts::*, pb::HashRequest};

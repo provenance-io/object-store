@@ -1,12 +1,14 @@
+pub mod types;
 pub mod util;
+pub use types::*;
 pub use util::*;
 
 use crate::config::Config;
-use crate::datastore::{AuthType, KeyType, Object, PublicKey};
+use crate::datastore::{AuthType, KeyType, PublicKey};
+use crate::object::Object;
 use crate::pb::public_key_response::Impl::HeaderAuth as HeaderAuthEnumResponse;
 use crate::pb::{HeaderAuth, ObjectMetadata, ObjectResponse, PublicKeyResponse, public_key::Key};
 use crate::proto::UuidUtil;
-use crate::types::{OsError, Result};
 
 use chrono::Utc;
 use prost::Message;

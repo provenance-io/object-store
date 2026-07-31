@@ -16,7 +16,7 @@ use crate::proto::{
 use crate::replication::client_cache::{ClientCache, ID};
 use crate::replication::public_key::PublicKey;
 use crate::storage::Storage;
-use crate::{cache::Cache, consts, types::OsError};
+use crate::{consts, domain::OsError, public_key::Cache};
 
 use bytes::Bytes;
 use std::sync::{Arc, Mutex};

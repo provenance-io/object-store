@@ -4,17 +4,17 @@ use crate::datastore::get_object_by_uuid;
 use crate::datastore::get_public_key_object_uuid;
 use crate::domain::VecUtil;
 use crate::domain::{DimeProperties, ObjectApiResponse};
+use crate::domain::{GrpcResult, OsError};
 use crate::pb::MultiStreamHeader;
 use crate::pb::chunk::Impl::{Data, End, Value};
 use crate::pb::chunk_bidi::Impl::{Chunk as ChunkEnum, MultiStreamHeader as MultiStreamHeaderEnum};
 use crate::pb::object_service_server::ObjectService;
 use crate::pb::{Chunk, ChunkBidi, HashRequest, ObjectResponse, StreamHeader};
 use crate::proto::create_stream_end;
-use crate::types::{GrpcResult, OsError};
 use crate::{
-    cache::{Cache, PublicKeyState},
     config::Config,
     dime::{Dime, Signature, format_dime_bytes},
+    public_key::{Cache, PublicKeyState},
     storage::Storage,
 };
 
@@ -324,8 +324,6 @@ impl ObjectService for ObjectGrpc {
     async fn get(&self, request: Request<HashRequest>) -> GrpcResult<Response<Self::GetStream>> {
         let metadata = request.metadata().clone();
         let request = request.into_inner();
-
-        let hash = request.hash.encoded();
         let public_key = request.public_key.encoded();
 
         if self.config.user_auth_enabled {
@@ -353,6 +351,8 @@ impl ObjectService for ObjectGrpc {
         }
 
         let object = {
+            let hash = request.hash.encoded();
+
             let object_uuid =
                 get_public_key_object_uuid(&self.db_pool, hash.as_str(), &public_key).await?;
             get_object_by_uuid(&self.db_pool, &object_uuid).await?

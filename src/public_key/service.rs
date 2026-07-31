@@ -1,11 +1,11 @@
-use crate::cache::Cache;
 use crate::config::Config;
 use crate::datastore;
+use crate::domain::GrpcResult;
 use crate::domain::PublicKeyApiResponse;
 use crate::pb::public_key_request::Impl::HeaderAuth as HeaderAuthEnumRequest;
 use crate::pb::public_key_service_server::PublicKeyService;
 use crate::pb::{PublicKeyRequest, PublicKeyResponse};
-use crate::types::GrpcResult;
+use crate::public_key::Cache;
 
 use sqlx::postgres::PgPool;
 use std::convert::TryInto;
