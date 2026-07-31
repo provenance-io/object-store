@@ -26,7 +26,7 @@ impl<S> Layer<S> for LoggingMiddlewareLayer {
             inner: service,
             trace_header: self.config.clone().trace_header.clone(),
             lower_logging_bounds: self.config.logging_threshold_seconds,
-            upper_logging_bounds: self.config.logging_threshold_seconds * 10f64,
+            upper_logging_bounds: self.config.logging_threshold_seconds * 10,
         }
     }
 }
@@ -35,8 +35,8 @@ impl<S> Layer<S> for LoggingMiddlewareLayer {
 pub struct LoggingGrpcMiddleware<S> {
     inner: S,
     trace_header: String,
-    lower_logging_bounds: f64,
-    upper_logging_bounds: f64,
+    lower_logging_bounds: u64,
+    upper_logging_bounds: u64,
 }
 
 impl<S, ReqBody, ResBody> Service<Request<ReqBody>> for LoggingGrpcMiddleware<S>
@@ -75,7 +75,7 @@ where
         Box::pin(async move {
             let response = future.await?;
 
-            let elapsed_seconds = start.elapsed().as_secs_f64();
+            let elapsed_seconds = start.elapsed().as_secs();
 
             if elapsed_seconds > upper_logging_bounds {
                 log::warn!("Trace ID: {} took {} second(s)", trace_id, elapsed_seconds);

@@ -22,7 +22,7 @@ pub async fn configure_and_start_server(mut context: AppContext) -> Result<(), E
 
     let health_service = context.init().await;
 
-    let tracing_layer = if let Some(ref dd_config) = context.config.dd_config {
+    let tracing_layer = if let Some(ref dd_config) = context.config.datadog {
         start_trace_reporter(dd_config);
 
         Some(MinitraceGrpcMiddlewareLayer::new(

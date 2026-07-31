@@ -58,9 +58,9 @@ impl AppContext {
     /// 2. Initialize cache
     /// 3. Build gRPC services
     pub async fn new(config: Arc<Config>) -> Result<Self, OsError> {
-        let db_pool = connect_and_migrate(&config).await?;
+        let db_pool = connect_and_migrate(&config.db).await?;
         let cache = Cache::new(db_pool.clone()).await?;
-        let storage = new_storage(&config.storage_config).await?;
+        let storage = new_storage(&config.storage).await?;
 
         let admin_service = AdminGrpc::new(config.clone());
         let public_key_service = PublicKeyGrpc::new(cache.clone(), config.clone(), db_pool.clone());
@@ -73,7 +73,7 @@ impl AppContext {
         );
 
         let replication_state = {
-            let replication_config = config.replication_config.clone();
+            let replication_config = config.replication.clone();
 
             ReplicationState::new(
                 cache.clone(),
@@ -99,7 +99,7 @@ impl AppContext {
     /// 1. Init health service, if enabled (default: true)
     /// 2. Init replication, if enabled (default: false)
     pub async fn init(&mut self) -> Option<HealthServer<impl Health>> {
-        if self.config.replication_config.replication_enabled {
+        if self.config.replication.enabled {
             self.replication_state.init();
         }
 

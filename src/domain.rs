@@ -26,6 +26,7 @@ impl ObjectApiResponse for Object {
     fn to_response(&self, config: &Config) -> Result<ObjectResponse> {
         Ok(ObjectResponse {
             uuid: Some(Uuid {
+                // TODO extract
                 value: self.uuid.as_hyphenated().to_string(),
             }),
             dime_uuid: Some(Uuid {
@@ -33,7 +34,7 @@ impl ObjectApiResponse for Object {
             }),
             hash: self.hash.decoded()?,
             uri: format!("object://{}/{}", config.uri_host, self.hash),
-            bucket: config.storage_config.storage_base_path.clone(),
+            bucket: config.storage.base_path.clone(),
             name: self.name.clone(),
             metadata: Some(ObjectMetadata {
                 sha512: Vec::new(), // TODO get hash of whole dime?

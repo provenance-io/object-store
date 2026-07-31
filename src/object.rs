@@ -262,7 +262,7 @@ impl ObjectService for ObjectGrpc {
         let replication_key_states = {
             let mut replication_key_states = Vec::new();
 
-            if self.config.replication_config.replication_enabled {
+            if self.config.replication.enabled {
                 let audience = dime
                     .unique_audience_without_owner_base64()
                     .map_err(|_| Status::invalid_argument("Invalid Dime proto - audience list"))?;
@@ -280,7 +280,7 @@ impl ObjectService for ObjectGrpc {
         // mail and always used database storage
         let is_mail = dime.metadata.contains_key(consts::MAILBOX_KEY);
         let above_storage_threshold =
-            dime_properties.dime_length > self.config.storage_config.storage_threshold;
+            dime_properties.dime_length > self.config.storage.storage_threshold;
 
         let response = if !is_mail && above_storage_threshold {
             let response = datastore::put_object(
@@ -290,7 +290,7 @@ impl ObjectService for ObjectGrpc {
                 &properties,
                 replication_key_states,
                 None,
-                self.config.replication_config.replication_enabled,
+                self.config.replication.enabled,
             )
             .await?;
 
@@ -309,7 +309,7 @@ impl ObjectService for ObjectGrpc {
                 &properties,
                 replication_key_states,
                 Some(&raw_dime),
-                self.config.replication_config.replication_enabled,
+                self.config.replication.enabled,
             )
             .await?
             .to_response(&self.config)?
