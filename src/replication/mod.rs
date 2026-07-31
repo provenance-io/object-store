@@ -10,7 +10,7 @@ use fastrace::{Span, func_path, trace};
 use crate::config::ReplicationConfig;
 use crate::datastore;
 use crate::pb::object_service_client::ObjectServiceClient;
-use crate::proto_helpers::{
+use crate::proto::{
     create_data_chunk, create_multi_stream_header, create_stream_end, create_stream_header_field,
 };
 use crate::replication::client_cache::{ClientCache, ID};

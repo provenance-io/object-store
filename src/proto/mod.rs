@@ -1,15 +1,13 @@
-use base64::prelude::BASE64_STANDARD;
-use base64::{DecodeError, Engine};
+pub mod util;
+pub use util::*;
 
 use crate::consts;
-use core::result::Result;
 use std::collections::HashMap;
-use std::str::FromStr;
 
+use crate::pb::MultiStreamHeader;
 use crate::pb::chunk::Impl::{Data, End, Value};
 use crate::pb::chunk_bidi::Impl::{Chunk as ChunkEnum, MultiStreamHeader as MultiStreamHeaderEnum};
-use crate::pb::{Audience, Chunk, ChunkBidi, ChunkEnd, ObjectResponse, StreamHeader, Uuid};
-use crate::pb::{MultiStreamHeader, PublicKey, public_key::Key};
+use crate::pb::{Chunk, ChunkBidi, ChunkEnd, StreamHeader};
 
 pub fn create_multi_stream_header(
     uuid: uuid::Uuid,
@@ -81,90 +79,13 @@ pub fn create_stream_end() -> ChunkBidi {
     }
 }
 
-pub trait AudienceUtil {
-    fn public_key(&self) -> String;
-    fn public_key_decoded(&self) -> Vec<u8>;
-}
-impl AudienceUtil for Audience {
-    fn public_key(&self) -> String {
-        String::from_utf8(self.public_key.clone()).unwrap()
-    }
-    fn public_key_decoded(&self) -> Vec<u8> {
-        BASE64_STANDARD.decode(&self.public_key).unwrap()
-    }
-}
-
-pub trait ObjectResponseUtil {
-    fn uuid(&self) -> uuid::Uuid;
-}
-impl ObjectResponseUtil for ObjectResponse {
-    fn uuid(&self) -> uuid::Uuid {
-        self.uuid
-            .as_ref()
-            .map(|uuid| uuid::Uuid::from_str(uuid.value.as_str()).unwrap())
-            .unwrap()
-    }
-}
-
-pub trait UuidUtil {
-    fn proto(&self) -> Option<Uuid>;
-}
-impl UuidUtil for uuid::Uuid {
-    fn proto(&self) -> Option<Uuid> {
-        Some(Uuid {
-            value: self.as_hyphenated().to_string(),
-        })
-    }
-}
-
-// TODO: move where? (and rename?)
-pub trait VecUtil {
-    fn encoded(&self) -> String;
-}
-
-impl VecUtil for Vec<u8> {
-    fn encoded(&self) -> String {
-        BASE64_STANDARD.encode(self)
-    }
-}
-
-pub trait StringUtil {
-    fn decoded(&self) -> Result<Vec<u8>, DecodeError>;
-}
-
-impl StringUtil for String {
-    fn decoded(&self) -> Result<Vec<u8>, DecodeError> {
-        BASE64_STANDARD.decode(self)
-    }
-}
-
-impl From<Vec<u8>> for Key {
-    fn from(bytes: Vec<u8>) -> Self {
-        Self::Secp256k1(bytes)
-    }
-}
-
-impl From<Key> for PublicKey {
-    fn from(key: Key) -> Self {
-        Self { key: Some(key) }
-    }
-}
-
-impl From<Vec<u8>> for PublicKey {
-    fn from(bytes: Vec<u8>) -> Self {
-        Self {
-            key: Some(bytes.into()),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use base64::{Engine, prelude::BASE64_STANDARD};
 
     use crate::{
+        domain::{StringUtil, VecUtil},
         pb::{GetRequest, PublicKey},
-        proto_helpers::{StringUtil, VecUtil},
     };
 
     #[test]

@@ -80,7 +80,7 @@ impl PublicKeyService for PublicKeyGrpc {
         }
 
         let key = datastore::add_public_key(&self.db_pool, request.try_into()?).await?;
-        let response = key.clone().to_response()?;
+        let response = key.to_response()?;
 
         {
             let mut cache = self.cache.lock().unwrap();

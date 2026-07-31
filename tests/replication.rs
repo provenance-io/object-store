@@ -3,7 +3,7 @@ mod common;
 use object_store::config::Config;
 use object_store::datastore::{PublicKey, replication_object_uuids};
 use object_store::pb;
-use object_store::proto_helpers::AudienceUtil;
+use object_store::proto::AudienceUtil;
 use object_store::types::Result;
 
 use std::collections::HashMap;

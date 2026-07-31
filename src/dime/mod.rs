@@ -231,7 +231,7 @@ impl TryFrom<Bytes> for Dime {
 mod tests {
     use crate::dime::*;
     use crate::pb;
-    use crate::proto_helpers::UuidUtil;
+    use crate::proto::UuidUtil;
 
     use bytes::{BufMut, BytesMut};
     use std::convert::TryInto;

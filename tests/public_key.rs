@@ -3,12 +3,12 @@ mod common;
 use std::sync::Arc;
 
 use object_store::AppContext;
+use object_store::domain::VecUtil;
 use object_store::pb::PublicKeyRequest;
 use object_store::pb::public_key_request::Impl::HeaderAuth as HeaderAuthEnumRequest;
 use object_store::pb::public_key_response::Impl::HeaderAuth as HeaderAuthEnumResponse;
 use object_store::pb::public_key_service_server::PublicKeyService;
 use object_store::pb::{HeaderAuth, PublicKey, public_key::Key};
-use object_store::proto_helpers::VecUtil;
 use tonic::Request;
 
 use crate::common::config::test_config;

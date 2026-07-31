@@ -1,11 +1,16 @@
+pub mod util;
+pub use util::*;
+
 use crate::config::Config;
 use crate::datastore::{AuthType, KeyType, Object, PublicKey};
 use crate::pb::public_key_response::Impl::HeaderAuth as HeaderAuthEnumResponse;
 use crate::pb::{HeaderAuth, ObjectMetadata, ObjectResponse, PublicKeyResponse, public_key::Key};
-use crate::proto_helpers::{StringUtil, UuidUtil};
+use crate::proto::UuidUtil;
 use crate::types::{OsError, Result};
 
+use chrono::Utc;
 use prost::Message;
+use prost_types::Timestamp;
 
 use std::time::SystemTime;
 
@@ -34,47 +39,45 @@ impl ObjectApiResponse for Object {
                 length: self.dime_length as i64,
                 content_length: self.content_length as i64,
             }),
-            created: Some(Into::<SystemTime>::into(self.created_at).into()),
+            created: self.created_at.proto(),
         })
     }
 }
 
 pub trait PublicKeyApiResponse {
-    fn to_response(self) -> Result<PublicKeyResponse>;
+    fn to_response(&self) -> Result<PublicKeyResponse>;
 }
 
 impl PublicKeyApiResponse for PublicKey {
-    fn to_response(self) -> Result<PublicKeyResponse> {
-        let key_bytes: Vec<u8> = self
-            .public_key
-            .decoded()
-            .map_err(|err| sqlx::Error::Decode(Box::new(err)))?;
-        let public_key = match self.public_key_type {
-            KeyType::Secp256k1 => Key::Secp256k1(key_bytes),
+    fn to_response(&self) -> Result<PublicKeyResponse> {
+        let public_key = {
+            let key_bytes = self.public_key.decoded()?;
+
+            match self.public_key_type {
+                KeyType::Secp256k1 => Key::Secp256k1(key_bytes),
+            }
         };
-        let created_at: SystemTime = self.created_at.into();
-        let updated_at: SystemTime = self.updated_at.into();
+
         let metadata = if !self.metadata.is_empty() {
-            let message = prost_types::Any::decode(self.metadata.as_slice())
-                .map_err(|err| sqlx::Error::Decode(Box::new(err)))?;
-            Some(message)
+            Some(prost_types::Any::decode(self.metadata.as_slice())?)
         } else {
             None
         };
+
         let r#impl = match self.auth_type {
             Some(AuthType::Header) => {
-                let auth_data = self.auth_data.ok_or(sqlx::Error::Decode(Box::new(
-                    OsError::InvalidApplicationState(String::from(
+                let auth_data = self
+                    .auth_data
+                    .clone()
+                    .ok_or(OsError::InvalidApplicationState(String::from(
                         "auth_type was set but no auth_data",
-                    )),
-                )))?;
+                    )))?;
+
                 let (header, value) =
                     auth_data
                         .split_once(":")
-                        .ok_or(sqlx::Error::Decode(Box::new(
-                            OsError::InvalidApplicationState(String::from(
-                                "auth_data invalid format",
-                            )),
+                        .ok_or(OsError::InvalidApplicationState(String::from(
+                            "auth_data invalid format",
                         )))?;
 
                 Some(HeaderAuthEnumResponse(HeaderAuth {
@@ -84,16 +87,27 @@ impl PublicKeyApiResponse for PublicKey {
             }
             None => None,
         };
+
         let response = PublicKeyResponse {
             uuid: self.uuid.proto(),
             public_key: Some(public_key.into()),
-            url: self.url,
+            url: self.url.clone(),
             r#impl,
             metadata,
-            created_at: Some(created_at.into()),
-            updated_at: Some(updated_at.into()),
+            created_at: self.created_at.proto(),
+            updated_at: self.updated_at.proto(),
         };
 
         Ok(response)
+    }
+}
+
+// TODO move
+pub trait TimestampUtil {
+    fn proto(self) -> Option<Timestamp>;
+}
+impl TimestampUtil for chrono::DateTime<Utc> {
+    fn proto(self) -> Option<Timestamp> {
+        Some(Into::<SystemTime>::into(self).into())
     }
 }

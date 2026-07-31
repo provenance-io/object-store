@@ -29,7 +29,7 @@ pub mod domain;
 pub mod mailbox;
 pub mod middleware;
 pub mod object;
-pub mod proto_helpers;
+pub mod proto;
 pub mod public_key;
 pub mod replication;
 pub mod server;

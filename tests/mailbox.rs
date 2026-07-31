@@ -7,7 +7,7 @@ use object_store::datastore::PublicKey;
 use object_store::pb::{
     AckRequest, Audience, GetRequest, mailbox_service_client::MailboxServiceClient,
 };
-use object_store::proto_helpers::{AudienceUtil, ObjectResponseUtil};
+use object_store::proto::{AudienceUtil, ObjectResponseUtil};
 
 use sqlx::postgres::PgPool;
 use tonic::Request;

@@ -1,7 +1,8 @@
 use crate::datastore;
+use crate::domain::VecUtil;
 use crate::pb::mailbox_service_server::MailboxService;
 use crate::pb::{AckRequest, GetRequest, MailPayload};
-use crate::proto_helpers::{UuidUtil, VecUtil};
+use crate::proto::UuidUtil;
 use crate::types::{GrpcResult, OsError};
 use crate::{
     cache::{Cache, PublicKeyState},

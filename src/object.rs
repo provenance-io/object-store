@@ -2,14 +2,14 @@ use crate::consts;
 use crate::datastore;
 use crate::datastore::get_object_by_uuid;
 use crate::datastore::get_public_key_object_uuid;
+use crate::domain::VecUtil;
 use crate::domain::{DimeProperties, ObjectApiResponse};
 use crate::pb::MultiStreamHeader;
 use crate::pb::chunk::Impl::{Data, End, Value};
 use crate::pb::chunk_bidi::Impl::{Chunk as ChunkEnum, MultiStreamHeader as MultiStreamHeaderEnum};
 use crate::pb::object_service_server::ObjectService;
 use crate::pb::{Chunk, ChunkBidi, HashRequest, ObjectResponse, StreamHeader};
-use crate::proto_helpers::VecUtil;
-use crate::proto_helpers::create_stream_end;
+use crate::proto::create_stream_end;
 use crate::types::{GrpcResult, OsError};
 use crate::{
     cache::{Cache, PublicKeyState},
