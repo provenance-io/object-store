@@ -8,7 +8,7 @@ use std::str::FromStr;
 
 use crate::pb::chunk::Impl::{Data, End, Value};
 use crate::pb::chunk_bidi::Impl::{Chunk as ChunkEnum, MultiStreamHeader as MultiStreamHeaderEnum};
-use crate::pb::{Audience, Chunk, ChunkBidi, ChunkEnd, ObjectResponse, StreamHeader};
+use crate::pb::{Audience, Chunk, ChunkBidi, ChunkEnd, ObjectResponse, StreamHeader, Uuid};
 use crate::pb::{MultiStreamHeader, PublicKey, public_key::Key};
 
 pub fn create_multi_stream_header(
@@ -103,6 +103,17 @@ impl ObjectResponseUtil for ObjectResponse {
             .as_ref()
             .map(|uuid| uuid::Uuid::from_str(uuid.value.as_str()).unwrap())
             .unwrap()
+    }
+}
+
+pub trait UuidUtil {
+    fn proto(&self) -> Option<Uuid>;
+}
+impl UuidUtil for uuid::Uuid {
+    fn proto(&self) -> Option<Uuid> {
+        Some(Uuid {
+            value: self.as_hyphenated().to_string(),
+        })
     }
 }
 

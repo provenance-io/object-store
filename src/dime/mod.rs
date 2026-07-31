@@ -231,6 +231,7 @@ impl TryFrom<Bytes> for Dime {
 mod tests {
     use crate::dime::*;
     use crate::pb;
+    use crate::proto_helpers::UuidUtil;
 
     use bytes::{BufMut, BytesMut};
     use std::convert::TryInto;
@@ -317,9 +318,7 @@ mod tests {
             encrypted_dek: vec![10, 11, 12],
         };
         let proto = pb::Dime {
-            uuid: Some(pb::Uuid {
-                value: "a uuid?".to_owned(),
-            }),
+            uuid: uuid::Uuid::new_v4().proto(),
             owner: Some(audience.clone()),
             metadata: std::collections::HashMap::default(),
             audience: vec![audience],
@@ -388,9 +387,7 @@ mod tests {
             encrypted_dek: vec![10, 11, 12],
         };
         let proto = pb::Dime {
-            uuid: Some(pb::Uuid {
-                value: "a uuid?".to_owned(),
-            }),
+            uuid: uuid::Uuid::new_v4().proto(),
             owner: Some(audience.clone()),
             metadata: std::collections::HashMap::default(),
             audience: vec![audience],
@@ -449,9 +446,7 @@ mod tests {
             encrypted_dek: vec![10, 11, 12],
         };
         let proto = pb::Dime {
-            uuid: Some(pb::Uuid {
-                value: "a uuid?".to_owned(),
-            }),
+            uuid: uuid::Uuid::new_v4().proto(),
             owner: Some(audience.clone()),
             metadata: HashMap::default(),
             audience: vec![audience],
