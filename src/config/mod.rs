@@ -167,6 +167,20 @@ impl DbConfig {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct MiddlewareConfig {
+    pub logging_threshold_seconds: u64,
+    pub trace_header: String,
+}
+impl MiddlewareConfig {
+    pub fn from_env() -> Self {
+        Self {
+            logging_threshold_seconds: env_var_parse_or("LOGGING_THRESHOLD_SECONDS", 3),
+            trace_header: env_var("TRACE_HEADER"),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Config {
     pub url: SocketAddr,
@@ -176,8 +190,7 @@ pub struct Config {
     pub replication: ReplicationConfig,
     /// If None, trace middleware [MinitraceGrpcMiddlewareLayer][crate::middleware::MinitraceGrpcMiddlewareLayer] disabled
     pub datadog: Option<DatadogConfig>,
-    pub logging_threshold_seconds: u64,
-    pub trace_header: String,
+    pub middleware: MiddlewareConfig,
     pub user_auth_enabled: bool,
     pub health_service_enabled: bool,
     /// Runtime maintenance mode state. When true, write operations are rejected.
@@ -214,8 +227,7 @@ impl Config {
             storage: StorageConfig::from_env(),
             replication: ReplicationConfig::from_env(),
             datadog: DatadogConfig::from_env(),
-            logging_threshold_seconds: env_var_parse_or("LOGGING_THRESHOLD_SECONDS", 3),
-            trace_header: env_var("TRACE_HEADER"),
+            middleware: MiddlewareConfig::from_env(),
             user_auth_enabled: env_var_parse_or("USER_AUTH_ENABLED", false),
             health_service_enabled: env_var_parse_or("HEALTH_SERVICE_ENABLED", true),
             maintenance_state,

@@ -35,7 +35,9 @@ pub async fn configure_and_start_server(mut context: AppContext) -> Result<(), E
     Server::builder()
         .layer(
             ServiceBuilder::new()
-                .layer(LoggingMiddlewareLayer::new(context.config.clone()))
+                .layer(LoggingMiddlewareLayer::new(
+                    context.config.middleware.clone(),
+                ))
                 .option_layer(tracing_layer)
                 .into_inner(),
         )

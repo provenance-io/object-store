@@ -2,7 +2,8 @@ use std::time::Duration;
 
 use chrono::TimeDelta;
 use object_store::config::{
-    Config, DatadogConfig, DbConfig, ReplicationConfig, StorageConfig, StorageType,
+    Config, DatadogConfig, DbConfig, MiddlewareConfig, ReplicationConfig, StorageConfig,
+    StorageType,
 };
 
 pub fn test_replication_config(
@@ -61,8 +62,10 @@ pub fn test_config(db_port: u16) -> Config {
         },
         replication: test_replication_config(true, 2, 1, 1, chrono::Duration::minutes(5)),
         datadog: Some(dd_config),
-        logging_threshold_seconds: 1,
-        trace_header: String::default(),
+        middleware: MiddlewareConfig {
+            logging_threshold_seconds: 1,
+            trace_header: String::default(),
+        },
         user_auth_enabled: false,
         health_service_enabled: false,
         maintenance_state: false.into(),
