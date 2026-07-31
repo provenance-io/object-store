@@ -18,6 +18,40 @@ pub struct DatadogConfig {
     pub span_tags: Vec<(&'static str, String)>,
 }
 
+impl DatadogConfig {
+    pub fn from_env() -> Option<Self> {
+        let dd_agent_enabled: bool = env_var_parse_or("DD_AGENT_ENABLED", false);
+
+        if dd_agent_enabled {
+            let agent_host = env_var_parse_or("DD_AGENT_HOST", Ipv4Addr::new(127, 0, 0, 1).into());
+            let agent_port = env_var_parse_or("DD_AGENT_PORT", 8126);
+
+            let service = env_var_or("DD_SERVICE", "object-store");
+            let version = env_var_or("DD_VERSION", "undefined");
+            let environment = env_var("DD_ENV");
+
+            let span_tags = BASE_SPAN_TAGS
+                .into_iter()
+                .map(|(k, v)| (k, v.to_string()))
+                .chain([
+                    ("app", service.clone()),
+                    ("version", version),
+                    ("env", environment),
+                ])
+                .collect();
+
+            Some(Self {
+                agent_host,
+                agent_port,
+                service,
+                span_tags,
+            })
+        } else {
+            None
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ReplicationConfig {
     pub replication_enabled: bool,
@@ -27,6 +61,35 @@ pub struct ReplicationConfig {
     pub backoff_min_wait: i64,
     pub backoff_max_wait: i64,
     pub snapshot_cache_refresh_frequency: TimeDelta,
+}
+
+impl ReplicationConfig {
+    pub fn from_env() -> Self {
+        let snapshot_cache_refresh_frequency = {
+            let v = env_var_parse_or("REPLICATION_CACHE_REFRESH_MIN", 5);
+            chrono::Duration::minutes(v)
+        };
+
+        let reap_unknown_keys_fixed_delay = {
+            let v = env_var_parse_or("REPLICATION_REAP_UNKNOWN_KEYS_FIXED_DELAY_SECONDS", 60 * 60);
+            Duration::from_secs(v)
+        };
+
+        let replicate_fixed_delay = {
+            let v = env_var_parse_or("REPLICATION_REPLICATE_FIXED_DELAY_SECONDS", 1);
+            Duration::from_secs(v)
+        };
+
+        Self {
+            replication_enabled: env_var_parse_or("REPLICATION_ENABLED", false),
+            replication_batch_size: env_var_parse_or("REPLICATION_BATCH_SIZE", 10),
+            reap_unknown_keys_fixed_delay,
+            replicate_fixed_delay,
+            backoff_min_wait: env_var_parse_or("BACKOFF_MIN_WAIT", 30), // 30 seconds,
+            backoff_max_wait: env_var_parse_or("BACKOFF_MAX_WAIT", 60 * 32), // 32 minutes
+            snapshot_cache_refresh_frequency,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -53,7 +116,7 @@ pub struct StorageConfig {
     pub storage_base_url: Option<String>,
     pub storage_base_path: String,
     /// Objects with size, in bytes, below this threshold will be stored in database.
-    /// Larger objects will be in configured storage
+    /// Larger objects will be stored in configured storage
     pub storage_threshold: usize,
     pub health_check: bool,
 }
@@ -142,66 +205,12 @@ impl Config {
         let db_database = env_var("DB_NAME");
         let db_schema = env_var("DB_SCHEMA");
 
-        let replication_batch_size = env_var_parse_or("REPLICATION_BATCH_SIZE", 10);
-
-        let dd_agent_enabled: bool = env_var_parse_or("DD_AGENT_ENABLED", false);
-
-        let dd_config = if dd_agent_enabled {
-            let agent_host: IpAddr =
-                env_var_parse_or("DD_AGENT_HOST", Ipv4Addr::new(127, 0, 0, 1).into());
-            let agent_port = env_var_parse_or("DD_AGENT_PORT", 8126);
-
-            let service = env_var_or("DD_SERVICE", "object-store");
-            let version = env_var_or("DD_VERSION", "undefined");
-            let environment = env_var("DD_ENV");
-
-            let mut span_tags = Vec::default();
-            span_tags.extend(BASE_SPAN_TAGS.into_iter().map(|(k, v)| (k, v.to_string())));
-            span_tags.push(("app", service.clone()));
-            span_tags.push(("version", version));
-            span_tags.push(("env", environment));
-
-            Some(DatadogConfig {
-                agent_host,
-                agent_port,
-                service,
-                span_tags,
-            })
-        } else {
-            None
-        };
-
-        let backoff_min_wait = env_var_parse_or("BACKOFF_MIN_WAIT", 30); // 30 seconds
-        let backoff_max_wait = env_var_parse_or("BACKOFF_MAX_WAIT", 1920); // 32 minutes
-        let replication_enabled: bool = env_var_parse_or("REPLICATION_ENABLED", false);
-        let replication_cache_refresh_min: i64 =
-            env_var_parse_or("REPLICATION_CACHE_REFRESH_MIN", 5);
-        let replication_reap_unknown_keys_fixed_delay_seconds: u64 =
-            env_var_parse_or("REPLICATION_REAP_UNKNOWN_KEYS_FIXED_DELAY_SECONDS", 3600);
-        let replication_replicate_fixed_delay_seconds: u64 =
-            env_var_parse_or("REPLICATION_REPLICATE_FIXED_DELAY_SECONDS", 1);
-
         let logging_threshold_seconds: f64 =
             env_var_parse_or::<i32>("LOGGING_THRESHOLD_SECONDS", 3).into();
-
         let trace_header = env_var("TRACE_HEADER");
         let user_auth_enabled = env_var_parse_or("USER_AUTH_ENABLED", false);
         let health_service_enabled = env_var_parse_or("HEALTH_SERVICE_ENABLED", true);
         let maintenance_state = env_var_parse_or("MAINTENANCE_STATE", false);
-
-        let replication_config = ReplicationConfig {
-            replication_enabled,
-            replication_batch_size,
-            reap_unknown_keys_fixed_delay: Duration::from_secs(
-                replication_reap_unknown_keys_fixed_delay_seconds,
-            ),
-            replicate_fixed_delay: Duration::from_secs(replication_replicate_fixed_delay_seconds),
-            backoff_min_wait,
-            backoff_max_wait,
-            snapshot_cache_refresh_frequency: chrono::Duration::minutes(
-                replication_cache_refresh_min,
-            ),
-        };
 
         Arc::new(Self {
             url,
@@ -214,8 +223,8 @@ impl Config {
             db_database,
             db_schema,
             storage_config: StorageConfig::from_env(),
-            replication_config,
-            dd_config,
+            replication_config: ReplicationConfig::from_env(),
+            dd_config: DatadogConfig::from_env(),
             logging_threshold_seconds,
             trace_header,
             user_auth_enabled,
