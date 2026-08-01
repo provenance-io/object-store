@@ -8,14 +8,10 @@ use crate::datastore::{AuthType, KeyType};
 use crate::object::Object;
 use crate::pb::public_key_response::Impl::HeaderAuth as HeaderAuthEnumResponse;
 use crate::pb::{HeaderAuth, ObjectMetadata, ObjectResponse, PublicKeyResponse, public_key::Key};
-use crate::proto::UuidUtil;
+use crate::proto::{TimestampUtil, UuidUtil};
 use crate::public_key::PublicKey;
 
-use chrono::Utc;
 use prost::Message;
-use prost_types::Timestamp;
-
-use std::time::SystemTime;
 
 #[derive(Debug)]
 pub struct DimeProperties {
@@ -102,15 +98,5 @@ impl PublicKeyApiResponse for PublicKey {
         };
 
         Ok(response)
-    }
-}
-
-// TODO move
-pub trait TimestampUtil {
-    fn proto(self) -> Option<Timestamp>;
-}
-impl TimestampUtil for chrono::DateTime<Utc> {
-    fn proto(self) -> Option<Timestamp> {
-        Some(Into::<SystemTime>::into(self).into())
     }
 }

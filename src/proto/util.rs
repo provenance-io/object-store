@@ -1,7 +1,9 @@
 use base64::{Engine, prelude::BASE64_STANDARD};
+use chrono::Utc;
+use prost_types::Timestamp;
 
 use crate::pb::{Audience, ObjectResponse, PublicKey, Uuid, public_key::Key};
-use std::str::FromStr;
+use std::{str::FromStr, time::SystemTime};
 
 pub trait AudienceUtil {
     fn public_key(&self) -> String;
@@ -25,6 +27,15 @@ impl ObjectResponseUtil for ObjectResponse {
             .as_ref()
             .map(|uuid| uuid::Uuid::from_str(uuid.value.as_str()).unwrap())
             .unwrap()
+    }
+}
+
+pub trait TimestampUtil {
+    fn proto(self) -> Option<Timestamp>;
+}
+impl TimestampUtil for chrono::DateTime<Utc> {
+    fn proto(self) -> Option<Timestamp> {
+        Some(Into::<SystemTime>::into(self).into())
     }
 }
 
