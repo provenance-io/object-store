@@ -8,6 +8,9 @@ quick_error! {
         AddrParseError(err: std::net::AddrParseError) {
             from()
         }
+        ProstDecodeError(err: prost::DecodeError) {
+            from()
+        }
         ProstEncodeError(err: prost::EncodeError) {
             from()
         }
@@ -48,6 +51,7 @@ impl From<OsError> for tonic::Status {
     fn from(error: OsError) -> Self {
         let code = match error {
             OsError::AddrParseError(_) => tonic::Code::Internal,
+            OsError::ProstDecodeError(_) => tonic::Code::Internal,
             OsError::ProstEncodeError(_) => tonic::Code::Internal,
             OsError::SqlError(_) => tonic::Code::Internal,
             OsError::SqlMigrateError(_) => tonic::Code::Internal,

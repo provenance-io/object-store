@@ -11,7 +11,7 @@ pub use google_cloud::GoogleCloud;
 
 use crate::{
     config::{StorageConfig, StorageType},
-    types::OsError,
+    domain::OsError,
 };
 
 // TODO implement checksum in filestore
@@ -61,14 +61,12 @@ pub async fn new_storage(
 ) -> core::result::Result<Arc<Box<dyn Storage>>, OsError> {
     let storage = match config.storage_type {
         StorageType::FileSystem => {
-            let file_system = FileSystem::new(PathBuf::from(config.storage_base_path.as_str()));
+            let file_system = FileSystem::new(PathBuf::from(config.base_path.as_str()));
 
             Box::new(file_system) as Box<dyn Storage>
         }
         StorageType::GoogleCloud => {
-            let google_cloud = GoogleCloud::new(config.storage_base_path.clone())
-                .await
-                .unwrap();
+            let google_cloud = GoogleCloud::new(config.base_path.clone()).await.unwrap();
 
             Box::new(google_cloud) as Box<dyn Storage>
         }

@@ -2,20 +2,20 @@ use crate::consts;
 use crate::datastore;
 use crate::datastore::get_object_by_uuid;
 use crate::datastore::get_public_key_object_uuid;
+use crate::domain::VecUtil;
 use crate::domain::{DimeProperties, ObjectApiResponse};
+use crate::domain::{GrpcResult, OsError};
 use crate::pb::MultiStreamHeader;
 use crate::pb::chunk::Impl::{Data, End, Value};
 use crate::pb::chunk_bidi::Impl::{Chunk as ChunkEnum, MultiStreamHeader as MultiStreamHeaderEnum};
 use crate::pb::object_service_server::ObjectService;
 use crate::pb::{Chunk, ChunkBidi, HashRequest, ObjectResponse, StreamHeader};
-use crate::proto_helpers::VecUtil;
-use crate::proto_helpers::create_stream_end;
-use crate::types::{GrpcResult, OsError};
+use crate::proto::create_stream_end;
 use crate::{
-    cache::{Cache, PublicKeyState},
     config::Config,
     dime::{Dime, Signature, format_dime_bytes},
-    storage::{Storage, StoragePath},
+    public_key::{Cache, PublicKeyState},
+    storage::Storage,
 };
 
 use bytes::{BufMut, Bytes, BytesMut};
@@ -262,7 +262,7 @@ impl ObjectService for ObjectGrpc {
         let replication_key_states = {
             let mut replication_key_states = Vec::new();
 
-            if self.config.replication_config.replication_enabled {
+            if self.config.replication.enabled {
                 let audience = dime
                     .unique_audience_without_owner_base64()
                     .map_err(|_| Status::invalid_argument("Invalid Dime proto - audience list"))?;
@@ -280,7 +280,7 @@ impl ObjectService for ObjectGrpc {
         // mail and always used database storage
         let is_mail = dime.metadata.contains_key(consts::MAILBOX_KEY);
         let above_storage_threshold =
-            dime_properties.dime_length > self.config.storage_config.storage_threshold;
+            dime_properties.dime_length > self.config.storage.storage_threshold;
 
         let response = if !is_mail && above_storage_threshold {
             let response = datastore::put_object(
@@ -290,14 +290,11 @@ impl ObjectService for ObjectGrpc {
                 &properties,
                 replication_key_states,
                 None,
-                self.config.replication_config.replication_enabled,
+                self.config.replication.enabled,
             )
             .await?;
 
-            let storage_path = StoragePath {
-                dir: response.directory.clone(),
-                file: response.name.clone(),
-            };
+            let storage_path = response.storage_path();
 
             self.storage
                 .store(&storage_path, response.dime_length, &raw_dime)
@@ -312,7 +309,7 @@ impl ObjectService for ObjectGrpc {
                 &properties,
                 replication_key_states,
                 Some(&raw_dime),
-                self.config.replication_config.replication_enabled,
+                self.config.replication.enabled,
             )
             .await?
             .to_response(&self.config)?
@@ -327,8 +324,6 @@ impl ObjectService for ObjectGrpc {
     async fn get(&self, request: Request<HashRequest>) -> GrpcResult<Response<Self::GetStream>> {
         let metadata = request.metadata().clone();
         let request = request.into_inner();
-
-        let hash = request.hash.encoded();
         let public_key = request.public_key.encoded();
 
         if self.config.user_auth_enabled {
@@ -356,6 +351,8 @@ impl ObjectService for ObjectGrpc {
         }
 
         let object = {
+            let hash = request.hash.encoded();
+
             let object_uuid =
                 get_public_key_object_uuid(&self.db_pool, hash.as_str(), &public_key).await?;
             get_object_by_uuid(&self.db_pool, &object_uuid).await?
@@ -364,10 +361,7 @@ impl ObjectService for ObjectGrpc {
         let payload = if let Some(payload) = &object.payload {
             Bytes::copy_from_slice(payload.as_slice())
         } else {
-            let storage_path = StoragePath {
-                dir: object.directory.clone(),
-                file: object.name.clone(),
-            };
+            let storage_path = object.storage_path();
 
             let payload = self
                 .storage

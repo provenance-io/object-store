@@ -3,12 +3,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use sqlx::PgPool;
-
-use crate::{
-    datastore::{self, PublicKey},
-    types::OsError,
-};
+use crate::{domain::OsError, public_key::PublicKey};
 
 #[derive(Debug)]
 pub enum PublicKeyState {
@@ -19,15 +14,16 @@ pub enum PublicKeyState {
 
 #[derive(Clone, Debug, Default)]
 pub struct Cache {
-    /// keys are base64 strings
+    /// keys are base64-encoded strings
     pub public_keys: HashMap<String, PublicKey>,
 }
 
 impl Cache {
     /// populate initial cache
-    pub async fn new(pool: Arc<PgPool>) -> Result<Arc<Mutex<Cache>>, OsError> {
+    pub async fn new(keys: Vec<PublicKey>) -> Result<Arc<Mutex<Cache>>, OsError> {
         let mut cache = Cache::default();
-        for key in datastore::get_all_public_keys(&pool).await? {
+
+        for key in keys {
             log::debug!("Adding public key {} with url {}", key.public_key, key.url);
 
             cache.add_public_key(key);

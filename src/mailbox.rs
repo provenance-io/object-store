@@ -1,11 +1,12 @@
 use crate::datastore;
+use crate::domain::VecUtil;
+use crate::domain::{GrpcResult, OsError};
 use crate::pb::mailbox_service_server::MailboxService;
-use crate::pb::{AckRequest, GetRequest, MailPayload, Uuid};
-use crate::proto_helpers::VecUtil;
-use crate::types::{GrpcResult, OsError};
+use crate::pb::{AckRequest, GetRequest, MailPayload};
+use crate::proto::UuidUtil;
 use crate::{
-    cache::{Cache, PublicKeyState},
     config::Config,
+    public_key::{Cache, PublicKeyState},
 };
 
 use fastrace_macro::trace;
@@ -79,9 +80,7 @@ impl MailboxService for MailboxGrpc {
             for (mailbox_uuid, object) in results {
                 let payload = match object.payload {
                     Some(payload) => MailPayload {
-                        uuid: Some(Uuid {
-                            value: mailbox_uuid.as_hyphenated().to_string(),
-                        }),
+                        uuid: mailbox_uuid.proto(),
                         data: payload,
                     },
                     None => {

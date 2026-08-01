@@ -5,21 +5,19 @@ use tonic_health::pb::health_server::{Health, HealthServer};
 
 use crate::{
     admin::AdminGrpc,
-    cache::Cache,
     config::Config,
     db::connect_and_migrate,
+    domain::OsError,
     mailbox::MailboxGrpc,
     object::ObjectGrpc,
+    public_key::Cache,
     public_key::PublicKeyGrpc,
     replication::ReplicationState,
     server::health::init_health_service,
     storage::{Storage, new_storage},
-    types::OsError,
 };
 
 pub mod admin;
-pub mod authorization;
-pub mod cache;
 pub mod config;
 pub mod consts;
 pub mod datastore;
@@ -29,12 +27,11 @@ pub mod domain;
 pub mod mailbox;
 pub mod middleware;
 pub mod object;
-pub mod proto_helpers;
+pub mod proto;
 pub mod public_key;
 pub mod replication;
 pub mod server;
 pub mod storage;
-pub mod types;
 
 pub mod pb {
     tonic::include_proto!("objectstore");
@@ -58,9 +55,14 @@ impl AppContext {
     /// 2. Initialize cache
     /// 3. Build gRPC services
     pub async fn new(config: Arc<Config>) -> Result<Self, OsError> {
-        let db_pool = connect_and_migrate(&config).await?;
-        let cache = Cache::new(db_pool.clone()).await?;
-        let storage = new_storage(&config.storage_config).await?;
+        let db_pool = connect_and_migrate(&config.db).await?;
+
+        let cache = {
+            let initial_keys = datastore::get_all_public_keys(&db_pool).await?;
+            Cache::new(initial_keys).await?
+        };
+
+        let storage = new_storage(&config.storage).await?;
 
         let admin_service = AdminGrpc::new(config.clone());
         let public_key_service = PublicKeyGrpc::new(cache.clone(), config.clone(), db_pool.clone());
@@ -73,7 +75,7 @@ impl AppContext {
         );
 
         let replication_state = {
-            let replication_config = config.replication_config.clone();
+            let replication_config = config.replication.clone();
 
             ReplicationState::new(
                 cache.clone(),
@@ -99,7 +101,7 @@ impl AppContext {
     /// 1. Init health service, if enabled (default: true)
     /// 2. Init replication, if enabled (default: false)
     pub async fn init(&mut self) -> Option<HealthServer<impl Health>> {
-        if self.config.replication_config.replication_enabled {
+        if self.config.replication.enabled {
             self.replication_state.init();
         }
 

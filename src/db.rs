@@ -3,13 +3,13 @@ use std::sync::Arc;
 use fastrace::{Span, future::FutureExt, prelude::SpanContext};
 use sqlx::{Error, Executor, PgPool, postgres::PgPoolOptions};
 
-use crate::config::Config;
+use crate::config::DbConfig;
 
 /// 1. Creates [PgPool] with default schema of [Config::db_schema]
 /// 2. Connects to [Config::db_connection_string]
 /// 3. Migrates database
-pub async fn connect_and_migrate(config: &Config) -> Result<Arc<PgPool>, Error> {
-    let schema = config.db_schema.clone();
+pub async fn connect_and_migrate(config: &DbConfig) -> Result<Arc<PgPool>, Error> {
+    let schema = config.schema.clone();
 
     let pool = PgPoolOptions::new()
         .after_connect(move |conn, _meta| {
@@ -21,7 +21,7 @@ pub async fn connect_and_migrate(config: &Config) -> Result<Arc<PgPool>, Error> 
                 Ok(())
             })
         })
-        .max_connections(config.db_connection_pool_size.into())
+        .max_connections(config.connection_pool_size.into())
         .connect(config.db_connection_string().as_ref())
         .await?;
 

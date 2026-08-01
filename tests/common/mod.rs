@@ -12,7 +12,6 @@ use bytes::{BufMut, BytesMut};
 use futures::stream;
 use futures_util::TryStreamExt;
 use object_store::AppContext;
-use object_store::cache::Cache;
 use object_store::config::Config;
 use object_store::consts::{
     CREATED_BY_HEADER, DIME_FIELD_NAME, HASH_FIELD_NAME, SIGNATURE_FIELD_NAME,
@@ -30,6 +29,7 @@ use object_store::pb::{
     Chunk, ChunkBidi, ChunkEnd, MultiStreamHeader, StreamHeader,
     chunk::Impl::{Data, End, Value},
 };
+use object_store::public_key::Cache;
 use object_store::replication::ReplicationState;
 use prost::Message;
 use sqlx::{FromRow, PgPool};

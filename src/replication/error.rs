@@ -1,6 +1,6 @@
 use quick_error::quick_error;
 
-use crate::types::OsError;
+use crate::domain::OsError;
 
 quick_error! {
     #[derive(Debug)]
