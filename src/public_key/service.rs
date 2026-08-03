@@ -1,13 +1,12 @@
 use crate::config::Config;
-use crate::datastore;
+use crate::datastore::Datastore;
 use crate::domain::GrpcResult;
 use crate::domain::PublicKeyApiResponse;
 use crate::pb::public_key_request::Impl::HeaderAuth as HeaderAuthEnumRequest;
 use crate::pb::public_key_service_server::PublicKeyService;
 use crate::pb::{PublicKeyRequest, PublicKeyResponse};
-use crate::public_key::Cache;
+use crate::public_key::PublicKeyCache;
 
-use sqlx::postgres::PgPool;
 use std::convert::TryInto;
 use std::sync::{Arc, Mutex};
 use tonic::{Request, Response, Status};
@@ -20,22 +19,26 @@ pub struct PublicKeyGrpc {
     /// This cache is using a std::sync::Mutex because the tokio docs mention that this is often
     /// preferrable to the tokio Mutex when you are strictly locking data. In cases where you
     /// are locking over a database connection, or io resource, the tokio Mutex is required.
-    cache: Arc<Mutex<Cache>>,
+    public_key_cache: Arc<Mutex<PublicKeyCache>>,
     config: Arc<Config>,
-    db_pool: Arc<PgPool>,
+    datastore: Arc<dyn Datastore>,
 }
 
 impl PublicKeyGrpc {
-    pub fn new(cache: Arc<Mutex<Cache>>, config: Arc<Config>, db_pool: Arc<PgPool>) -> Self {
+    pub fn new(
+        public_key_cache: Arc<Mutex<PublicKeyCache>>,
+        config: Arc<Config>,
+        datastore: Arc<dyn Datastore>,
+    ) -> Self {
         Self {
-            cache,
+            public_key_cache,
             config,
-            db_pool,
+            datastore,
         }
     }
 }
 
-#[tonic::async_trait]
+#[async_trait::async_trait]
 impl PublicKeyService for PublicKeyGrpc {
     async fn add(
         &self,
@@ -79,13 +82,13 @@ impl PublicKeyService for PublicKeyGrpc {
             })?;
         }
 
-        let key = datastore::add_public_key(&self.db_pool, request.try_into()?).await?;
+        let key = self.datastore.add_public_key(request.try_into()?).await?;
         let response = key.to_response()?;
 
         {
-            let mut cache = self.cache.lock().unwrap();
+            let mut public_key_cache = self.public_key_cache.lock().unwrap();
 
-            cache.add_public_key(key);
+            public_key_cache.add(key);
         }
 
         Ok(Response::new(response))

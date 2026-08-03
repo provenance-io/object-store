@@ -42,6 +42,10 @@ uuid = { version = "1", features = ["serde", "v4"] }
 tonic-prost-build = "0.14"
 
 [dev-dependencies]
+object-store = { path = ".", features = ["test-utils"] }
 rand = "0.10.2"
 testcontainers-modules = { version = "0.14", features = ["postgres"] }
 tokio-stream = { version = "0.1", features=["net"] }
+
+[features]
+test-utils = []

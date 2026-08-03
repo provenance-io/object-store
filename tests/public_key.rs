@@ -299,15 +299,15 @@ async fn adds_empty_urls_to_local_cache() {
         _ => assert_eq!(format!("{:?}", response), ""),
     }
 
-    let cache = context.cache.lock().unwrap();
-    assert_eq!(cache.public_keys.len(), 1);
+    let public_key_cache = context.public_key_cache.lock().unwrap();
+    assert_eq!(public_key_cache.public_keys.len(), 1);
     assert!(
-        cache
+        public_key_cache
             .public_keys
             .contains_key(&vec![1u8, 2u8, 3u8].encoded())
     );
     assert_eq!(
-        cache
+        public_key_cache
             .public_keys
             .get(&vec![1u8, 2u8, 3u8].encoded())
             .unwrap()
@@ -336,15 +336,15 @@ async fn adds_nonempty_urls_to_remote_cache() {
         _ => assert_eq!(format!("{:?}", response), ""),
     }
 
-    let cache = context.cache.lock().unwrap();
-    assert_eq!(cache.public_keys.len(), 1);
+    let public_key_cache = context.public_key_cache.lock().unwrap();
+    assert_eq!(public_key_cache.public_keys.len(), 1);
     assert!(
-        cache
+        public_key_cache
             .public_keys
             .contains_key(&vec![1u8, 2u8, 3u8].encoded())
     );
     assert_ne!(
-        cache
+        public_key_cache
             .public_keys
             .get(&vec![1u8, 2u8, 3u8].encoded())
             .unwrap()

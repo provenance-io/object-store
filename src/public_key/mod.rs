@@ -5,7 +5,7 @@ pub use authorization::*;
 pub use cache::*;
 pub use service::*;
 
-use crate::datastore::{AuthType, KeyType};
+use crate::db::postgres::{AuthType, KeyType};
 use crate::domain::VecUtil;
 use crate::domain::{OsError, Result};
 use crate::pb::public_key_request::Impl::HeaderAuth as HeaderAuthEnumRequest;

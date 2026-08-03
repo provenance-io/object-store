@@ -2,19 +2,34 @@ mod error;
 mod file_system;
 mod google_cloud;
 
-use std::{fmt::Display, path::PathBuf, sync::Arc};
+use std::{fmt::Display, path::PathBuf, str::FromStr, sync::Arc};
 
 // forwarding declarations
 pub use error::*;
 pub use file_system::FileSystem;
 pub use google_cloud::GoogleCloud;
 
-use crate::{
-    config::{StorageConfig, StorageType},
-    domain::OsError,
-};
+use crate::{config::StorageConfig, domain::OsError};
 
 // TODO implement checksum in filestore
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum StorageType {
+    FileSystem = 0,
+    GoogleCloud = 1,
+}
+
+impl FromStr for StorageType {
+    type Err = String;
+
+    fn from_str(s: &str) -> core::result::Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "file_system" => Ok(StorageType::FileSystem),
+            "google_cloud" => Ok(StorageType::GoogleCloud),
+            _ => Err(format!("Invalid storage: {}", s)),
+        }
+    }
+}
 
 pub struct StoragePath {
     pub dir: String,
@@ -55,26 +70,17 @@ pub trait Storage: Send + Sync + std::fmt::Debug {
     }
 }
 
-// TODO fix await unwrap
 pub async fn new_storage(
     config: &StorageConfig,
-) -> core::result::Result<Arc<Box<dyn Storage>>, OsError> {
-    let storage = match config.storage_type {
-        StorageType::FileSystem => {
-            let file_system = FileSystem::new(PathBuf::from(config.base_path.as_str()));
-
-            Box::new(file_system) as Box<dyn Storage>
-        }
-        StorageType::GoogleCloud => {
-            let google_cloud = GoogleCloud::new(config.base_path.clone()).await.unwrap();
-
-            Box::new(google_cloud) as Box<dyn Storage>
-        }
+) -> core::result::Result<Arc<dyn Storage>, OsError> {
+    let storage: Arc<dyn Storage> = match config.storage_type {
+        StorageType::FileSystem => Arc::new(FileSystem::new(PathBuf::from(&config.base_path))),
+        StorageType::GoogleCloud => Arc::new(GoogleCloud::new(config.base_path.clone()).await?),
     };
 
     if config.health_check {
-        storage.health_check().await?;
+        storage.health_check().await?; // TODO connect to HealthReporter
     }
 
-    Ok(Arc::new(storage))
+    Ok(storage)
 }

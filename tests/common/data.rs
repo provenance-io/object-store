@@ -3,11 +3,11 @@ use std::collections::HashMap;
 use base64::{Engine, prelude::BASE64_STANDARD};
 use chrono::Utc;
 use object_store::config::Config;
-use object_store::datastore::{AuthType, KeyType};
+use object_store::db::postgres::{AuthType, KeyType};
 use object_store::dime::Dime;
 use object_store::pb::Dime as DimeProto;
-use object_store::public_key::Cache;
 use object_store::public_key::PublicKey;
+use object_store::public_key::PublicKeyCache;
 use object_store::{dime::Signature, pb::Audience};
 
 pub fn party_1() -> (Audience, Signature) {
@@ -97,12 +97,12 @@ pub fn test_public_key(public_key: Vec<u8>) -> PublicKey {
 }
 
 /// Adds two public keys to cache, one with a url of a remote server
-pub fn seed_cache(cache: &mut Cache, remote_config: &Config) {
-    cache.add_public_key(PublicKey {
+pub fn seed_cache(public_key_cache: &mut PublicKeyCache, remote_config: &Config) {
+    public_key_cache.add(PublicKey {
         auth_data: Some(String::from("X-Test-Header:test_value")),
         ..test_public_key(party_1().0.public_key)
     });
-    cache.add_public_key(PublicKey {
+    public_key_cache.add(PublicKey {
         url: String::from(format!("tcp://{}", remote_config.url)),
         auth_data: Some(String::from("X-Test-Header:test_value")),
         ..test_public_key(party_2().0.public_key)

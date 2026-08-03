@@ -1,7 +1,5 @@
 use crate::consts;
-use crate::datastore;
-use crate::datastore::get_object_by_uuid;
-use crate::datastore::get_public_key_object_uuid;
+use crate::datastore::Datastore;
 use crate::domain::VecUtil;
 use crate::domain::{DimeProperties, ObjectApiResponse};
 use crate::domain::{GrpcResult, OsError};
@@ -14,7 +12,7 @@ use crate::proto::create_stream_end;
 use crate::{
     config::Config,
     dime::{Dime, Signature, format_dime_bytes},
-    public_key::{Cache, PublicKeyState},
+    public_key::{PublicKeyCache, PublicKeyState},
     storage::Storage,
 };
 
@@ -23,7 +21,6 @@ use fastrace_macro::trace;
 use futures_util::StreamExt;
 use linked_hash_map::LinkedHashMap;
 use prost::Message;
-use sqlx::postgres::PgPool;
 use std::{
     collections::HashMap,
     convert::TryInto,
@@ -38,29 +35,29 @@ use tonic::{Request, Response, Status, Streaming};
 // TODO implement mailbox only for local and unknown keys - reaper for unknown to remote like replication?
 #[derive(Debug)]
 pub struct ObjectGrpc {
-    cache: Arc<Mutex<Cache>>,
+    public_key_cache: Arc<Mutex<PublicKeyCache>>,
     config: Arc<Config>,
-    db_pool: Arc<PgPool>,
-    storage: Arc<Box<dyn Storage>>,
+    datastore: Arc<dyn Datastore>,
+    storage: Arc<dyn Storage>,
 }
 
 impl ObjectGrpc {
     pub fn new(
-        cache: Arc<Mutex<Cache>>,
+        public_key_cache: Arc<Mutex<PublicKeyCache>>,
         config: Arc<Config>,
-        db_pool: Arc<PgPool>,
-        storage: Arc<Box<dyn Storage>>,
+        datastore: Arc<dyn Datastore>,
+        storage: Arc<dyn Storage>,
     ) -> Self {
         Self {
-            cache,
+            public_key_cache,
             config,
-            db_pool,
+            datastore,
             storage,
         }
     }
 }
 
-#[tonic::async_trait]
+#[async_trait::async_trait]
 impl ObjectService for ObjectGrpc {
     #[trace(name = "object::put")]
     async fn put(
@@ -236,11 +233,11 @@ impl ObjectService for ObjectGrpc {
             let owner_public_key = dime
                 .owner_public_key_base64()
                 .map_err(|_| Status::invalid_argument("Invalid Dime proto - owner"))?;
-            let cache = self.cache.lock().unwrap();
+            let public_key_cache = self.public_key_cache.lock().unwrap();
 
-            match cache.get_public_key_state(&owner_public_key) {
+            match public_key_cache.get_public_key_state(&owner_public_key) {
                 PublicKeyState::Local => {
-                    if let Some(cached_key) = cache.public_keys.get(&owner_public_key) {
+                    if let Some(cached_key) = public_key_cache.public_keys.get(&owner_public_key) {
                         cached_key.auth()?.authorize(&metadata)
                     } else {
                         Err(Status::internal(
@@ -266,7 +263,7 @@ impl ObjectService for ObjectGrpc {
                 let audience = dime
                     .unique_audience_without_owner_base64()
                     .map_err(|_| Status::invalid_argument("Invalid Dime proto - audience list"))?;
-                let cache = self.cache.lock().unwrap();
+                let cache = self.public_key_cache.lock().unwrap();
 
                 for ref party in audience {
                     replication_key_states.push((party.clone(), cache.get_public_key_state(party)));
@@ -283,16 +280,17 @@ impl ObjectService for ObjectGrpc {
             dime_properties.dime_length > self.config.storage.storage_threshold;
 
         let response = if !is_mail && above_storage_threshold {
-            let response = datastore::put_object(
-                &self.db_pool,
-                &dime,
-                &dime_properties,
-                &properties,
-                replication_key_states,
-                None,
-                self.config.replication.enabled,
-            )
-            .await?;
+            let response = self
+                .datastore
+                .put_object(
+                    &dime,
+                    &dime_properties,
+                    &properties,
+                    replication_key_states,
+                    None,
+                    self.config.replication.enabled,
+                )
+                .await?;
 
             let storage_path = response.storage_path();
 
@@ -302,17 +300,17 @@ impl ObjectService for ObjectGrpc {
                 .map_err(Into::<OsError>::into)?;
             response.to_response(&self.config)?
         } else {
-            datastore::put_object(
-                &self.db_pool,
-                &dime,
-                &dime_properties,
-                &properties,
-                replication_key_states,
-                Some(&raw_dime),
-                self.config.replication.enabled,
-            )
-            .await?
-            .to_response(&self.config)?
+            self.datastore
+                .put_object(
+                    &dime,
+                    &dime_properties,
+                    &properties,
+                    replication_key_states,
+                    Some(&raw_dime),
+                    self.config.replication.enabled,
+                )
+                .await?
+                .to_response(&self.config)?
         };
 
         Ok(Response::new(response))
@@ -327,7 +325,7 @@ impl ObjectService for ObjectGrpc {
         let public_key = request.public_key.encoded();
 
         if self.config.user_auth_enabled {
-            let cache = self.cache.lock().unwrap();
+            let cache = self.public_key_cache.lock().unwrap();
 
             match cache.get_public_key_state(&public_key) {
                 PublicKeyState::Local => {
@@ -353,9 +351,12 @@ impl ObjectService for ObjectGrpc {
         let object = {
             let hash = request.hash.encoded();
 
-            let object_uuid =
-                get_public_key_object_uuid(&self.db_pool, hash.as_str(), &public_key).await?;
-            get_object_by_uuid(&self.db_pool, &object_uuid).await?
+            let object_uuid = self
+                .datastore
+                .get_public_key_object_uuid(hash.as_str(), &public_key)
+                .await?;
+
+            self.datastore.get_object_by_uuid(&object_uuid).await?
         };
 
         let payload = if let Some(payload) = &object.payload {

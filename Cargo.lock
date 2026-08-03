@@ -1971,6 +1971,7 @@ dependencies = [
  "linked-hash-map",
  "log",
  "minstant",
+ "object-store",
  "percent-encoding",
  "prost",
  "prost-types",

@@ -1,9 +1,12 @@
 use std::time::Duration;
 
 use chrono::TimeDelta;
-use object_store::config::{
-    Config, DatadogConfig, DbConfig, MiddlewareConfig, ReplicationConfig, StorageConfig,
-    StorageType,
+use object_store::{
+    config::{
+        Config, DatadogConfig, DatastoreConfig, DbConfig, MiddlewareConfig, ReplicationConfig,
+        StorageConfig,
+    },
+    storage::StorageType,
 };
 
 pub fn test_replication_config(
@@ -44,7 +47,7 @@ pub fn test_config(db_port: u16) -> Config {
     Config {
         url: "0.0.0.0:0".parse().unwrap(),
         uri_host: String::default(),
-        db: DbConfig {
+        datastore: DatastoreConfig::Postgres(DbConfig {
             connection_pool_size: 1,
             host: "localhost".to_owned(),
             port: db_port,
@@ -52,7 +55,7 @@ pub fn test_config(db_port: u16) -> Config {
             password: "postgres".to_owned(),
             database: "postgres".to_owned(),
             schema: "public".to_owned(),
-        },
+        }),
         storage: StorageConfig {
             storage_type: StorageType::FileSystem,
             base_url: None,

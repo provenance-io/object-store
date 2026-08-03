@@ -1,17 +1,15 @@
 use std::sync::{Arc, Mutex};
 
-use sqlx::PgPool;
 use tonic_health::pb::health_server::{Health, HealthServer};
 
 use crate::{
     admin::AdminGrpc,
     config::Config,
-    db::connect_and_migrate,
+    datastore::{Datastore, new_datastore},
     domain::OsError,
     mailbox::MailboxGrpc,
     object::ObjectGrpc,
-    public_key::Cache,
-    public_key::PublicKeyGrpc,
+    public_key::{PublicKeyCache, PublicKeyGrpc},
     replication::ReplicationState,
     server::health::init_health_service,
     storage::{Storage, new_storage},
@@ -25,7 +23,6 @@ pub mod db;
 pub mod dime;
 pub mod domain;
 pub mod mailbox;
-pub mod middleware;
 pub mod object;
 pub mod proto;
 pub mod public_key;
@@ -40,9 +37,9 @@ pub mod pb {
 #[derive(Debug)]
 pub struct AppContext {
     pub config: Arc<Config>,
-    pub cache: Arc<Mutex<Cache>>,
-    pub db_pool: Arc<PgPool>,
-    pub storage: Arc<Box<dyn Storage>>,
+    pub public_key_cache: Arc<Mutex<PublicKeyCache>>,
+    pub datastore: Arc<dyn Datastore>,
+    pub storage: Arc<dyn Storage>,
     pub admin_service: AdminGrpc,
     pub public_key_service: PublicKeyGrpc,
     pub mailbox_service: MailboxGrpc,
@@ -51,44 +48,45 @@ pub struct AppContext {
 }
 
 impl AppContext {
+    pub async fn from_env() -> Result<Self, OsError> {
+        AppContext::new(Config::from_env()).await
+    }
+
     /// 1. Connect to database and migrate
     /// 2. Initialize cache
     /// 3. Build gRPC services
     pub async fn new(config: Arc<Config>) -> Result<Self, OsError> {
-        let db_pool = connect_and_migrate(&config.db).await?;
-
-        let cache = {
-            let initial_keys = datastore::get_all_public_keys(&db_pool).await?;
-            Cache::new(initial_keys).await?
-        };
-
+        let datastore = new_datastore(&config.datastore).await?;
         let storage = new_storage(&config.storage).await?;
 
+        let public_key_cache = {
+            let initial_keys = datastore.get_all_public_keys().await?;
+            PublicKeyCache::new(initial_keys).await?
+        };
+
         let admin_service = AdminGrpc::new(config.clone());
-        let public_key_service = PublicKeyGrpc::new(cache.clone(), config.clone(), db_pool.clone());
-        let mailbox_service = MailboxGrpc::new(cache.clone(), config.clone(), db_pool.clone());
+        let public_key_service =
+            PublicKeyGrpc::new(public_key_cache.clone(), config.clone(), datastore.clone());
+        let mailbox_service =
+            MailboxGrpc::new(public_key_cache.clone(), config.clone(), datastore.clone());
         let object_service = ObjectGrpc::new(
-            cache.clone(),
+            public_key_cache.clone(),
             config.clone(),
-            db_pool.clone(),
+            datastore.clone(),
             storage.clone(),
         );
 
-        let replication_state = {
-            let replication_config = config.replication.clone();
-
-            ReplicationState::new(
-                cache.clone(),
-                replication_config,
-                db_pool.clone(),
-                storage.clone(),
-            )
-        };
+        let replication_state = ReplicationState::new(
+            public_key_cache.clone(),
+            config.replication.clone(),
+            datastore.clone(),
+            storage.clone(),
+        );
 
         Ok(Self {
             config,
-            cache,
-            db_pool,
+            public_key_cache,
+            datastore,
             storage,
             admin_service,
             public_key_service,

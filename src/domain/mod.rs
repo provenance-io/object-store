@@ -4,7 +4,7 @@ pub use types::*;
 pub use util::*;
 
 use crate::config::Config;
-use crate::datastore::{AuthType, KeyType};
+use crate::db::postgres::{AuthType, KeyType};
 use crate::object::Object;
 use crate::pb::public_key_response::Impl::HeaderAuth as HeaderAuthEnumResponse;
 use crate::pb::{HeaderAuth, ObjectMetadata, ObjectResponse, PublicKeyResponse, public_key::Key};

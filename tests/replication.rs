@@ -1,7 +1,6 @@
 mod common;
 
 use object_store::config::Config;
-use object_store::datastore::replication_object_uuids;
 use object_store::domain::Result;
 use object_store::pb;
 use object_store::proto::AudienceUtil;
@@ -10,23 +9,12 @@ use object_store::public_key::PublicKey;
 use std::collections::HashMap;
 
 use futures::StreamExt;
-use sqlx::postgres::PgPool;
 
 use crate::common::client::get_object_client;
 use crate::common::config::{test_config_no_replication, test_config_replication};
 use crate::common::containers::start_containers;
 use crate::common::data::{generate_dime, party_1, party_2, party_3, test_public_key};
 use crate::common::{hash, put_helper, start_test_server};
-
-/// Get count of ALL objects
-async fn get_object_count(db: &PgPool) -> i64 {
-    let row: (i64,) = sqlx::query_as("SELECT count(*) as count FROM object")
-        .fetch_one(db)
-        .await
-        .unwrap();
-
-    row.0
-}
 
 #[tokio::test]
 async fn client_caching() -> Result<()> {
@@ -77,7 +65,7 @@ async fn replication_can_be_disabled() -> Result<()> {
     let (db_port, _postgres) = start_containers().await;
 
     let config = test_config_no_replication(db_port);
-    let (db_pool, _, _, config_one) = start_test_server(config, None).await;
+    let (datastore, _, _, config_one) = start_test_server(config, None).await;
 
     let (audience1, signature1) = party_1();
     let (audience2, signature2) = party_2();
@@ -143,9 +131,15 @@ async fn replication_can_be_disabled() -> Result<()> {
 
     match response {
         Ok(_) => {
-            let objects1 = replication_object_uuids(&db_pool, &audience1.public_key(), 50).await?;
-            let objects2 = replication_object_uuids(&db_pool, &audience2.public_key(), 50).await?;
-            let objects3 = replication_object_uuids(&db_pool, &audience3.public_key(), 50).await?;
+            let objects1 = datastore
+                .replication_object_uuids(&audience1.public_key(), 50)
+                .await?;
+            let objects2 = datastore
+                .replication_object_uuids(&audience2.public_key(), 50)
+                .await?;
+            let objects3 = datastore
+                .replication_object_uuids(&audience3.public_key(), 50)
+                .await?;
 
             assert_eq!(objects1.len(), 0);
             assert_eq!(objects2.len(), 0);
@@ -168,10 +162,10 @@ async fn end_to_end_replication() -> Result<()> {
         ..test_config_replication(db_port_two)
     };
 
-    let (db_pool_one, _, mut state_one, config_one) =
+    let (datastore_one, _, mut state_one, config_one) =
         start_test_server(config_one, Some(&config_two)).await;
 
-    let (db_pool_two, _, _, config_two) = start_test_server(config_two, None).await;
+    let (datastore_two, _, _, config_two) = start_test_server(config_two, None).await;
 
     let mut client_one = get_object_client(config_one.url).await;
 
@@ -198,8 +192,9 @@ async fn end_to_end_replication() -> Result<()> {
 
         match response {
             Ok(_) => {
-                let objects1 =
-                    replication_object_uuids(&db_pool_one, &audience1.public_key(), 50).await?;
+                let objects1 = datastore_one
+                    .replication_object_uuids(&audience1.public_key(), 50)
+                    .await?;
 
                 assert_eq!(objects1.len(), 0);
             }
@@ -266,23 +261,29 @@ async fn end_to_end_replication() -> Result<()> {
 
         match response {
             Ok(_) => {
-                let objects1 =
-                    replication_object_uuids(&db_pool_one, &audience1.public_key(), 50).await?;
-                let objects2 =
-                    replication_object_uuids(&db_pool_one, &audience2.public_key(), 50).await?;
-                let objects3 =
-                    replication_object_uuids(&db_pool_one, &audience3.public_key(), 50).await?;
+                let objects1 = datastore_one
+                    .replication_object_uuids(&audience1.public_key(), 50)
+                    .await?;
+                let objects2 = datastore_one
+                    .replication_object_uuids(&audience2.public_key(), 50)
+                    .await?;
+                let objects3 = datastore_one
+                    .replication_object_uuids(&audience3.public_key(), 50)
+                    .await?;
 
                 assert_eq!(objects1.len(), 0);
                 assert_eq!(objects2.len(), 3);
                 assert_eq!(objects3.len(), 3);
 
-                let objects1 =
-                    replication_object_uuids(&db_pool_two, &audience1.public_key(), 50).await?;
-                let objects2 =
-                    replication_object_uuids(&db_pool_two, &audience2.public_key(), 50).await?;
-                let objects3 =
-                    replication_object_uuids(&db_pool_two, &audience3.public_key(), 50).await?;
+                let objects1 = datastore_two
+                    .replication_object_uuids(&audience1.public_key(), 50)
+                    .await?;
+                let objects2 = datastore_two
+                    .replication_object_uuids(&audience2.public_key(), 50)
+                    .await?;
+                let objects3 = datastore_two
+                    .replication_object_uuids(&audience3.public_key(), 50)
+                    .await?;
 
                 assert_eq!(objects1.len(), 0);
                 assert_eq!(objects2.len(), 0);
@@ -297,17 +298,29 @@ async fn end_to_end_replication() -> Result<()> {
     // Verify remote server is all 0
     state_one.replicate_iteration().await;
     {
-        let objects1 = replication_object_uuids(&db_pool_one, &audience1.public_key(), 50).await?;
-        let objects2 = replication_object_uuids(&db_pool_one, &audience2.public_key(), 50).await?;
-        let objects3 = replication_object_uuids(&db_pool_one, &audience3.public_key(), 50).await?;
+        let objects1 = datastore_one
+            .replication_object_uuids(&audience1.public_key(), 50)
+            .await?;
+        let objects2 = datastore_one
+            .replication_object_uuids(&audience2.public_key(), 50)
+            .await?;
+        let objects3 = datastore_one
+            .replication_object_uuids(&audience3.public_key(), 50)
+            .await?;
 
         assert_eq!(objects1.len(), 0);
         assert_eq!(objects2.len(), 1);
         assert_eq!(objects3.len(), 3);
 
-        let objects1 = replication_object_uuids(&db_pool_two, &audience1.public_key(), 50).await?;
-        let objects2 = replication_object_uuids(&db_pool_two, &audience2.public_key(), 50).await?;
-        let objects3 = replication_object_uuids(&db_pool_two, &audience3.public_key(), 50).await?;
+        let objects1 = datastore_two
+            .replication_object_uuids(&audience1.public_key(), 50)
+            .await?;
+        let objects2 = datastore_two
+            .replication_object_uuids(&audience2.public_key(), 50)
+            .await?;
+        let objects3 = datastore_two
+            .replication_object_uuids(&audience3.public_key(), 50)
+            .await?;
 
         assert_eq!(objects1.len(), 0);
         assert_eq!(objects2.len(), 0);
@@ -318,17 +331,29 @@ async fn end_to_end_replication() -> Result<()> {
     // Check source server for correct counts: batch size 2, cache seeded with remote key for party_2 => (0,0,3)
     state_one.replicate_iteration().await;
     {
-        let objects1 = replication_object_uuids(&db_pool_one, &audience1.public_key(), 50).await?;
-        let objects2 = replication_object_uuids(&db_pool_one, &audience2.public_key(), 50).await?;
-        let objects3 = replication_object_uuids(&db_pool_one, &audience3.public_key(), 50).await?;
+        let objects1 = datastore_one
+            .replication_object_uuids(&audience1.public_key(), 50)
+            .await?;
+        let objects2 = datastore_one
+            .replication_object_uuids(&audience2.public_key(), 50)
+            .await?;
+        let objects3 = datastore_one
+            .replication_object_uuids(&audience3.public_key(), 50)
+            .await?;
 
         assert_eq!(objects1.len(), 0);
         assert_eq!(objects2.len(), 0);
         assert_eq!(objects3.len(), 3);
 
-        let objects1 = replication_object_uuids(&db_pool_two, &audience1.public_key(), 50).await?;
-        let objects2 = replication_object_uuids(&db_pool_two, &audience2.public_key(), 50).await?;
-        let objects3 = replication_object_uuids(&db_pool_two, &audience3.public_key(), 50).await?;
+        let objects1 = datastore_two
+            .replication_object_uuids(&audience1.public_key(), 50)
+            .await?;
+        let objects2 = datastore_two
+            .replication_object_uuids(&audience2.public_key(), 50)
+            .await?;
+        let objects3 = datastore_two
+            .replication_object_uuids(&audience3.public_key(), 50)
+            .await?;
 
         assert_eq!(objects1.len(), 0);
         assert_eq!(objects2.len(), 0);
@@ -336,7 +361,7 @@ async fn end_to_end_replication() -> Result<()> {
     }
 
     // verify db on remote instance to check for 3 objects for party_2
-    assert_eq!(get_object_count(&db_pool_two).await, 3);
+    assert_eq!(datastore_two.get_object_count().await, 3);
 
     // pull one object from local instance and verify all rows against the same one that was replicated to the remote
     {
@@ -378,7 +403,8 @@ async fn late_local_url_can_cleanup() -> Result<()> {
     let (db_port, _postgres) = start_containers().await;
     let config = test_config_replication(db_port);
 
-    let (db_pool, cache, replication_state, config) = start_test_server(config, None).await;
+    let (datastore, public_key_cache, replication_state, config) =
+        start_test_server(config, None).await;
 
     let (audience1, signature1) = party_1();
     let (audience3, signature3) = party_3();
@@ -443,8 +469,12 @@ async fn late_local_url_can_cleanup() -> Result<()> {
 
     match response {
         Ok(_) => {
-            let objects1 = replication_object_uuids(&db_pool, &audience1.public_key(), 50).await?;
-            let objects3 = replication_object_uuids(&db_pool, &audience3.public_key(), 50).await?;
+            let objects1 = datastore
+                .replication_object_uuids(&audience1.public_key(), 50)
+                .await?;
+            let objects3 = datastore
+                .replication_object_uuids(&audience3.public_key(), 50)
+                .await?;
 
             assert_eq!(objects1.len(), 0);
             assert_eq!(objects3.len(), 3);
@@ -454,9 +484,9 @@ async fn late_local_url_can_cleanup() -> Result<()> {
 
     // set unknown key to local and reap
     {
-        let mut cache = cache.lock().unwrap();
+        let mut public_key_cache = public_key_cache.lock().unwrap();
 
-        cache.add_public_key(PublicKey {
+        public_key_cache.add(PublicKey {
             auth_data: Some(String::from("X-Test-Header:test_value")),
             ..test_public_key(audience3.public_key.clone())
         });
@@ -464,8 +494,12 @@ async fn late_local_url_can_cleanup() -> Result<()> {
 
     replication_state.reap_unknown_keys_iteration().await;
 
-    let objects1 = replication_object_uuids(&db_pool, &audience1.public_key(), 50).await?;
-    let objects3 = replication_object_uuids(&db_pool, &audience3.public_key(), 50).await?;
+    let objects1 = datastore
+        .replication_object_uuids(&audience1.public_key(), 50)
+        .await?;
+    let objects3 = datastore
+        .replication_object_uuids(&audience3.public_key(), 50)
+        .await?;
 
     assert_eq!(objects1.len(), 0);
     assert_eq!(objects3.len(), 0);

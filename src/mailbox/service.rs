@@ -1,4 +1,4 @@
-use crate::datastore;
+use crate::datastore::Datastore;
 use crate::domain::VecUtil;
 use crate::domain::{GrpcResult, OsError};
 use crate::pb::mailbox_service_server::MailboxService;
@@ -6,11 +6,10 @@ use crate::pb::{AckRequest, GetRequest, MailPayload};
 use crate::proto::UuidUtil;
 use crate::{
     config::Config,
-    public_key::{Cache, PublicKeyState},
+    public_key::{PublicKeyCache, PublicKeyState},
 };
 
 use fastrace_macro::trace;
-use sqlx::postgres::PgPool;
 use std::{
     str::FromStr,
     sync::{Arc, Mutex},
@@ -22,22 +21,26 @@ use tonic::{Request, Response, Status};
 
 #[derive(Debug)]
 pub struct MailboxGrpc {
-    cache: Arc<Mutex<Cache>>,
+    public_key_cache: Arc<Mutex<PublicKeyCache>>,
     config: Arc<Config>,
-    db_pool: Arc<PgPool>,
+    datastore: Arc<dyn Datastore>,
 }
 
 impl MailboxGrpc {
-    pub fn new(cache: Arc<Mutex<Cache>>, config: Arc<Config>, db_pool: Arc<PgPool>) -> Self {
+    pub fn new(
+        public_key_cache: Arc<Mutex<PublicKeyCache>>,
+        config: Arc<Config>,
+        datastore: Arc<dyn Datastore>,
+    ) -> Self {
         Self {
-            cache,
+            public_key_cache,
             config,
-            db_pool,
+            datastore,
         }
     }
 }
 
-#[tonic::async_trait]
+#[async_trait::async_trait]
 impl MailboxService for MailboxGrpc {
     type GetStream = tokio_stream::wrappers::ReceiverStream<GrpcResult<MailPayload>>;
 
@@ -48,11 +51,11 @@ impl MailboxService for MailboxGrpc {
         let public_key = request.public_key.encoded();
 
         if self.config.user_auth_enabled {
-            let cache = self.cache.lock().unwrap();
+            let public_key_cache = self.public_key_cache.lock().unwrap();
 
-            match cache.get_public_key_state(&public_key) {
+            match public_key_cache.get_public_key_state(&public_key) {
                 PublicKeyState::Local => {
-                    if let Some(cached_key) = cache.public_keys.get(&public_key) {
+                    if let Some(cached_key) = public_key_cache.public_keys.get(&public_key) {
                         cached_key.auth()?.authorize(&metadata)
                     } else {
                         Err(Status::internal(
@@ -72,9 +75,10 @@ impl MailboxService for MailboxGrpc {
         }
 
         let (tx, rx) = mpsc::channel(4);
-        let results =
-            datastore::stream_mailbox_public_keys(&self.db_pool, &public_key, request.max_results)
-                .await?;
+        let results = self
+            .datastore
+            .stream_mailbox_public_keys(&public_key, request.max_results)
+            .await?;
 
         tokio::spawn(async move {
             for (mailbox_uuid, object) in results {
@@ -145,11 +149,11 @@ impl MailboxService for MailboxGrpc {
             let public_key = public_key.clone().ok_or(Status::permission_denied(
                 "auth is enabled, but a public_key wasn't sent",
             ))?;
-            let cache = self.cache.lock().unwrap();
+            let public_key_cache = self.public_key_cache.lock().unwrap();
 
-            match cache.get_public_key_state(&public_key) {
+            match public_key_cache.get_public_key_state(&public_key) {
                 PublicKeyState::Local => {
-                    if let Some(cached_key) = cache.public_keys.get(&public_key) {
+                    if let Some(cached_key) = public_key_cache.public_keys.get(&public_key) {
                         cached_key.auth()?.authorize(&metadata)
                     } else {
                         Err(Status::internal(
@@ -168,7 +172,9 @@ impl MailboxService for MailboxGrpc {
             }?;
         }
 
-        datastore::ack_mailbox_public_key(&self.db_pool, &uuid, &public_key).await?;
+        self.datastore
+            .ack_mailbox_public_key(&uuid, &public_key)
+            .await?;
 
         Ok(Response::new(()))
     }

@@ -1,5 +1,4 @@
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -9,6 +8,7 @@ use percent_encoding::NON_ALPHANUMERIC;
 
 mod env_var;
 use crate::config::env_var::{env_var, env_var_opt, env_var_or, env_var_parse, env_var_parse_or};
+use crate::storage::StorageType;
 
 #[derive(Debug)]
 pub struct DatadogConfig {
@@ -48,24 +48,6 @@ impl DatadogConfig {
             })
         } else {
             None
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum StorageType {
-    FileSystem = 0,
-    GoogleCloud = 1,
-}
-
-impl FromStr for StorageType {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "file_system" => Ok(StorageType::FileSystem),
-            "google_cloud" => Ok(StorageType::GoogleCloud),
-            _ => Err(format!("Invalid storage: {}", s)),
         }
     }
 }
@@ -167,6 +149,17 @@ impl DbConfig {
     }
 }
 
+#[derive(Debug)]
+pub enum DatastoreConfig {
+    Postgres(DbConfig),
+}
+
+impl DatastoreConfig {
+    pub fn from_env() -> Self {
+        Self::Postgres(DbConfig::from_env())
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct MiddlewareConfig {
     pub logging_threshold_seconds: u64,
@@ -185,7 +178,7 @@ impl MiddlewareConfig {
 pub struct Config {
     pub url: SocketAddr,
     pub uri_host: String,
-    pub db: DbConfig,
+    pub datastore: DatastoreConfig,
     pub storage: StorageConfig,
     pub replication: ReplicationConfig,
     /// If None, trace middleware [MinitraceGrpcMiddlewareLayer][crate::middleware::MinitraceGrpcMiddlewareLayer] disabled
@@ -223,7 +216,7 @@ impl Config {
         Arc::new(Self {
             url,
             uri_host: env_var("URI_HOST"),
-            db: DbConfig::from_env(),
+            datastore: DatastoreConfig::from_env(),
             storage: StorageConfig::from_env(),
             replication: ReplicationConfig::from_env(),
             datadog: DatadogConfig::from_env(),

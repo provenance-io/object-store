@@ -5,53 +5,38 @@ use std::sync::{Arc, Mutex};
 
 use linked_hash_map::LinkedHashMap;
 use object_store::config::Config;
-use object_store::datastore::{self, replication_object_uuids};
 use object_store::domain::{StringUtil, VecUtil};
 use object_store::pb::chunk::Impl::{Data, End};
 use object_store::pb::chunk_bidi::Impl::{
     Chunk as ChunkEnum, MultiStreamHeader as MultiStreamHeaderEnum,
 };
-use object_store::public_key::Cache;
 use object_store::public_key::PublicKey;
+use object_store::public_key::PublicKeyCache;
 
 use object_store::proto::{AudienceUtil, ObjectResponseUtil};
 use object_store::{consts::*, pb::HashRequest};
 
-use sqlx::PgPool;
 use tonic::Request;
 
 use crate::common::client::get_object_client;
 use crate::common::config::test_config;
 use crate::common::containers::start_containers;
 use crate::common::data::{generate_dime, party_1, party_2, party_3, test_public_key};
-use crate::common::{
-    get_mailbox_keys_by_object, get_public_keys_by_object, hash, put_helper, start_test_server,
-};
+use crate::common::{hash, put_helper, start_test_server};
 
 /// Add a public key for [party_1] and [party_2] to cache
-fn add_keys_cache(cache: Arc<Mutex<Cache>>) {
-    let mut guard = cache.lock().unwrap();
+fn add_keys_cache(public_key_cache: Arc<Mutex<PublicKeyCache>>) {
+    let mut public_key_cache = public_key_cache.lock().unwrap();
 
-    guard.add_public_key(PublicKey {
+    public_key_cache.add(PublicKey {
         auth_data: Some(String::from("x-test-header:test_value_1")),
         ..test_public_key(party_1().0.public_key)
     });
-    guard.add_public_key(PublicKey {
+    public_key_cache.add(PublicKey {
         url: String::from("tcp://party2:8080"),
         auth_data: Some(String::from("x-test-header:test_value_2")),
         ..test_public_key(party_2().0.public_key)
     });
-}
-
-pub async fn delete_properties(db: &PgPool, object_uuid: &uuid::Uuid) -> u64 {
-    let query_str = "UPDATE object SET properties = null WHERE uuid = $1";
-
-    sqlx::query(query_str)
-        .bind(object_uuid)
-        .execute(db)
-        .await
-        .unwrap()
-        .rows_affected()
 }
 
 // TODO test validation of sent data
@@ -60,7 +45,7 @@ pub async fn delete_properties(db: &PgPool, object_uuid: &uuid::Uuid) -> u64 {
 async fn simple_put() {
     let (db_port, _postgres) = start_containers().await;
 
-    let (db, _, _, config) = start_test_server(test_config(db_port), None).await;
+    let (datastore, _, _, config) = start_test_server(test_config(db_port), None).await;
 
     let (audience, signature) = party_1();
     let dime = generate_dime(vec![audience], vec![signature]);
@@ -83,7 +68,7 @@ async fn simple_put() {
         Ok(response) => {
             let uuid = response.uuid();
 
-            let object = datastore::get_object_by_uuid(&db, &uuid).await.unwrap();
+            let object = datastore.get_object_by_uuid(&uuid).await.unwrap();
             let mut properties = LinkedHashMap::new();
             properties.insert(HASH_FIELD_NAME.to_owned(), object.hash.decoded().unwrap());
             properties.insert(
@@ -174,8 +159,8 @@ async fn simple_put_with_auth_success() {
         user_auth_enabled: true,
         ..test_config(db_port)
     };
-    let (db, cache, _, config) = start_test_server(config, None).await;
-    add_keys_cache(cache);
+    let (datastore, public_key_cache, _, config) = start_test_server(config, None).await;
+    add_keys_cache(public_key_cache);
 
     let (audience, signature) = party_1();
     let dime = generate_dime(vec![audience], vec![signature]);
@@ -198,7 +183,7 @@ async fn simple_put_with_auth_success() {
         Ok(response) => {
             let uuid = response.uuid();
 
-            let object = datastore::get_object_by_uuid(&db, &uuid).await.unwrap();
+            let object = datastore.get_object_by_uuid(&uuid).await.unwrap();
 
             let properties = {
                 let mut properties = LinkedHashMap::new();
@@ -260,7 +245,7 @@ async fn multi_packet_file_store_put() {
 async fn multi_party_put() {
     let (db_port, _postgres) = start_containers().await;
 
-    let (db, _, _, config) = start_test_server(test_config(db_port), None).await;
+    let (datastore, _, _, config) = start_test_server(test_config(db_port), None).await;
 
     let (audience1, signature1) = party_1();
     let (audience2, signature2) = party_2();
@@ -286,8 +271,8 @@ async fn multi_party_put() {
         Ok(response) => {
             let uuid = response.uuid();
 
-            assert_eq!(get_public_keys_by_object(&db, &uuid).await.len(), 3);
-            assert_eq!(get_mailbox_keys_by_object(&db, &uuid).await.len(), 0);
+            assert_eq!(datastore.get_public_keys_by_object(&uuid).await.len(), 3);
+            assert_eq!(datastore.get_mailbox_keys_by_object(&uuid).await.len(), 0);
         }
         _ => assert_eq!(format!("{:?}", response), ""),
     }
@@ -297,7 +282,7 @@ async fn multi_party_put() {
 async fn small_mailbox_put() {
     let (db_port, _postgres) = start_containers().await;
 
-    let (db, _, _, config) = start_test_server(test_config(db_port), None).await;
+    let (datastore, _, _, config) = start_test_server(test_config(db_port), None).await;
 
     let (audience1, signature1) = party_1();
     let (audience2, signature2) = party_2();
@@ -331,8 +316,8 @@ async fn small_mailbox_put() {
             let uuid = response.uuid();
 
             assert_eq!(response.name, NOT_STORAGE_BACKED);
-            assert_eq!(get_public_keys_by_object(&db, &uuid).await.len(), 3);
-            assert_eq!(get_mailbox_keys_by_object(&db, &uuid).await.len(), 2);
+            assert_eq!(datastore.get_public_keys_by_object(&uuid).await.len(), 3);
+            assert_eq!(datastore.get_mailbox_keys_by_object(&uuid).await.len(), 2);
         }
         _ => assert_eq!(format!("{:?}", response), ""),
     }
@@ -342,7 +327,7 @@ async fn small_mailbox_put() {
 async fn large_mailbox_put() {
     let (db_port, _postgres) = start_containers().await;
 
-    let (db, _, _, config) = start_test_server(test_config(db_port), None).await;
+    let (datastore, _, _, config) = start_test_server(test_config(db_port), None).await;
 
     let (audience1, signature1) = party_1();
     let (audience2, signature2) = party_2();
@@ -377,8 +362,8 @@ async fn large_mailbox_put() {
             let uuid = response.uuid();
 
             assert_eq!(response.name, NOT_STORAGE_BACKED);
-            assert_eq!(get_public_keys_by_object(&db, &uuid).await.len(), 3);
-            assert_eq!(get_mailbox_keys_by_object(&db, &uuid).await.len(), 2);
+            assert_eq!(datastore.get_public_keys_by_object(&uuid).await.len(), 3);
+            assert_eq!(datastore.get_mailbox_keys_by_object(&uuid).await.len(), 2);
         }
         _ => assert_eq!(format!("{:?}", response), ""),
     }
@@ -478,9 +463,9 @@ async fn auth_get_failure_no_key() {
         user_auth_enabled: true,
         ..test_config(db_port)
     };
-    let (_, cache, _, config) = start_test_server(config, None).await;
+    let (_, public_key_cache, _, config) = start_test_server(config, None).await;
 
-    add_keys_cache(cache);
+    add_keys_cache(public_key_cache);
 
     let (audience, signature) = party_1();
     let dime = generate_dime(vec![audience.clone()], vec![signature]);
@@ -527,9 +512,9 @@ async fn auth_get_failure_invalid_key() {
         user_auth_enabled: true,
         ..test_config(db_port)
     };
-    let (_, cache, _, config) = start_test_server(config, None).await;
+    let (_, public_key_cache, _, config) = start_test_server(config, None).await;
 
-    add_keys_cache(cache);
+    add_keys_cache(public_key_cache);
 
     let (audience, signature) = party_1();
     let dime = generate_dime(vec![audience.clone()], vec![signature]);
@@ -578,9 +563,9 @@ async fn auth_get_success() {
         user_auth_enabled: true,
         ..test_config(db_port)
     };
-    let (_, cache, _, config) = start_test_server(config, None).await;
+    let (_, public_key_cache, _, config) = start_test_server(config, None).await;
 
-    add_keys_cache(cache);
+    add_keys_cache(public_key_cache);
 
     let (audience, signature) = party_1();
     let dime = generate_dime(vec![audience.clone()], vec![signature]);
@@ -853,7 +838,7 @@ async fn get_nonexistent_hash() {
 async fn put_with_replication() {
     let (db_port, _postgres) = start_containers().await;
 
-    let (db, _, _, config) = start_test_server(test_config(db_port), None).await;
+    let (datastore, _, _, config) = start_test_server(test_config(db_port), None).await;
 
     let (audience1, signature1) = party_1();
     let (audience2, signature2) = party_2();
@@ -875,38 +860,38 @@ async fn put_with_replication() {
             let uuid = response.uuid();
 
             assert_eq!(response.name, NOT_STORAGE_BACKED);
-            assert_eq!(get_public_keys_by_object(&db, &uuid).await.len(), 3);
+            assert_eq!(datastore.get_public_keys_by_object(&uuid).await.len(), 3);
             assert_eq!(
-                replication_object_uuids(
-                    &db,
-                    String::from_utf8(audience1.public_key).unwrap().as_str(),
-                    50
-                )
-                .await
-                .unwrap()
-                .len(),
+                datastore
+                    .replication_object_uuids(
+                        String::from_utf8(audience1.public_key).unwrap().as_str(),
+                        50
+                    )
+                    .await
+                    .unwrap()
+                    .len(),
                 0
             );
             assert_eq!(
-                replication_object_uuids(
-                    &db,
-                    String::from_utf8(audience2.public_key).unwrap().as_str(),
-                    50
-                )
-                .await
-                .unwrap()
-                .len(),
+                datastore
+                    .replication_object_uuids(
+                        String::from_utf8(audience2.public_key).unwrap().as_str(),
+                        50
+                    )
+                    .await
+                    .unwrap()
+                    .len(),
                 1
             );
             assert_eq!(
-                replication_object_uuids(
-                    &db,
-                    String::from_utf8(audience3.public_key).unwrap().as_str(),
-                    50
-                )
-                .await
-                .unwrap()
-                .len(),
+                datastore
+                    .replication_object_uuids(
+                        String::from_utf8(audience3.public_key).unwrap().as_str(),
+                        50
+                    )
+                    .await
+                    .unwrap()
+                    .len(),
                 1
             );
         }
@@ -918,8 +903,9 @@ async fn put_with_replication() {
 async fn put_with_replication_different_owner() {
     let (db_port, _postgres) = start_containers().await;
 
-    let (db, cache, _, config) = start_test_server(test_config(db_port), None).await;
-    add_keys_cache(cache);
+    let (datastore, public_key_cache, _, config) =
+        start_test_server(test_config(db_port), None).await;
+    add_keys_cache(public_key_cache);
 
     let (audience1, signature1) = party_1();
     let (audience2, signature2) = party_2();
@@ -941,38 +927,38 @@ async fn put_with_replication_different_owner() {
             let uuid = response.uuid();
 
             assert_eq!(response.name, NOT_STORAGE_BACKED);
-            assert_eq!(get_public_keys_by_object(&db, &uuid).await.len(), 3);
+            assert_eq!(datastore.get_public_keys_by_object(&uuid).await.len(), 3);
             assert_eq!(
-                replication_object_uuids(
-                    &db,
-                    String::from_utf8(audience1.public_key).unwrap().as_str(),
-                    50
-                )
-                .await
-                .unwrap()
-                .len(),
+                datastore
+                    .replication_object_uuids(
+                        String::from_utf8(audience1.public_key).unwrap().as_str(),
+                        50
+                    )
+                    .await
+                    .unwrap()
+                    .len(),
                 0
             );
             assert_eq!(
-                replication_object_uuids(
-                    &db,
-                    String::from_utf8(audience2.public_key).unwrap().as_str(),
-                    50
-                )
-                .await
-                .unwrap()
-                .len(),
+                datastore
+                    .replication_object_uuids(
+                        String::from_utf8(audience2.public_key).unwrap().as_str(),
+                        50
+                    )
+                    .await
+                    .unwrap()
+                    .len(),
                 0
             );
             assert_eq!(
-                replication_object_uuids(
-                    &db,
-                    String::from_utf8(audience3.public_key).unwrap().as_str(),
-                    50
-                )
-                .await
-                .unwrap()
-                .len(),
+                datastore
+                    .replication_object_uuids(
+                        String::from_utf8(audience3.public_key).unwrap().as_str(),
+                        50
+                    )
+                    .await
+                    .unwrap()
+                    .len(),
                 1
             );
         }
@@ -984,7 +970,7 @@ async fn put_with_replication_different_owner() {
 async fn put_with_double_replication() {
     let (db_port, _postgres) = start_containers().await;
 
-    let (db, _, _, config) = start_test_server(test_config(db_port), None).await;
+    let (datastore, _, _, config) = start_test_server(test_config(db_port), None).await;
 
     let (audience1, signature1) = party_1();
     let (audience2, signature2) = party_2();
@@ -1006,23 +992,26 @@ async fn put_with_double_replication() {
             let uuid = response.uuid();
 
             assert_eq!(response.name, NOT_STORAGE_BACKED);
-            assert_eq!(get_public_keys_by_object(&db, &uuid).await.len(), 3);
+            assert_eq!(datastore.get_public_keys_by_object(&uuid).await.len(), 3);
             assert_eq!(
-                replication_object_uuids(&db, audience1.public_key.encoded().as_str(), 50)
+                datastore
+                    .replication_object_uuids(audience1.public_key.encoded().as_str(), 50)
                     .await
                     .unwrap()
                     .len(),
                 0
             );
             assert_eq!(
-                replication_object_uuids(&db, audience2.public_key.encoded().as_str(), 50)
+                datastore
+                    .replication_object_uuids(audience2.public_key.encoded().as_str(), 50)
                     .await
                     .unwrap()
                     .len(),
                 0
             );
             assert_eq!(
-                replication_object_uuids(&db, audience3.public_key.encoded().as_str(), 50)
+                datastore
+                    .replication_object_uuids(audience3.public_key.encoded().as_str(), 50)
                     .await
                     .unwrap()
                     .len(),
@@ -1037,7 +1026,7 @@ async fn put_with_double_replication() {
 async fn get_object_no_properties() {
     let (db_port, _postgres) = start_containers().await;
 
-    let (db, _, _, config) = start_test_server(test_config(db_port), None).await;
+    let (datastore, _, _, config) = start_test_server(test_config(db_port), None).await;
 
     let (audience, signature) = party_1();
     let dime = generate_dime(vec![audience.clone()], vec![signature]);
@@ -1059,7 +1048,7 @@ async fn get_object_no_properties() {
             let uuid = response.uuid();
 
             assert_eq!(response.name, NOT_STORAGE_BACKED);
-            assert_eq!(delete_properties(&db, &uuid).await, 1);
+            assert_eq!(datastore.delete_properties(&uuid).await, 1);
         }
         _ => assert_eq!(format!("{:?}", response), ""),
     }

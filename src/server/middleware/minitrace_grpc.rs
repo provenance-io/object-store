@@ -11,6 +11,23 @@ use tower::{Layer, Service};
 
 // TODO add logging in Trace middleware
 
+trait ResponseUtil {
+    fn status_code(&self, default_status_code: HeaderValue) -> Code;
+}
+
+impl<T> ResponseUtil for tonic::codegen::http::Response<T> {
+    fn status_code(&self, default_status_code: HeaderValue) -> Code {
+        let status_code = self
+            .headers()
+            .get("grpc-status")
+            .unwrap_or(&default_status_code)
+            .to_str()
+            .unwrap();
+
+        tonic::Code::from_bytes(status_code.as_bytes())
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct MinitraceGrpcMiddlewareLayer {
     span_tags: Vec<(&'static str, String)>,
@@ -39,23 +56,6 @@ pub struct MinitraceGrpcMiddleware<S> {
     inner: S,
     span_tags: Vec<(&'static str, String)>,
     default_status_code: HeaderValue,
-}
-
-pub trait ResponseUtil {
-    fn status_code(&self, default_status_code: HeaderValue) -> Code;
-}
-
-impl<T> ResponseUtil for tonic::codegen::http::Response<T> {
-    fn status_code(&self, default_status_code: HeaderValue) -> Code {
-        let status_code = self
-            .headers()
-            .get("grpc-status")
-            .unwrap_or(&default_status_code)
-            .to_str()
-            .unwrap();
-
-        tonic::Code::from_bytes(status_code.as_bytes())
-    }
 }
 
 impl<S, ReqBody, ResBody> Service<Request<ReqBody>> for MinitraceGrpcMiddleware<S>

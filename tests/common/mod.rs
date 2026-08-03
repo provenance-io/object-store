@@ -10,14 +10,13 @@ use std::sync::{Arc, Mutex};
 
 use bytes::{BufMut, BytesMut};
 use futures::stream;
-use futures_util::TryStreamExt;
 use object_store::AppContext;
 use object_store::config::Config;
 use object_store::consts::{
     CREATED_BY_HEADER, DIME_FIELD_NAME, HASH_FIELD_NAME, SIGNATURE_FIELD_NAME,
     SIGNATURE_PUBLIC_KEY_FIELD_NAME,
 };
-use object_store::datastore::{MailboxPublicKey, ObjectPublicKey};
+use object_store::datastore::Datastore;
 use object_store::dime::Dime;
 use object_store::pb::admin_service_server::AdminServiceServer;
 use object_store::pb::chunk_bidi::Impl::{
@@ -29,10 +28,9 @@ use object_store::pb::{
     Chunk, ChunkBidi, ChunkEnd, MultiStreamHeader, StreamHeader,
     chunk::Impl::{Data, End, Value},
 };
-use object_store::public_key::Cache;
+use object_store::public_key::PublicKeyCache;
 use object_store::replication::ReplicationState;
 use prost::Message;
-use sqlx::{FromRow, PgPool};
 use std::hash::Hasher;
 use tonic::Request;
 
@@ -183,37 +181,6 @@ pub fn hash(payload: bytes::Bytes) -> Vec<u8> {
     hash.to_be_bytes().to_vec()
 }
 
-// TODO move to lib and add test
-pub async fn get_public_keys_by_object(
-    db: &PgPool,
-    object_uuid: &uuid::Uuid,
-) -> Vec<ObjectPublicKey> {
-    let query_str = "SELECT * FROM object_public_key WHERE object_uuid = $1";
-    let mut result = Vec::new();
-    let mut query_result = sqlx::query(query_str).bind(object_uuid).fetch(db);
-
-    while let Some(row) = query_result.try_next().await.unwrap() {
-        result.push(ObjectPublicKey::from_row(&row).unwrap());
-    }
-
-    result
-}
-
-// TODO move to lib and add test
-pub async fn get_mailbox_keys_by_object(
-    db: &PgPool,
-    object_uuid: &uuid::Uuid,
-) -> Vec<MailboxPublicKey> {
-    let query_str = "SELECT * FROM mailbox_public_key WHERE object_uuid = $1";
-    let mut result = Vec::new();
-    let mut query_result = sqlx::query(query_str).bind(object_uuid).fetch(db);
-
-    while let Some(row) = query_result.try_next().await.unwrap() {
-        result.push(MailboxPublicKey::from_row(&row).unwrap());
-    }
-
-    result
-}
 /// Starts a test server
 /// 1. Seeds cache if remote config is supplied
 /// 2. Create new [AppContext] and run [AppContext::init]
@@ -223,8 +190,8 @@ pub async fn start_test_server(
     config: Config,
     remote_config: Option<&Config>,
 ) -> (
-    Arc<PgPool>,
-    Arc<Mutex<Cache>>,
+    Arc<dyn Datastore>,
+    Arc<Mutex<PublicKeyCache>>,
     ReplicationState,
     Arc<Config>,
 ) {
@@ -240,8 +207,8 @@ pub async fn start_test_server(
     let mut context = AppContext::new(updated_config.clone()).await.unwrap();
     if let Some(remote_config) = remote_config {
         {
-            let mut cache = context.cache.lock().unwrap();
-            seed_cache(&mut cache, remote_config);
+            let mut public_key_cache = context.public_key_cache.lock().unwrap();
+            seed_cache(&mut public_key_cache, remote_config);
         };
     }
     context.init().await;
@@ -260,8 +227,8 @@ pub async fn start_test_server(
     println!("test server running on {:?}", local_addr);
 
     (
-        context.db_pool,
-        context.cache,
+        context.datastore,
+        context.public_key_cache,
         context.replication_state,
         context.config,
     )

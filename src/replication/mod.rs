@@ -1,4 +1,4 @@
-pub mod client_cache;
+mod client_cache;
 mod error;
 mod public_key;
 
@@ -8,7 +8,7 @@ use fastrace::prelude::SpanContext;
 use fastrace::{Span, func_path, trace};
 
 use crate::config::ReplicationConfig;
-use crate::datastore;
+use crate::datastore::Datastore;
 use crate::pb::object_service_client::ObjectServiceClient;
 use crate::proto::{
     create_data_chunk, create_multi_stream_header, create_stream_end, create_stream_header_field,
@@ -16,15 +16,13 @@ use crate::proto::{
 use crate::replication::client_cache::{ClientCache, ID};
 use crate::replication::public_key::PublicKey;
 use crate::storage::Storage;
-use crate::{consts, domain::OsError, public_key::Cache};
+use crate::{consts, domain::OsError, public_key::PublicKeyCache};
 
 use bytes::Bytes;
 use std::sync::{Arc, Mutex};
 
 use chrono::prelude::*;
 use futures::stream;
-
-use sqlx::postgres::PgPool;
 
 struct ReplicationOk {
     public_key: PublicKey,
@@ -76,22 +74,22 @@ impl ReplicationErr {
 
 #[derive(Debug, Clone)]
 pub struct ReplicationState {
-    cache: Arc<Mutex<Cache>>,
+    public_key_cache: Arc<Mutex<PublicKeyCache>>,
     config: ReplicationConfig,
-    pub snapshot_cache: (DateTime<Utc>, Cache), // TODO remove
-    db_pool: Arc<PgPool>,
-    storage: Arc<Box<dyn Storage>>,
+    snapshot_cache: (DateTime<Utc>, PublicKeyCache),
+    datastore: Arc<dyn Datastore>,
+    storage: Arc<dyn Storage>,
     pub client_cache: Arc<tokio::sync::Mutex<ClientCache>>, // TODO remove
 }
 
 impl ReplicationState {
     pub fn new(
-        cache: Arc<Mutex<Cache>>,
+        public_key_cache: Arc<Mutex<PublicKeyCache>>,
         config: ReplicationConfig,
-        db_pool: Arc<PgPool>,
-        storage: Arc<Box<dyn Storage>>,
+        datastore: Arc<dyn Datastore>,
+        storage: Arc<dyn Storage>,
     ) -> Self {
-        let snapshot_cache = cache.lock().unwrap().clone();
+        let snapshot_cache = public_key_cache.lock().unwrap().clone();
         let snapshot_cache = (DateTime::UNIX_EPOCH, snapshot_cache);
 
         let client_cache = Arc::new(tokio::sync::Mutex::new(ClientCache::new(
@@ -100,10 +98,10 @@ impl ReplicationState {
         )));
 
         Self {
-            cache,
+            public_key_cache,
             config,
             snapshot_cache,
-            db_pool,
+            datastore,
             storage,
             client_cache,
         }
@@ -130,12 +128,10 @@ impl ReplicationState {
         // unfortunately, `?` cannot be used because `client` is considered moved into
         // `ReplicationResult:err`, whereas, the use of return makes the fact explicit
         // that client cannot be used beyond the error case.
-        let batch = match datastore::replication_object_uuids(
-            &self.db_pool,
-            public_key.as_ref(),
-            self.config.replication_batch_size,
-        )
-        .await
+        let batch = match self
+            .datastore
+            .replication_object_uuids(public_key.as_ref(), self.config.replication_batch_size)
+            .await
         {
             Ok(data) => data,
             Err(e) => return Err(ReplicationErr::new(e, public_key, url.to_owned(), client)),
@@ -148,7 +144,7 @@ impl ReplicationState {
         }
 
         for (uuid, object_uuid) in batch.iter() {
-            let object = match datastore::get_object_by_uuid(&self.db_pool, object_uuid).await {
+            let object = match self.datastore.get_object_by_uuid(object_uuid).await {
                 Ok(data) => data,
                 Err(e) => return Err(ReplicationErr::new(e, public_key, url.to_owned(), client)),
             };
@@ -201,7 +197,7 @@ impl ReplicationState {
 
             match client.put(tonic::Request::new(stream)).await {
                 Ok(_) => {
-                    match datastore::ack_object_replication(&self.db_pool, uuid).await {
+                    match self.datastore.ack_object_replication(uuid).await {
                         Ok(data) => data,
                         Err(e) => {
                             return Err(ReplicationErr::new(e, public_key, url.to_owned(), client));
@@ -235,7 +231,7 @@ impl ReplicationState {
         if delta > self.config.snapshot_cache_refresh_frequency {
             log::trace!("Updating snapshot cache");
 
-            let snapshot_cache = self.cache.lock().unwrap().clone();
+            let snapshot_cache = self.public_key_cache.lock().unwrap().clone();
             self.snapshot_cache = (now, snapshot_cache);
         }
     }
@@ -332,17 +328,17 @@ impl ReplicationState {
     }
 
     pub async fn reap_unknown_keys_iteration(&self) {
-        let public_keys = self.cache.lock().unwrap().public_keys.clone();
+        let public_keys = self.public_key_cache.lock().unwrap().public_keys.clone();
 
         let unknown_keys = public_keys.iter().filter(|(_, v)| v.url.is_empty());
 
         for (public_key, _) in unknown_keys {
-            let result = datastore::replication_object_uuids(&self.db_pool, public_key, 1).await;
+            let result = self.datastore.replication_object_uuids(public_key, 1).await;
 
             match result {
                 Ok(result) => {
                     if !result.is_empty() {
-                        match datastore::reap_object_replication(&self.db_pool, public_key).await {
+                        match self.datastore.reap_object_replication(public_key).await {
                             Ok(rows_affected) => log::info!(
                                 "Reaping public_key {} - rows_affected {}",
                                 public_key,

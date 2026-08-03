@@ -13,26 +13,26 @@ pub enum PublicKeyState {
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct Cache {
+pub struct PublicKeyCache {
     /// keys are base64-encoded strings
     pub public_keys: HashMap<String, PublicKey>,
 }
 
-impl Cache {
+impl PublicKeyCache {
     /// populate initial cache
-    pub async fn new(keys: Vec<PublicKey>) -> Result<Arc<Mutex<Cache>>, OsError> {
-        let mut cache = Cache::default();
+    pub async fn new(keys: Vec<PublicKey>) -> Result<Arc<Mutex<PublicKeyCache>>, OsError> {
+        let mut public_key_cache = PublicKeyCache::default();
 
         for key in keys {
             log::debug!("Adding public key {} with url {}", key.public_key, key.url);
 
-            cache.add_public_key(key);
+            public_key_cache.add(key);
         }
 
-        Ok(Arc::new(Mutex::new(cache)))
+        Ok(Arc::new(Mutex::new(public_key_cache)))
     }
 
-    pub fn add_public_key(&mut self, key: PublicKey) -> Option<PublicKey> {
+    pub fn add(&mut self, key: PublicKey) -> Option<PublicKey> {
         self.public_keys.insert(key.public_key.clone(), key)
     }
 

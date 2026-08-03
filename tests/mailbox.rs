@@ -3,13 +3,13 @@ use std::sync::Arc;
 
 use object_store::config::Config;
 use object_store::consts::*;
+use object_store::datastore::Datastore;
 use object_store::pb::{
     AckRequest, Audience, GetRequest, mailbox_service_client::MailboxServiceClient,
 };
 use object_store::proto::{AudienceUtil, ObjectResponseUtil};
 use object_store::public_key::PublicKey;
 
-use sqlx::postgres::PgPool;
 use tonic::Request;
 use tonic::transport::Channel;
 
@@ -19,27 +19,25 @@ use crate::common::client::{get_mailbox_client, get_object_client};
 use crate::common::config::test_config;
 use crate::common::containers::start_containers;
 use crate::common::data::{generate_dime, party_1, party_2, party_3, test_public_key};
-use crate::common::{
-    get_mailbox_keys_by_object, get_public_keys_by_object, put_helper, start_test_server,
-};
+use crate::common::{put_helper, start_test_server};
 
 /// Starts test server and populates cache with additional keys
-async fn start_server(config: Config) -> (Arc<PgPool>, Arc<Config>) {
-    let (db_pool, cache, _, config) = start_test_server(config, None).await;
+async fn start_server(config: Config) -> (Arc<dyn Datastore>, Arc<Config>) {
+    let (datastore, public_key_cache, _, config) = start_test_server(config, None).await;
 
     {
-        let mut cache = cache.lock().unwrap();
-        cache.add_public_key(PublicKey {
+        let mut public_key_cache = public_key_cache.lock().unwrap();
+        public_key_cache.add(PublicKey {
             auth_data: Some(String::from("x-test-header:test_value_1")),
             ..test_public_key(party_1().0.public_key)
         });
-        cache.add_public_key(PublicKey {
+        public_key_cache.add(PublicKey {
             auth_data: Some(String::from("x-test-header:test_value_2")),
             ..test_public_key(party_2().0.public_key)
         });
     }
 
-    (db_pool, config)
+    (datastore, config)
 }
 
 /// 1. Builds [GetRequest]
@@ -141,7 +139,8 @@ async fn authed_get_and_ack_helper(
 async fn get_and_ack_flow() {
     let (db_port, _postgres) = start_containers().await;
 
-    let (db, config) = start_server(test_config(db_port)).await;
+    let (datastore, config) = start_server(test_config(db_port)).await;
+
     let mut client = get_mailbox_client(config.url).await;
 
     // post fragment request
@@ -176,8 +175,8 @@ async fn get_and_ack_flow() {
             let uuid = response.uuid();
 
             assert_eq!(response.name, NOT_STORAGE_BACKED);
-            assert_eq!(get_public_keys_by_object(&db, &uuid).await.len(), 3);
-            assert_eq!(get_mailbox_keys_by_object(&db, &uuid).await.len(), 2);
+            assert_eq!(datastore.get_public_keys_by_object(&uuid).await.len(), 3);
+            assert_eq!(datastore.get_mailbox_keys_by_object(&uuid).await.len(), 2);
         }
         _ => assert_eq!(format!("{:?}", response), ""),
     }
@@ -216,8 +215,8 @@ async fn get_and_ack_flow() {
             let uuid = response.uuid();
 
             assert_eq!(response.name, NOT_STORAGE_BACKED);
-            assert_eq!(get_public_keys_by_object(&db, &uuid).await.len(), 3);
-            assert_eq!(get_mailbox_keys_by_object(&db, &uuid).await.len(), 2);
+            assert_eq!(datastore.get_public_keys_by_object(&uuid).await.len(), 3);
+            assert_eq!(datastore.get_mailbox_keys_by_object(&uuid).await.len(), 2);
         }
         _ => assert_eq!(format!("{:?}", response), ""),
     }
@@ -255,8 +254,8 @@ async fn get_and_ack_flow() {
             let uuid = response.uuid();
 
             assert_eq!(response.name, NOT_STORAGE_BACKED);
-            assert_eq!(get_public_keys_by_object(&db, &uuid).await.len(), 3);
-            assert_eq!(get_mailbox_keys_by_object(&db, &uuid).await.len(), 2);
+            assert_eq!(datastore.get_public_keys_by_object(&uuid).await.len(), 3);
+            assert_eq!(datastore.get_mailbox_keys_by_object(&uuid).await.len(), 2);
         }
         _ => assert_eq!(format!("{:?}", response), ""),
     }

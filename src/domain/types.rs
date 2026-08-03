@@ -41,6 +41,9 @@ quick_error! {
         StorageError(err: crate::storage::StorageError) {
             from()
         }
+        GoogleClientError(err: google_cloud_gax::client_builder::Error) {
+            from()
+        }
     }
 }
 
@@ -74,6 +77,7 @@ impl From<OsError> for tonic::Status {
             OsError::InvalidSignatureState(_) => tonic::Code::Internal,
             OsError::InvalidApplicationState(_) => tonic::Code::Internal,
             OsError::StorageError(_) => tonic::Code::Internal,
+            OsError::GoogleClientError(_) => tonic::Code::Internal, // TODO - store error?
         };
 
         tonic::Status::new(code, format!("{:?}", error))
